@@ -1,0 +1,644 @@
+/* ---------------------------------------------------------------------------
+   THE COLOURS COME FROM CSS VARIABLES SET ONCE, so the light and dark themes are one block each and no
+   rule below has to know which one is in force.
+
+   ⚠️ THERE IS EXACTLY ONE PALETTE PER APPEARANCE, AND IT IS WRITTEN ONCE. The blocks below are arranged so
+   that this cannot be got wrong the way it was: `:root` IS the light theme, the media query swaps in the
+   dark one, and the pinned selectors restate the SAME two palettes for when `data-theme` is set. Nothing
+   here is a variant of anything else.
+
+   HOW THAT WENT WRONG, because it is the kind of mistake this arrangement prevents: the light theme's two
+   surfaces were swapped (see below), the swap was written into `:root[data-theme="light"]` only, and `:root`
+   was left holding the OLD light values. So a PINNED light theme looked one way and an AUTO light theme --
+   which falls through to `:root` -- looked like the version the user had already asked to be changed. The
+   user's report, "主界面浅色UI，颜色饱和度改低些，让它看起来再白淡些，现在太黄了", was about the AUTO path, which
+   was still the saturated cream. TWO PATHS FOR ONE APPEARANCE IS THE BUG; the fix is that there is now one.
+
+   THE MARK'S OWN CREAM (#F4EAC6) IS NOT THE PAGE BACKGROUND ANY MORE. It was, on the reasoning that the
+   icon, the window and the page should be the same material -- and that is still true of the dark theme,
+   where the mark's near-black is the page. In LIGHT it does not hold: at full saturation the mark's cream
+   is a strong yellow over a whole window (the icon only ever shows a few hundred pixels of it), and the user
+   asked for it paler. So the light surfaces are DESATURATED members of the same family -- same hue, a
+   quarter of the saturation -- and the mark's own cream survives where it is only a small area: the slider
+   tracks and the card edge, and the icon itself.
+
+   THE LIGHT THEME'S TWO SURFACES ARE THE OPPOSITE WAY ROUND FROM THE DARK THEME'S, on purpose. The user
+   asked for it: "大背景用更浅的，功能区用稍深点的" -- the page is the LIGHTER cream and the cards are the
+   slightly deeper one, so a card reads as a recessed area of the page rather than a sheet laid on top of it.
+   Dark mode keeps its own arrangement (a near-black page, slightly lifted cards) because that is how a dark
+   UI is read: there, lifting a card is what makes it visible at all. --line and --track are a step darker
+   than the surface they sit on for the same reason.
+
+   `prefers-color-scheme` FOLLOWS THE SYSTEM WITH NO HOST CODE. That was measured before this was written
+   (see _diag/DARK_TITLEBAR.md): WebView2 reports the system's app theme, so the page switches the moment
+   the user changes it. The host separately applies the same choice to the window's CAPTION, which the page
+   cannot reach -- a dark page under a light title bar is what looked broken in the first place.
+   --------------------------------------------------------------------------- */
+:root {
+  /* ---- THE PALETTE, AND IT IS THE ONLY PLACE COLOURS ARE WRITTEN DOWN ----
+     ⚠️ EVERY SURFACE IS PURE GREY NOW: SATURATION 0 (the user's later call: "原来有偏米黄的元素都去掉，改成饱和度为0的色系。
+     滑动开关那些颜色保留原样"; before that it was a 1–5% warm tint from "把它们往白或黑的调，就是
+     色彩饱和度1-5%就够了，只要淡淡的，不是纯黑或纯白就可以"). The warm hue survives by ONE OR TWO STEPS of red over blue --
+     that is all "1–5%" means at these lightness levels, and it is what keeps the surfaces from reading as a
+     dead grey next to the icon's cream.
+     ⚠️ IT USED TO BE A TINTED FAMILY (a cream page, an olive-black dark page) inherited from the mark's
+     #F4EAC6. Over a whole window that is a yellow cast, which is the report that started this. The mark keeps
+     its cream -- it is a few hundred pixels -- and the UI stops borrowing it.
+     ⚠️ THE ORDER OF THE LIGHT SURFACES IS THE OPPOSITE OF THE DARK ONE'S and both are deliberate: light is
+     ("page lighter than card"), dark is ("card lighter than page"). See check_apex_palette.sh, which asserts
+     both directions. */
+  --bg: #fafafa;
+  --panel: #f2f2f2;
+  --fg: #1a1a1a;
+  --sub: #676767;
+  --line: #e5e5e5;
+  --accent: #1a1a1a;
+  --accent-fg: #fafafa;
+  --track: #dddddd;
+  /* ---- WHAT A SELECTED ROW LOOKS LIKE ----
+     ⚠️ IT IS A TINT OF THE THEME, NOT A BLOCK OF THE OPPOSITE ONE. It used to be `--accent`, which in this
+     (light) theme is near-BLACK -- so picking a rule turned one row into a black bar with cream text, and in
+     the dark theme into a white bar on a dark page. The user's report: "明暗UI的选中状态撞色反差过大，减少80%的
+     撞色，选中颜色接近各自主题色，能区分即可，可以比鼠标滑过时再重点的色."
+     So: a shade of the page's own family, a little stronger than `--track` (which is the hover), and the text
+     keeps the theme's foreground -- there is nothing to invert. */
+  --sel: #d9d9d9;
+  --warn: #a4460f;
+  --radius: 10px;
+
+  /* ---- the state dot's three colours (see .dot) ----
+     ⚠️ THE ONLY COLOURS IN THIS FILE THAT ARE DELIBERATELY *NOT* PER-THEME, and the reason is geometric
+     rather than a shortcut: a dot sits on the page, on a card, AND on a SELECTED row -- and a selected row
+     is near-BLACK in the light theme and pale CREAM in the dark one. So one value has to stay legible
+     against near-white and near-black at once, in both themes, which pins each colour to a narrow band of
+     luminance. Measured (WCAG non-text minimum is 3:1): all three are >= 3.3:1 against the page, the card
+     and the selected row, in BOTH themes. A light/dark pair per state would be six numbers to keep in step
+     for no gain, and the first time one pair was missed the dot would vanish on one theme's selected row.
+     ⚠️ AND THEY MUST NOT BE RESTYLED FOR A SELECTED ROW -- that is what the old `.offdot` rule did, turning
+     the dot into the foreground colour and destroying the only thing it was there to say. */
+  --dot-on: #2e7d32;
+  --dot-off: #767676;
+  --dot-disabled: #c4453a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141414;
+    --panel: #1a1a1a;
+    --fg: #f2f2f2;
+    --sub: #9a9a9a;
+    --line: #2c2c2c;
+    --accent: #f2f2f2;
+    --accent-fg: #141414;
+    --track: #292929;
+    --sel: #333333;   /* the same idea as the light theme: a shade of THIS theme, a little past the hover */
+    --warn: #e0854a;
+  }
+}
+/* The pinned palettes: THE SAME TWO BLOCKS AGAIN, not a variation on them. Change a colour in `:root` and
+   change it here in the same commit -- and see the note above about how a half-done swap of exactly these
+   two blocks produced two different "light themes". */
+:root[data-theme="light"] {
+  --bg: #fafafa; --panel: #f2f2f2; --fg: #1a1a1a; --sub: #676767; --line: #e5e5e5;
+  --accent: #1a1a1a; --accent-fg: #fafafa; --track: #dddddd; --sel: #d9d9d9; --warn: #a4460f;
+}
+:root[data-theme="dark"] {
+  --bg: #141414; --panel: #1a1a1a; --fg: #f2f2f2; --sub: #9a9a9a; --line: #2c2c2c;
+  --accent: #f2f2f2; --accent-fg: #141414; --track: #292929; --sel: #333333; --warn: #e0854a;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* The panel is a page, not a document: nothing here should be selectable or draggable like a web page. */
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+/* ---- layout: a sidebar of features, and the selected one's controls ---- */
+#wrap { display: flex; height: 100%; }
+
+#side {
+  width: 208px; flex: 0 0 208px;
+  background: var(--bg);
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+/* THE BRAND BLOCK IS THE "GENERAL" ENTRY, at the user's request: the mark and the slogan are the heading of
+   the list, so clicking them is what shows the settings that belong to Apex itself, and the features are the
+   list underneath. It is styled as an item -- hover and a selected state -- because that is the only
+   affordance in this panel for "this is clickable", and inventing a second one would make the list below
+   look like the odd one out. */
+#brand {
+  margin: 10px 8px 2px; padding: 8px 10px;
+  border-radius: 8px; cursor: default;
+}
+#brand:hover { background: var(--track); }
+#brand.sel { background: var(--sel); }
+/* ⚠️ NO COLOUR OVERRIDE FOR THE SELECTED BRAND ANY MORE. It used to force `--accent-fg` on the mark's small text
+   and the slogan, because the selected background was the opposite theme's black/cream. The background is a tint
+   now, so those two keep their own muted colour -- which is also what makes the selection read as "this row is
+   picked" rather than as "this row is inverted". */
+#brand .mark {
+  font-size: 22px; font-weight: 600; letter-spacing: .04em;
+  display: flex; align-items: baseline; gap: 8px;
+}
+#brand .mark small { font-size: 13px; font-weight: 400; color: var(--sub); letter-spacing: .02em; }
+/* THE SLOGAN LINE, WITH THE HOST'S VERSION AT ITS FAR END: "端/Apex下方的'端，最前者也。'的右侧，字号相比小一号，居右."
+   The slogan is 11px, so the version is 10px -- one size down, which is what the request says in words. */
+#brand .slogan { margin-top: 3px; font-size: 11px; color: var(--sub); display: flex; align-items: baseline; }
+#brand .slogan .ver { margin-left: auto; font-size: 10px; color: var(--sub); opacity: .9; }
+/* A hairline between the general entry and the feature list, so the two read as heading and content rather
+   than as one long list of peers. */
+#nav { flex: 1; overflow-y: auto; padding: 6px 8px; border-top: 1px solid var(--line); margin-top: 6px; }
+.item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border-radius: 8px; cursor: default;
+  color: var(--fg);
+}
+.item:hover { background: var(--track); }
+/* The selected row: a tint of the theme's own family and nothing inverted -- see the note on `--sel`. */
+.item.sel { background: var(--sel); }
+.item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- the feature switch, at the RIGHT END of the row (it WAS the state dot) ----
+   ⚠️ THE DOT BECAME THE SWITCH BECAUSE THE USER ASKED IT TO: "插件的启动开关直接做到原来插件列表的
+   '绿点'位置，如果开关可以做成带颜色，就代替掉原来的绿、灰、红三种颜色状态". The dot already carried the three
+   colours; a switch that MOVES and carries them does the same job and does one more, so it replaces the dot
+   rather than sitting beside it.
+
+   THE THREE STATES ARE STILL THREE, because they mean three different things:
+     on        the feature is running              (track green, knob right)
+     off       the user switched it off            (track grey, knob left, CLICKABLE)
+     disabled  it failed to load, or was disabled  (track red, knob left, NOT clickable)
+
+   ⚠️ THE COLOURS ARE THE SAME VARIABLES AS BEFORE and they are not restyled for a selected row -- see the
+   note at `--dot-on`: a control drawn on the accent chip has to change colour with it, and the first attempt
+   at that destroyed the only thing the colour was there to say. */
+.item .dot {
+  width: 26px; height: 15px; border-radius: 8px; flex: 0 0 26px; margin-left: auto;
+  background: var(--dot-off); position: relative;
+  transition: background .15s ease;
+}
+/* The knob. `left` is what moves: the track keeps its colour and the knob says which side it is on, which is
+   how a switch reads at a glance without needing the label to be read too. */
+.item .dot::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 11px; height: 11px; border-radius: 50%; background: #fff;
+  transition: left .15s ease;
+}
+.item .dot.dot-on { background: var(--dot-on); }
+.item .dot.dot-on::after { left: 13px; }
+.item .dot.dot-off { background: var(--dot-off); }
+.item .dot.dot-disabled { background: var(--dot-disabled); }
+/* ⚠️ THE INERT STATE SAYS SO WITH THE CURSOR. There is nothing to switch when a feature failed to load,
+   and a switch that looks pressable and does nothing is the failure the note above describes. */
+.item .dot.dot-disabled { cursor: default; }
+.item .dot:not(.dot-disabled) { cursor: pointer; }
+/* A row is a way IN to the feature, and the switch is a control ON it -- so the switch must not also navigate.
+   `stopPropagation` does that in the handler; this is the same statement for a mouse. */
+.item .dot:hover { filter: brightness(1.15); }
+.item.dead { opacity: .55; }
+
+/* No #sidefoot rules: the footer held the General button, and the General entry is the brand block now.
+   (Its CSS outlived its markup for a while after the move -- dead selectors are harmless but they are also
+   how a reader concludes the button still exists.) */
+/* ---- main ---- */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#head {
+  padding: 14px 20px 12px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 10px;
+}
+#head h1 { margin: 0; font-size: 16px; font-weight: 600; }
+#head .ver { color: var(--sub); font-size: 12px; }
+/* WHAT THIS FEATURE DOES, in one small line after the version: "插件页最上方标题位，版本号后，可以小字简单说明插件的
+   主要功能." It is a SENTENCE THE FEATURE SUPPLIES (apex/abi.h, `summaryZh`/`summaryEn`), not something the panel
+   knows: the panel has no idea what any feature is for, and a description written here would be the page
+   describing a feature it cannot see. Empty for a feature that sends none -- and an empty span takes no room. */
+#head .desc { color: var(--sub); font-size: 11px; font-weight: 400; opacity: .9; }
+#head .grow { flex: 1; }
+#body { flex: 1; overflow-y: auto; padding: 16px 20px 20px; }
+
+/* THE GENERAL PAGE'S ROWS: THE NAME ON THE LEFT, THE CONTROL ON THE RIGHT, AND THE GAP BETWEEN THEM TAKING
+   WHATEVER WIDTH THE WINDOW HAS. "通用设置UI布局优化下，选项名居左，参数设置项居右，中间空白随窗口大小动态变化."
+   ⚠️ IT IS SCOPED TO THIS PAGE (`.gen`) ON PURPOSE. A feature's page keeps the fixed label column and the
+   full-width control: a pattern field has to be wide enough to be typed into, and a slider long enough to be
+   aimed at -- while a language menu is 160px whatever the window does, so the empty space around it is the only
+   thing that should move. */
+.gen .row label { flex: 0 0 auto; }
+.gen .row .ctl { flex: 0 1 auto; margin-left: auto; }
+.gen .row .ctl select { min-width: 160px; }
+/* A little more air BETWEEN the two cells of a pair than inside one, so two switches in a line read as two
+   things rather than as one run of controls. */
+.row .ctl .swcell + .swcell { margin-left: 10px; }
+
+/* ---- THE QUICK PANEL'S OWN SMALL PANEL: which features are in the flyout, and in what order ----
+   ⚠️ THE ROWS ARE REORDERED BY DRAGGING, THE SAME WAY EVERY OTHER LIST HERE IS (`makeDraggable` in panel.js):
+   cursor, dragging state and drop mark, exactly as `.splitlist .item` has them -- the same three statements, said
+   for the same reason. A second set of names for one interaction is a second thing to keep in step, which is why
+   the CLASS is different (the elements are not list items) but the RULES are the same three. */
+.qolist { margin-top: 2px; }
+.qorow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px; border-radius: 7px; cursor: grab;
+}
+.qorow:hover { background: var(--track); }
+.qorow.dragging { opacity: .45; }
+.qorow.dropover { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The grip is the affordance -- a row you can drag says so before you try. Two stacked bars, drawn as a glyph
+   rather than an image so it scales with the font like everything else here. */
+.qorow .grip { color: var(--sub); font-size: 13px; line-height: 1; user-select: none; -webkit-user-select: none; }
+.qorow .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- a control ---- */
+/* ⚠️ THE VERTICAL SPACING IS DELIBERATELY TIGHT: "参数设置各项垂直间缩紧些，让它更紧凑些." A rule has fourteen
+   rows and a machine's screen shows about twenty of them, so the gap between rows is the difference between
+   seeing a rule whole and scrolling through it. The numbers below are the old ones halved; the labels keep their
+   column (132px) because that is what lines the controls up. */
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 10px;
+}
+.row { display: flex; align-items: center; gap: 10px; }
+.row + .row { margin-top: 6px; }
+.row label { flex: 0 0 132px; color: var(--fg); }
+.row .ctl { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.row .val {
+  flex: 0 0 74px; text-align: right; color: var(--sub);
+  font-variant-numeric: tabular-nums; font-size: 13px;
+}
+/* THE CONDITION'S CHECKBOX, at the left of the value it governs (apex/abi.h, `toggle`). It is a switch like any
+   other -- see `.sw` -- so all this does is stop it from stretching and pull it closer to its field. */
+.row .ctl .sw.cond { flex: 0 0 auto; margin-right: 2px; }
+
+input[type=range] {
+  -webkit-appearance: none; appearance: none;
+  flex: 1; height: 18px; background: transparent; margin: 0;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px; background: var(--track);
+}
+/* ⚠️ THE THUMB TAKES ITS COLOUR FROM A CUSTOM PROPERTY THE ROW SETS, falling back to the accent. That is what
+   lets a slider be the same colour as the piece of curve it moves (see rangeRow): the feature supplies a hue
+   per control, and this is the one place it is applied to the control itself. */
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--thumb, var(--accent)); margin-top: -5px;
+  border: none;
+}
+input[type=range]:disabled::-webkit-slider-thumb { opacity: .4; }
+
+/* The switch: a checkbox the browser draws as a track and a knob. Kept native-cheap (no images) so it
+   scales with DPI without a second asset.
+   ⚠️ THE DECORATION MUST NOT EAT THE CLICK, and without the pointer-events rule below that is exactly what
+   it did: .tr and .kn are absolutely positioned and come AFTER the input in the document, so they paint on
+   top of it -- and hit-testing follows painting, so the click landed on a DIV. The checkbox never toggled,
+   no `change` event was ever fired, and the switch was a picture that did nothing. That is what "开关不能用"
+   was: not a broken handler, a handler that could never run. (The panel's own probe could not see it either
+   -- see the note on the DOM stub in _diag/apex_panel_probe.js.) */
+/* A SWITCH, at the size of the feature list's one (`.item .dot`, 26x15) -- "自动输入法规则列表和参数页里那个小开关，
+   UI有点大，可以跟插件列表那个开关UI一样大." It was 40x22 with a 16px knob, which is a switch for a phone rather
+   than for a row of fourteen parameters: at that size the controls dominate the values they sit beside, and the
+   two switches a user sees most (a feature's on/off and a rule's on/off) have to look like the same control. */
+/* ⚠️⚠️ AND EVERY SWITCH IN THE PROGRAM USES THE SAME THREE COLOURS AS THE FEATURE LIST'S ONE:
+   "整个APP的滑动开关统一配色：绿为开，灰为关，红为禁用."
+   
+   It used to take `--track` for off and `--accent` for on -- which in the light theme meant a near-BLACK switch
+   as "on" (and near-white in the dark theme), so the same act looked like two different things depending on
+   which of the two switches you were looking at. The three variables are the feature list's state colours
+   (`--dot-on` / `--dot-off` / `--dot-disabled`), and they are deliberately NOT per-theme -- see the note where
+   they are declared: they have to stay legible on the page, on a card, and on a selected row, in both themes.
+   
+   ⚠️ AND A SWITCH THAT CANNOT BE EDITED KEEPS THE COLOUR OF ITS OWN STATE. `input:disabled` dims the track (so
+   "you cannot change this" is visible) but does not repaint it: a switch that is on and locked stays GREEN, an
+   off one stays grey. Turning a locked "on" switch red would say "disabled" about a switch that is in fact on,
+   which is exactly the distinction the feature list's red is there to make -- red means "this cannot run", not
+   "you cannot click this right now". */
+.sw { position: relative; width: 26px; height: 15px; flex: 0 0 26px; }
+.sw input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: default; }
+.sw .tr, .sw .kn { pointer-events: none; }
+.sw .tr {
+  position: absolute; inset: 0; border-radius: 8px; background: var(--dot-off);
+  transition: background .15s ease;
+}
+.sw .kn {
+  position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3);
+  transition: transform .15s ease, background .15s ease;
+}
+.sw input:checked + .tr { background: var(--dot-on); }
+.sw input:checked + .tr + .kn { transform: translateX(11px); }
+.sw input:disabled + .tr { opacity: .4; }
+
+select, input[type=text] {
+  font: inherit; color: var(--fg); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; min-width: 0;
+}
+input[type=text] { flex: 1; user-select: text; -webkit-user-select: text; }
+select { min-width: 130px; }
+
+/* A RECORDED KEY COMBINATION (apex/abi.h, `hotkey`). It borrows the text field's box -- same border, same radius,
+   same padding -- because it sits in the same column and a control that looked different would read as a
+   different kind of thing. What differs is that it is CLICKED rather than typed into, so it says so with the
+   pointer, and the recording state is the accent border plus the instruction inside it. */
+.hotkey {
+  font: inherit; color: var(--fg); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px;
+  flex: 1; min-width: 130px; cursor: pointer; user-select: none; -webkit-user-select: none;
+}
+.hotkey.empty { color: var(--sub); }
+.hotkey.rec { border-color: var(--accent); color: var(--sub); }
+.hotkey:focus { outline: none; }
+
+button {
+  font: inherit; color: var(--fg); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px;
+  cursor: default;
+}
+button:hover { background: var(--track); }
+/* ⚠️ AND THE SAME GOES FOR 编辑/保存 -- IT WAS THE LAST ACCENT CHIP IN THE PROGRAM. It wears `.pri` only while a
+   rule is being edited (which is what a new rule opens as), and it used to be the accent: a solid near-black block
+   in the light theme and a near-white one in the dark, sitting in the middle of the parameter pane. Reported as
+   "新建时，参数面板是黑的".
+   ⚠️ WHAT SAYS "YOU ARE EDITING" IS THE WORD ON IT, not the colour: the button changes 编辑 -> 保存 and that is the
+   state indicator the user asked for ("点完编辑按钮时，它要变成'保存'，这样才知道是不是编辑状态"). A fill on top of
+   that was emphasis nobody needed on a page whose every other control is quiet -- so it is one step of surface
+   ABOVE the Add button instead (`--sel` over `--track`), which keeps the hierarchy (Save > Add > Delete) without a
+   second colour. */
+button.pri { background: var(--sel); }
+button.pri:hover { opacity: .88; }
+/* ⚠️ AN "ADD" BUTTON IS NOT AN ACCENT CHIP, AND THAT IS THE USER'S CALL: "添加按钮不要做撞色，包括滑动滚轮插件里头
+   的「添加」也一样，不要做撞色，可以比删除深一点区分." It used to wear `.pri` -- the same near-black (light) /
+   near-white (dark) chip as the buttons that mean "you are expected to press this next" (Edit -> Save) -- which
+   made the loudest thing on a settings page a control that only appends a row, sitting next to Delete, which said
+   the same thing in an ordinary button.
+   ⚠️ SO IT IS ONE STEP OF SURFACE, NOT A COLOUR: `--track` instead of the card's `--panel`, and one more step
+   (`--sel`) under the pointer. "Darker than Delete" is the LIGHT theme's phrasing; in the dark theme the same
+   relationship runs the other way (a raised surface is lighter there) -- the pair is the one the palette already
+   uses for card-vs-page, so both themes say "this control has a little more weight" without a second colour to
+   keep in step. */
+button.addbtn { background: var(--track); }
+button.addbtn:hover { background: var(--sel); }
+button:disabled { opacity: .45; }
+
+/* ---- the motion curve ---- */
+#curveCard { padding-bottom: 8px; }
+#curve { display: block; width: 100%; height: 132px; }
+#curveLegend { display: flex; justify-content: space-between; color: var(--sub); font-size: 11px; margin-top: 5px; }
+
+/* ---- notes and lists ---- */
+.note { color: var(--sub); font-size: 12px; margin: 2px 0 10px; }
+
+/* A NOTE BESIDE A LABEL (see listRow): smaller and greyer than the label, and pushed to the right of it.
+   `--sub` is the same muted colour the rest of the page's secondary text uses, so "quiet" is one value and
+   not a new shade someone has to keep in step. `text-align: right` puts it at the far end of the row, which
+   is where a remark about the control reads as a remark rather than as part of the label. */
+.row .rownote { color: var(--sub); font-size: 12px; margin-left: auto; text-align: right; }
+.skiprow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 2px; border-bottom: 1px solid var(--line);
+}
+/* ⚠️ THE LAST ROW IS MARKED BY THE RENDERER, NOT MATCHED BY A SELECTOR. `:last-child` never matched a row --
+   the add field is always the last thing in the card -- so the last entry kept a bottom border under it, which
+   reads as "there is another row below" when there is not. `:nth-last-child(2)` would work today and break
+   the moment anything is appended to the card, so the row that is last says so itself (see listRow). */
+.skiprow.last { border-bottom: none; }
+/* ⚠️ THE NAME COLUMN DOES NOT WRAP, AND IT KEEPS A FLOOR UNDER IT. It has `flex: 1`, so when the row runs out of
+   room the name was the thing that gave -- and a name like "SDC4190 2880x1800" did not shrink, it BROKE INTO TWO
+   LINES, and a short one ("系统声音") was squeezed until every character sat on its own line. An ellipsis is the
+   honest way for a name that does not fit; a two-line name is a row that has stopped being a row. */
+.skiprow .nm { flex: 1; min-width: 90px; user-select: text; -webkit-user-select: text;
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.addrow { display: flex; gap: 8px; margin-top: 12px; }
+/* ⚠️ A GROUP ASKED FOR `layout:"rows"` REUSES THE LIST CONTROL'S ROW (`.skiprow`), and that reuse is on purpose:
+   "a name and its own controls, one per line" is the same interaction as the blacklist's rows, and the user has
+   them on one screen already. A second set of names for one interaction is a second thing to keep in step.
+   What a rows group adds is the controls INSIDE the line, so the line's own children are spelled out here --
+   each takes the width it needs and the name takes what is left (`.skiprow .nm` already has `flex: 1`). */
+.addrow input[type="text"] { flex: 1; min-width: 0; }
+/* ⚠️⚠️ THE NAME COLUMN SHRINKS, AND THE FADER TAKES WHAT IT GIVES UP (2026-09-23).
+   The user's words: "设置里，设备名称宽度自适应缩到最短，给推子让空间，但每个小面板各控制要保持对齐."
+   The column used to be the FLEXIBLE one (`flex: 1`, in the rule further up) -- so in an 1100-px window it ate
+   about 500 px of every row and left the fader at a fixed 150. Now it is CONTENT-SIZED, and the row's control
+   group and the fader inside it are the flexible parts: the fader ends up ~2x wider, and the name column is as
+   narrow as its own names allow.
+   ⚠️ THE WIDTH HERE IS THE FALLBACK, NOT THE ANSWER: `fitNameColumn` (panel.js) measures the widest name in the
+   card and writes that number onto every cell in it, so the rows stay aligned. This value is what stands when
+   there is no layout to measure -- a DOM stub, or a page rendered before it is attached (see the note there). */
+.rowlist .skiprow .nm { flex: 0 0 auto; width: 140px; min-width: 0; }
+/* ... and the row's own group of controls is what stretches, so the fader can use the width the name gave back. */
+.rowlist .skiprow > .row { flex: 1 1 auto; min-width: 0; margin: 0; }
+/* ⚠️ AND WHAT CANNOT STRETCH SITS AT THE RIGHT END OF WHAT IS LEFT. The shortcut rows have no fader in them: their
+   one control has a fixed width, so without this the label and the box would drift left, away from the edge the
+   user is used to reaching for. (A row WITH a fader has no spare space at all, so this has no effect there.) */
+.rowlist .skiprow > .row .ctl { justify-content: flex-end; }
+/* ⚠️ AND EACH CONTROL IN THE ROW KEEPS A SENSIBLE WIDTH, WHICH IS WHAT MAKES `flex: 0 0 auto` ABOVE WORKABLE.
+   With the old `flex: 1 1 auto` every field shared the leftover width equally, so adding a third control (a name
+   box) shrank the fader instead of taking the space the name column had going spare -- and the row was unusable
+   at 1100 px wide with only four things in it. Fixed widths for the controls, and the fader takes the rest. */
+.rowlist .skiprow > .row .ctl input[type="range"] { flex: 1 1 auto; width: auto; min-width: 130px; }
+/* ⚠️ THE NAME BOX IS HALF WHAT IT WAS, AND FIVE CHINESE CHARACTERS IS THE MEASURE THE USER GAVE: "自定义名字输入框
+   宽度可以缩到原来一半，正常5个汉字就够用". 5.5em is a little over five 汉字 at this size plus the field's own
+   padding -- a name is a label, not a sentence, and the whole row has to fit.
+   ⚠️⚠️ AND `flex: 0 0 auto` IS LOAD-BEARING HERE, WHICH IS THE PART THAT WAS MISSING. A text field inside a group
+   is stretched by `.grp input[type="text"] { flex: 1 }` -- a rule written for the ONE feature whose fields are long
+   patterns -- so in a rows list every text box grew to fill the row and the `width` above was simply ignored. That
+   is how the shortcut box ended up ~480 px wide, which is what the user saw: "不用那么宽". A fixed-width control in
+   a row is not a flexible one, and the row's flexibility belongs to the fader. */
+.rowlist .skiprow > .row input[type="text"] { flex: 0 0 auto; width: 5.5em; }
+.rowlist .skiprow > .row .val { min-width: 44px; }
+/* ⚠️⚠️ AND THE SHORTCUT BOX IS AS WIDE AS WHAT IS IN IT -- WHICH IS THE USER'S OWN MEASURE FOR IT: "快捷键居右对齐，
+   不用那么宽，够装快捷键字就好，中间可以留空".
+   ⚠️ THE BASE RULE IS `flex: 1` (see `.hotkey` further up), and THAT is why this box was ~480 px wide in a rows
+   list: a flexible item in a wide row fills it, whatever width it was given. Nothing here was measured wrong -- the
+   box was simply the row's leftover. So this is `flex: 0 0 auto` with `width: auto`: the box takes exactly the
+   width of the text it is showing plus its own padding, and the room that leaves is empty on purpose (the row's
+   left column is a device name, and the box is the one thing on the row).
+   ⚠️ `max-width` IS THE GUARD, NOT THE SIZE. A text box that grows with its content is how this row once pushed
+   itself past the card's edge ("录完快捷键面板就错位"); with a sane ceiling the pathological case clips instead of
+   breaking the layout. 16em is far more than any combination this feature can record ("Ctrl+Alt+Shift+PrintScreen"
+   is the longest it can offer) and still leaves the middle of the row empty. */
+.rowlist .skiprow > .row .hotkey { flex: 0 0 auto; width: auto; max-width: 16em; min-width: 0;
+                                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ⚠️ THE ADD BOX AND THE LINES START AT THE SAME X. The rows carry a 2px inset from the list control's own
+   styling; the add box had none, so its frame sat 2px left of every name under it -- and the input's own text
+   sits another 9px in (border + padding), which is what makes the two look like different columns rather than
+   one. Aligning the FRAMES is what the user asked for ("输入框左边可以跟下面文字左对齐"); the inner padding is
+   the browser's own text field and is left alone. */
+.rowlist .skiprow { padding-left: 0; }
+.grpbar .addrow { margin-bottom: 0; }
+/* ⚠️ AND THE LINES START BELOW THE ADD BOX RATHER THAN TOUCHING IT. `.grpbar` used to carry a 4px bottom margin
+   and the rows 7px of their own, which on a page whose only content is this list read as one block; the bar is
+   now OUTSIDE the card entirely (see `rowsblock`), so this is the space between the add box and the list's own
+   heading below it. "添加这行太贴下面列表顶" is about the two being visually welded together. */
+.rowlist { margin-top: 12px; }
+/* ⚠️ THE ADD ROW STANDS OUTSIDE THE LIST (the user's arrangement: "添加这行，要在列表外"): the bar comes first, the
+   card -- heading, lines, hairlines -- follows it as the list.
+   ⚠️ AND IT IS FLUSH WITH THE CARD'S OWN LEFT EDGE, which is the user's second call on this: the box was first
+   inset to line up with the program names inside the card ("输入框左边可以跟下面文字左对齐"), and then the box moved
+   out of the card -- at which point the question became which of the two edges above it to line up with, and the
+   answer was the card's ("输入框左边有办法再靠左，跟卡片列表左边对齐"). So the box's frame sits exactly over the
+   card's frame below it: one column edge for the page, and the names inside the card keep their own inset.
+   (Nothing here is a pixel value: the bar is a block at the content column's left edge and the card spans that
+   column, so the two agree by construction.) */
+.rowsblock .grpbar { margin: 0 0 10px; }
+/* A locked row's remove button is present but invisible -- see the note where it is built: it exists to hold the
+   column's width so the switches line up, so it must keep its box and lose only its paint. */
+.rowlist .skiprow button.ghost { visibility: hidden; }
+.rowlist .skiprow > button { flex: 0 0 auto; }
+/* ⚠️ AND EVERY SWITCH IN A ROW CARRIES ITS OWN LABEL, WHICH IS NOT DECORATION. A rows group draws its switches
+   in the line rather than in a field row, so they arrive with no visible name -- and KeepAwake's two switches
+   ("keep awake" / "keep the screen on") look identical. Two unlabelled switches side by side are a control the
+   user has to guess at, and a tooltip is not an answer to "which one is which" for a list they read at a glance.
+   ⚠️ A COLUMN HEADER WOULD BE THE OTHER WAY, and it was rejected: it would tie the header's width to the width
+   of a button that is a different size in each language, and it breaks the moment a feature sends three
+   switches. Repeating a short label per line is self-describing at any width, in either language. */
+/* ⚠️ TWO PLACES, ONE RULE: a switch with a short label beside it. A list row's own switches use this
+   (`rowToggle` in abi.h), and so does the quick panel's pair on the general page -- which is the SAME shape and
+   therefore the same classes rather than a second pair that would drift from the first. */
+.swcell { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.swtxt { font-size: 11px; color: var(--sub); white-space: nowrap; }
+/* ⚠️ THE GROUP'S OWN QUICK-PANEL SWITCH (apex/abi.h, `quick`, ABI 16 -> 17) SITS AT THE RIGHT-HAND END OF THE
+   LINE THE GROUP'S OTHER CONTROLS ARE ON -- the add row when the group has one, and otherwise its heading (see
+   groupCard in panel.js for which, and why). `margin-left: auto` is the whole of "居右" here: both homes are flex
+   rows, so the slack goes to the left of this cell and the switch lands against the edge.
+   ⚠️ IT IS SCOPED TO `.quicksw` RATHER THAN PUT ON `.swcell`, because `.swcell` is also how a LIST ROW draws its
+   own switches (`rowToggle`) -- and those belong immediately after the name, in a column, not pushed right. */
+.swcell.quicksw { margin-left: auto; }
+/* A heading is aligned on its TEXT's baseline (see `.listhead`); the switch beside it is a 15-px box, so it is
+   centred against that text rather than hung from its own baseline -- which would leave it sitting high. */
+.listhead .quicksw { align-self: center; }
+/* ⚠️ A LOCKED ROW IS THE FEATURE'S OWN (see `items[i].locked` in apex/abi.h) and it is NOT greyed: it is a row
+   like any other, and its switches work. What it does not have is a remove button -- which is the whole
+   statement, and is why there is no second signal here. */
+
+/* ---- a `group`: one box per item, each with its own header (see groupCard) ----
+   The box is a step darker than the card it sits in, so a repeated item reads as a unit rather than as a
+   loose run of rows -- and because a rule can be nine rows tall, that boundary has to be visible without
+   counting. (The same "a card is a surface" idea as the light theme's recessed cards, one level down.) */
+.grp {
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px 12px; margin-top: 12px;
+  background: var(--bg);
+}
+.grphead { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.grphead .nm { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grphead .grptools { display: flex; gap: 6px; flex: 0 0 auto; }
+.grphead .grptools button {
+  min-width: 28px; padding: 2px 8px; font-size: 12px; line-height: 1.4;
+}
+/* A disabled arrow still occupies its place, so the row of buttons does not shuffle as an item moves to the
+   top or bottom of the list -- buttons that move under the cursor are how the wrong one gets clicked. */
+.grphead .grptools button:disabled { opacity: .4; }
+
+/* A text field inside a group is the whole point of this feature's page, so it takes the row's width rather
+   than hugging its content: a pattern is long, and a 20-character box makes the user scroll to read what they
+   typed. It is also selectable -- a pattern is text to be copied, unlike the rest of this page. */
+.grp input[type="text"] { flex: 1; min-width: 0; user-select: text; -webkit-user-select: text; }
+
+/* ---- master / detail: a list of items, and the selected one's fields beside it ----
+   A group may ask for this (see "layout" in apex/abi.h). Everything here is the SIDEBAR'S own vocabulary --
+   `.item` with `.sel` and `.dead` -- because it is the same interaction (pick one of a list, look at it), and a
+   second set of names for one interaction is a second thing to keep in step. */
+.split { display: flex; gap: 14px; align-items: flex-start; margin-top: 4px; }
+.splitlist {
+  flex: 0 0 220px; max-height: 420px; overflow-y: auto;
+  border-right: 1px solid var(--line); padding-right: 8px;
+}
+/* ⚠️ `min-width: 0` IS LOAD-BEARING: a flex child defaults to `min-width: auto`, which refuses to shrink below
+   its content -- so ONE long pattern would push the pane wider than the card and the whole page sideways. */
+.splitdetail { flex: 1; min-width: 0; }
+/* A FEATURE'S OWN ACTION BUTTONS (see `actions` in apex/abi.h): sitting above Delete, because both act on the
+   selected item. `flex-wrap` so three labels do not push the pane sideways -- the same reason `.splitdetail`
+   carries `min-width: 0`. */
+/* The list's own buttons (Add / Delete / a feature's actions), ABOVE the list -- see groupCard. Kept
+   visually quieter than the page's primary button so the eye goes to the content first. */
+.grpbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 4px; }
+/* The shortcut, drawn INSIDE the button it belongs to -- the user's point being that the key and the button are
+   one act, not two controls: "它跟「点击捕获」是同一个功能，做成同一个按钮就好". */
+.keycap {
+  margin-left: 6px; padding: 1px 5px; border-radius: 3px; font-size: 10px;
+  font-family: inherit; font-weight: 400;
+  background: rgba(255, 255, 255, .18); border: 1px solid currentColor; opacity: .85;
+}
+/* THE ONE MESSAGE BOX, pinned to the right-hand end of the bar: "各种提示做在统一提示框，统一放在「点击捕获」
+   按钮右边，居右." `margin-left: auto` is what pushes it there -- the bar is a flex row, so it takes the
+   remaining space rather than needing a position. */
+.grpbar .hintbox {
+  margin-left: auto; font-size: 11px; padding: 3px 8px; border-radius: 4px;
+  border: 1px solid transparent; color: transparent; background: transparent;
+  /* Empty takes no space and draws nothing, so the bar does not shift when a message comes or goes. */
+  white-space: nowrap;
+}
+/* ⚠️ AND A MESSAGE IS QUIET: "UI采用上方不高亮的提示." The first version made it an accent-coloured chip with bold
+   text -- the loudest thing on the page -- and the user asked for the opposite. It now reads like the readout at
+   the top of the page (muted colour, card surface, hairline border), because that is the presentation they
+   pointed at: a hint beside the button it belongs to, not an alarm. What made it noticeable was never the
+   colour; it was being NEXT TO the button that caused the message. */
+.grpbar .hintbox.on {
+  background: var(--panel); color: var(--sub); border-color: var(--line);
+}
+/* THE LIST COLUMN'S OWN HEADING: the group's name and how many items there are. It belongs to the list, not to
+   the card -- "表头「规则」以及规则统计数要在规则列表里的顶端，不是在参数面板顶端."
+   ⚠️ IT IS STICKY, because it sits INSIDE the list's own scroll box (the list is what scrolls). Without that
+   the count -- the one thing it is there to give at a glance -- would scroll away with the rows. */
+.listhead {
+  display: flex; align-items: baseline; gap: 8px;
+  position: sticky; top: 0; z-index: 1;
+  padding: 0 0 6px; margin-bottom: 6px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.listhead label { font-weight: 600; }
+/* The count belongs at the far end of the heading row: "规则右边的规则计数居右." `margin-left: auto` is what puts it
+   there -- the heading is a flex row, so the gap takes all the remaining space. */
+.listhead .rownote { margin-left: auto; text-align: right; }
+/* ⚠️ REORDERING IS BY DRAGGING THE ROW, so the row has to LOOK draggable and the drop has to be visible. The
+   arrows that used to do this are gone ("上下按钮去掉"): one way to change the order, and it is the one the user
+   asked for. `cursor: grab` on the row, and an `outline` for the target -- outline rather than border because it
+   draws outside the layout box and so cannot shift a single row while the pointer is over it. */
+.splitlist .item { cursor: grab; }
+.splitlist .item.dragging { opacity: .45; }
+.splitlist .item.dropover { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Edit / Save, at the top of the detail pane. A hairline under it separates the buttons from the fields they
+   act on, which is what makes "these are read-only until you press Edit" visible. */
+.editbar { display: flex; gap: 8px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.grpactions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.grpactions button.action { font-weight: 600; }
+.splitlist .item { gap: 6px; padding: 6px 8px; }
+.splitlist .item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ⚠️ THE ARROWS' STYLES ARE GONE WITH THE ARROWS -- four rules about the opacity and colour of buttons that no
+   longer exist. A style for a control nobody draws is worse than dead code: it reads as "this is how the list's
+   reorder buttons look", and the next person looks for them. */
+/* A field's label is narrower in the detail pane than in a full-width row, so the controls line up with each
+   other rather than starting at the card's own margin. */
+.splitdetail > .row label { flex: 0 0 96px; }
+
+/* ---- the live readout ----
+   ⚠️ GONE, AND DELIBERATELY NOT REPLACED BY ANYTHING. `ApexFeature::liveText` was a feature's one-line account
+   of what it was doing, drawn above the feature's page. The user asked for it (ABI 7 -> 8), then twice decided
+   against it: once for the feature that had it first ("自动输入法页，最上方的状态提示去了"), and once after seeing
+   it moved into KeepAwake's own list bar ("其实这个提示可以完全去掉。并不需要"). So the field, the box, the CSS and
+   the once-a-second poll are all gone from both ends (ABI 9 -> 10). What it was for -- "my rule is not firing and
+   I cannot see why" -- is answered by the feature's own controls and by the host log, and a line that nobody
+   reads is worse than no line: it costs a message a second and looks like state. */
+
+.err { color: var(--warn); font-size: 12px; margin-top: 6px; }
+/* The banner sits between the header and the scrolling body, so it needs the padding the body used to give
+   it. It is a sibling of #body rather than a child -- see the note in the markup for why that matters.
+   ⚠️ THE OUTER PADDING IS ON THE MESSAGE, NOT ON THE WRAPPER. With it on #banner the 16px stayed there even
+   while the message was hidden, so every page carried an empty band under its header. Padding on the thing
+   that can be hidden costs nothing when it IS hidden. */
+#banner { padding: 0; }
+#nohost {
+  display: none; margin: 16px 20px 0; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid var(--warn); color: var(--warn); font-size: 13px;
+}
+/* "still loading", not "something is wrong": the same line, in the quiet colour. A red warning that turns out to
+   be nothing is worse than no warning at all -- the user learns to ignore it. */
+#nohost.wait { border-color: var(--line); color: var(--sub); }

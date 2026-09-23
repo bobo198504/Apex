@@ -1,0 +1,14 @@
+# ── 构建产物 ─────────────────────────────────────────────────
+# build/ 整个目录都是产物：apex.exe / apex-settings.exe / 各功能 DLL，
+# 以及每一扇门自己的临时拷贝（build\_xxx_run\）。随时可以用
+# `bash apex/build.sh` 重新生成，所以不进备份。
+/build/
+
+# Rust 构建缓存（AutoIME 用 cargo 构建，target\ 有 640 MB）
+/features/AutoIME/target/
+
+# ── 编辑器 / 系统杂物 ────────────────────────────────────────
+Thumbs.db
+desktop.ini
+*.swp
+*~

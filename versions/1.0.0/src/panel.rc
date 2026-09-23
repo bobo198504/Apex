@@ -1,0 +1,27 @@
+#include <windows.h>
+
+// The panel's page, carried INSIDE apex-settings.exe.
+//
+// A resource rather than a file beside the exe, for three reasons: there is nothing to lose or to
+// accidentally edit, there is no working-directory problem (the page is not resolved relative to anything),
+// and the panel cannot end up running a stale page from an earlier version.
+//
+// 256 is the resource id, chosen so it cannot collide with the icon ids; ui_webview.cpp loads RCDATA 256.
+256 RCDATA "ui/panel.html"
+
+// THE PRODUCT MARK, the same pair the host carries and the same contrast rule: the DARK artwork on a light
+// system, the LIGHT (cream) one on a dark one. Id 1 doubles as this exe's own file icon, as it does in the
+// host's .rc.
+//
+// ⚠️ THE IDS COME FROM icons.h -- see that file, and the same note in apex.rc. This file happened to carry
+// the numbers 1 and 2 written out, while the HOST's .rc carried NAMES; that is exactly why the panel's
+// window icon followed the theme and the tray's did not, and why the report looked like "the icons do not
+// follow the theme" when in truth one of the two exes had never been able to load the second mark at all.
+#include "icons.h"
+
+IDI_APEX_LIGHT ICON "../icon/apex-light.ico"
+IDI_APEX_DARK  ICON "../icon/apex-dark.ico"
+
+// The manifest. Not optional for a desktop app: without one Windows applies legacy behaviour to the
+// process (DPI virtualisation among it). The dark caption does NOT depend on it -- measured both ways.
+1 24 "settings.manifest"

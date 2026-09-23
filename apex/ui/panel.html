@@ -1,0 +1,71 @@
+<!doctype html>
+<!--
+  THE SHELL, AND ONLY THE SHELL. The panel's page is three source files: this markup, `panel.css` and `panel.js`.
+  `apex/build.sh` assembles the three into `build/panel.built.html`, and THAT is what is embedded in
+  apex-settings.exe (RCDATA 256). So: edit the part you mean, and treat the assembled file as an artefact --
+  the next build overwrites it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>Apex</title>
+<style>
+/*__APEX_PANEL_CSS__*/
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <!--
+      THE BRAND BLOCK IS CLICKABLE AND MEANS "GENERAL".
+
+      It used to be a heading, with a separate General button pinned to the bottom of the sidebar -- and that
+      button never worked: the code set its text and its class on every render and NEVER ATTACHED A CLICK
+      HANDLER, so once the user opened a feature there was no way back to the general settings. Reported as
+      "列表和通用还不能正常的切换", which is exactly what a missing listener looks like from outside.
+
+      So the entry moved here (where the heading already was) and the handler is attached ONCE, below. Being
+      the heading of the list is what makes it read as "the settings for the list itself".
+    -->
+    <div id="brand">
+      <div class="mark"><span>端</span><small>/ Apex</small></div>
+      <div class="slogan"><span id="slogantext"></span><span class="ver" id="hostver"></span></div>
+    </div>
+    <div id="nav"></div>
+  </div>
+
+  <div id="main">
+    <div id="head">
+      <h1 id="title"></h1>
+      <span class="ver" id="ver"></span>
+      <span class="desc" id="desc"></span>
+      <span class="grow"></span>
+      <button id="btnFile" style="display:none"></button>
+    </div>
+    <!--
+      TWO CONTAINERS, AND THE BANNER IS NOT IN THE ONE THAT GETS REDRAWN.
+
+      The "the host is not running" banner used to live inside #body, and #body is what renderGeneral and
+      renderFeature EMPTY before drawing (b.innerHTML = ""). So the first render deleted the banner element,
+      and the next render -- any click, any refresh -- then threw "missing element #nohost" and left the page
+      half-drawn. The failure appeared on a CLICK, which is what made it look like a click bug rather than a
+      structural one.
+
+      Keeping it as a sibling means the two regions have separate lifetimes: the banner is written once and
+      toggled by display, and the body is thrown away and rebuilt as often as the view changes.
+    -->
+    <div id="banner">
+      <div id="nohost"></div>
+    </div>
+    <!-- ⚠️ THE LIVE READOUT USED TO SIT HERE, and it is gone from both ends -- see the note where its CSS was
+         (ABI 9 -> 10). Nothing between the banner and the body now. -->
+    <div id="body"></div>
+  </div>
+</div>
+
+<script>
+/*__APEX_PANEL_JS__*/
+</script>
+</body>
+</html>

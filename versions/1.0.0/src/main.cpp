@@ -1,0 +1,1250 @@
+// ---------------------------------------------------------------------------
+// APEX -- the host.
+//
+// 端，体之无序而最前者也。   -- 《墨经》
+//
+// WHAT THIS PROGRAM IS: a shell that holds features. It owns everything that has to be true for the
+// whole program -- the one low-level hook, the one clock, the one injection path, the tray icon and the
+// settings panel -- and each feature owns exactly one behaviour. Adding a feature is dropping a folder into
+// Plugins\, not editing this file.
+//
+// THE DECISION ORDER FOR ONE WHEEL, and it is deliberately strict (the rule is in decision.h; this is its
+// shape):
+//
+//   1. is this our own injected wheel?             yes -> let it through untouched (no self-loop)
+//   2. is another handler responsible?             yes -> let it through (the REAPER plugin, or an
+//                                                         unreadable process: UNKNOWN means taken)
+//   3. is there any feature that could deliver?     no -> let it through (nothing to replace it with)
+//   4. ask each enabled feature, in order.       the first that says "mine" wins, the original message
+//                                                is swallowed, and its motion becomes the only effect.
+//
+// Rule 4 is "first feature wins" rather than "let every feature act", because two features moving the
+// same wheel would add their travel together and neither would be able to predict the result. A feature
+// that wants a modified wheel can say so; one that ignores modifiers should NOT swallow them, and that is
+// the feature's own call to make (see onWheel in abi.h).
+//
+// ⚠️ TWO STEPS THAT USED TO BE IN THIS LIST ARE GONE, and the order above is what the code does now: there is
+// no host-wide master switch (a feature owns its own enable -- the host's `off` list), and no host-side
+// blacklist (each feature owns its list and declines the wheel itself -- see ApexFeature::listOp). A listed
+// program still gets its wheel untouched; what changed is who decides.
+//
+// ---------------------------------------------------------------------------
+
+#include "abi.h"
+#include "host.h"
+#include "hostconfig.h"
+#include "icons.h"
+#include "loader.h"
+#include "paths.h"
+#include "settings_ipc.h"
+#include "decision.h"
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <string.h>
+
+using namespace apex;
+
+namespace {
+
+HostConfig g_cfg;
+Loader g_loader;
+HWND g_wnd = nullptr;
+
+// The frame rate the model is asked for. 4 ms is the plugin's shipping value and what makes a notch come
+// out as ~0.75 deltas per frame instead of a visible staircase. It is a named constant because the whole
+// reason the app exists is that measurement.
+double g_frameMs = 4.0;
+
+// The panel's own process. Settings live in a SEPARATE process on purpose: the hook is in the OS input
+// path, and a panel that hangs, crashes, or is killed must not be able to take smoothing down with it.
+// (See settings_host.cpp for the other side of this.)
+PROCESS_INFORMATION g_panel = {0};
+
+// ---- logging ----
+// Beside the exe and truncated per run; the first question about a host is always "which feature took
+// which wheel", and that has to be readable without a debugger.
+FILE *g_log = nullptr;
+CRITICAL_SECTION g_logLock;
+// ONE LINE PER WHEEL, for the cases where "which wheel went where" has to be readable without a debugger.
+// OFF unless the environment says otherwise -- per-wheel logging at 250 Hz is a lot of log.
+//
+// ⚠️ IT USED TO BE `bool g_trace = false;` AND NOTHING ELSE: the branch that reads it was unreachable, so the
+// feature existed only as a line of code that could never run. (host_win.cpp already reads a test switch from
+// the environment the same way -- see APEX_ACCEPT_INJECTED.)
+bool g_trace = GetEnvironmentVariableA("APEX_TRACE_WHEELS", nullptr, 0) > 0;
+
+void LogLine(const char *fmt, ...)
+{
+  if (!g_log)
+    return;
+  EnterCriticalSection(&g_logLock);
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(g_log, fmt, ap);
+  va_end(ap);
+  fputc('\n', g_log);
+  fflush(g_log);
+  LeaveCriticalSection(&g_logLock);
+}
+
+// ---- the feature-facing host services ------------------------------------------------------------
+
+// The frame cache's own clock. Defined further down, and needed by the settings protocol's accessors
+// (a blacklist change has to drop the cache and force an immediate re-warm).
+extern double g_lastWarmSec;
+
+// ---- the target cache -----------------------------------------------------------------------------
+//
+// The hook may only DECIDE, and it must decide from something already computed: the cross-process lookups
+// behind a target cost up to ~1.9 ms, which is far too long to spend in the OS input callback. The cache is
+// refreshed on the frame instead.
+//
+// ⚠️ THE PUBLICATION IS SEQUENCED, AND THAT IS NOT TIDINESS. The struct used to be assigned in place while
+// its "valid" flag stayed up, so a reader could take `pid` from the NEW target and `handler` from the OLD
+// one. The combination that matters is a program WITH its own wheel handler being read as handler=ABSENT: the
+// decision then lets a feature smooth it, which is exactly the "two handlers driving one view" case
+// decision.h calls worse than an unsmoothed wheel. It needs the refresh to land inside the few hundred
+// nanoseconds the copy takes -- rare, and rare is not a specification in the input path, where being wrong is
+// a visible double-scroll.
+//
+// THE PATTERN (a seqlock, the standard way to publish a struct without a lock): the writer bumps the sequence
+// to ODD while the struct is being rewritten and to EVEN when it is whole again; a reader takes the sequence
+// before and after its copy and retries if either the odd bit is set or the two reads differ.
+struct TargetInfo
+{
+  unsigned long pid = 0;
+  char exe[64] = {0};
+  int handler = APEX_HANDLER_UNKNOWN;
+  // THE POINT WAS OVER APEX'S OWN SETTINGS PANEL (see decision.h rule 2). Resolved here, in the frame, for the
+  // same reason the handler state is: it needs a window query, and doing it in the frame keeps the hook to a
+  // cached read.
+  bool ownUi = false;
+  bool resolved = false;
+  double at = 0.0;
+};
+
+volatile LONG g_targetSeq = 0; // odd while a write is in progress (see above)
+TargetInfo g_target;
+static const double kTargetTtlSec = 3.0;
+
+// A CONSISTENT COPY of the cache, or false. On false the caller must treat the target as UNKNOWN: the cache
+// is mid-rewrite and nothing in it is trustworthy for this event. That is the safe direction -- unknown means
+// the feature declines and the wheel passes through untouched -- and it costs nothing when it does not
+// happen, which is the usual case.
+bool SnapshotTarget(TargetInfo *out)
+{
+  for (int attempt = 0; attempt < 4; ++attempt)
+  {
+    const LONG s1 = InterlockedCompareExchange(&g_targetSeq, 0, 0);
+    if (s1 & 1)
+      continue; // a write is in progress
+    *out = g_target;
+    if (InterlockedCompareExchange(&g_targetSeq, 0, 0) == s1)
+      return true; // no write started while we were copying, so this is one whole value
+  }
+  return false;
+}
+
+void RefreshTarget(int x, int y)
+{
+  TargetInfo t;
+  void *root = nullptr;
+  if (host::TargetUnderCursor(x, y, t.exe, (int)sizeof(t.exe), &t.pid, &root))
+  {
+    // OUR OWN SETTINGS PANEL, identified by its WINDOW CLASS.
+    //
+    // ⚠️ NOT BY EXE NAME, and not by "is the other handler present". Neither can answer this: the page under
+    // the cursor is a hosted browser owned by msedgewebview2.exe, a shared component that could belong to any
+    // program, while the top-level window it sits in is the panel's own ApexSettingsWnd (measured; see
+    // TargetUnderCursor). And ExternalHandlerState would call the panel "absent", which is true of REAPER
+    // handlers and says nothing about whether this is ours.
+    //
+    // THE CLASS IS THE SAME IDENTITY THE REST OF THE PROGRAM USES for this window -- settings_main.cpp's
+    // "already open?" check and OpenSettings()'s "bring it forward" both use FindWindowA on this name. Using
+    // anything else here would be a second answer to "where is the panel", which is the shape of bug this
+    // project has paid for before.
+    //
+    // (An earlier draft compared against g_panelWnd, the handle learned from IPC. That works, but only after
+    // the panel's first request has arrived, so a wheel in the first moments would be smoothed -- and the
+    // handle can go stale. The class name has neither problem and needs no state.)
+    char rootClass[64] = {0};
+    if (root)
+      GetClassNameA((HWND)root, rootClass, sizeof(rootClass));
+    t.ownUi = (strcmp(rootClass, APEX_SETTINGS_WND_CLASS) == 0);
+
+    char detail[160] = {0};
+    t.handler = host::ExternalHandlerState(t.exe, t.pid, detail, (int)sizeof(detail));
+    t.resolved = true;
+    t.at = host::NowSecondsPublic();
+    if (detail[0])
+      LogLine("target exe=\"%s\" pid=%lu handler=%s (%s)%s", t.exe, t.pid,
+              t.handler == APEX_HANDLER_PRESENT   ? "present"
+              : t.handler == APEX_HANDLER_ABSENT ? "absent"
+                                                 : "unknown",
+              detail, t.ownUi ? " [our own panel: wheels pass]" : "");
+  }
+  else
+  {
+    t.pid = 0;
+    t.at = host::NowSecondsPublic();
+  }
+  // ODD, WRITE, EVEN -- in that order, so a reader never sees a half-written struct (see the note above).
+  InterlockedIncrement(&g_targetSeq);
+  g_target = t;
+  InterlockedIncrement(&g_targetSeq);
+}
+
+// Cheap lookup for the hook: one WindowFromPoint and a comparison.
+//
+// ⚠️ IT READS THE CACHE THROUGH SnapshotTarget, and that is why: everything below decides from ONE whole
+// value. Reading `pid` for the comparison and then `exe`/`handler` for the answer -- which is what this did --
+// can mix two targets, and the feature would then smooth a program whose handler state was never checked.
+int TargetAt(int x, int y, ApexTarget *out)
+{
+  TargetInfo t;
+  if (!SnapshotTarget(&t))
+    return 0; // the cache is mid-rewrite: unknown, so nothing may act on it
+  if (t.pid == 0)
+    return 0;
+  POINT pt = {x, y};
+  HWND w = WindowFromPoint(pt);
+  if (!w)
+    return 0;
+  DWORD pid = 0;
+  GetWindowThreadProcessId(w, &pid);
+  if (pid != t.pid)
+    return 0; // the cursor moved to another program: unknown, so let through
+  if (out)
+  {
+    out->pid = t.pid;
+    memcpy(out->exe, t.exe, sizeof(out->exe));
+    out->handlerState = t.handler;
+  }
+  return 1;
+}
+
+void HostInjectDeltas(double deltas)
+{
+  // THE CARRY LIVES HERE, at the boundary, because a wheel carries whole deltas and the model does not.
+  // Rounding per frame instead would quietly throw away the slow end of every glide -- which is most of
+  // the smoothness this program exists to provide.
+  static double carry = 0.0;
+  carry += deltas;
+  const double whole = (carry < 0.0) ? -floor(-carry) : floor(carry);
+  if (whole == 0.0)
+    return;
+  carry -= whole;
+  host::InjectQueuePush((int)whole);
+}
+
+// The feature whose call is in progress, so a feature can ask the host where its own folder is without
+// having to pass its id back for every call. Set for the duration of each call into a feature -- including
+// init(), which is where a feature reads its settings and therefore asks first.
+const char *g_currentFeatureId = nullptr;
+
+void HostLog(const char *text)
+{
+  if (text)
+    LogLine("  [feature] %s", text);
+}
+
+int HostFeatureDir(char *out, int outSize)
+{
+  return g_currentFeatureId ? (FeatureDir(g_currentFeatureId, out, outSize) ? 1 : 0) : 0;
+}
+
+// RAII for the id: every call into a feature brackets it with this, so an early return inside the feature
+// cannot leave the host pointing at the wrong one.
+struct FeatureScope
+{
+  const char *prev;
+  explicit FeatureScope(const char *id) : prev(g_currentFeatureId) { g_currentFeatureId = id; }
+  ~FeatureScope() { g_currentFeatureId = prev; }
+};
+
+ApexHost g_hostApi = {};
+
+// ---- "something worth showing just happened" ------------------------------------------------------
+//
+// A feature calls ApexHost::activity() from its own onWheel, which runs IN THE OS INPUT PATH.
+//
+// ⚠️ IT RUNS ON THIS THREAD -- the main one. A low-level hook is called on the thread that installed it (see
+// host_win.cpp), and that is WinMain's, the same thread this window procedure and the timer live on. So no
+// cross-thread machinery is needed here and, in particular, PostMessage is just an enqueue: it does not wait
+// for the panel, which may be busy, and it cannot block on it. (The earlier note here said the opposite --
+// "no sends" -- which was written before that was checked; the honest version is "one post, on the edge".)
+//
+// TWO PATHS OUT, for two different reasons:
+//
+//   * THE EDGE (idle -> active) is posted IMMEDIATELY. That is the moment the user feels: they turn the wheel
+//     and the picture has to move. Waiting for the next tick costs up to kActivityNotifyMs of pure lag on
+//     exactly the event that is being watched.
+//   * THE REST IS COALESCED by the timer. A sustained roll, or a free-spinning device reporting hundreds of
+//     events a second, would otherwise mean one cross-process script call per event -- and each of those is an
+//     IPC into the browser process. The panel cannot show more than a frame's worth anyway.
+//
+// The count is CLAIMED with an exchange on both paths, so an event is delivered exactly once whichever path
+// gets to it first (the edge and the tick can race, and a plain read-then-write would double-count).
+volatile LONG g_activity = 0;    // every call a feature has made (only deltas matter)
+volatile LONG g_activitySent = 0; // how much of that already reached the panel
+UINT g_activityMsg = 0;          // the registered message; 0 = registration failed
+#define APEXWM_ACTIVITY_TIMER 1  // the host window's low-rate timer id
+#define APEXWM_SAVE_TIMER 2      // writes the settings shortly after an edit settles (see SettingsTouch)
+
+// ---------------------------------------------------------------------------
+// SETTINGS ARE WRITTEN SOON AFTER THEY CHANGE, not only on the way out.
+//
+// WHY THIS EXISTS, and it is worth stating because "save on exit" sounds adequate: the exit path is a CLEAN
+// exit (WM_CLOSE -> DestroyWindow), and the ways this program actually ends are not clean. A `taskkill /F`,
+// a crash, a machine that is reset, or the user simply leaving it running for a week all skip it -- and what
+// is skipped is every parameter the user tuned, which is the one thing in this folder that cannot be
+// rebuilt. Measured, that is exactly what happened: settings were adjusted, the process was killed, and the
+// next start came up on the defaults.
+//
+// The debounce is what keeps this from becoming a file write per mouse move. A slider reports EVERY position
+// (`setFeature` is sent per pixel -- see the panel's rangeRow), so a save on each one would be hundreds of
+// writes for one drag. Instead each edit pushes the timer back, and the write happens once the user has
+// paused for a moment. A drag is one write; a stream of edits is one write per pause.
+//
+// THE DELAY IS SHORT ON PURPOSE. It is not a performance knob: it only has to outlast a drag, and every
+// millisecond of it is a millisecond of editing that a forced kill could still lose.
+#define APEXWM_SAVE_DELAY_MS 1000
+
+// The panel's window, once it has said who it is. See SettingsPanelSeen below.
+HWND g_panelWnd = nullptr;
+
+void HostActivity()
+{
+  const LONG now = InterlockedIncrement(&g_activity);
+  if (now != 1 || !g_activityMsg || !g_panelWnd)
+    return; // not the edge, or nowhere to send it: the timer will pick it up
+  const LONG claimed = InterlockedExchange(&g_activitySent, now);
+  if (now > claimed)
+    PostMessageA(g_panelWnd, g_activityMsg, (WPARAM)(now - claimed), 0);
+}
+
+// Hand the panel whatever has happened since the last look. Called from the timer, on the main thread.
+void NotifyActivity()
+{
+  if (!g_activityMsg || !g_panelWnd)
+    return;
+  const LONG now = InterlockedCompareExchange(&g_activity, 0, 0);
+  const LONG claimed = InterlockedExchange(&g_activitySent, now);
+  if (now <= claimed)
+    return; // nothing new, or the edge already took it
+  PostMessageA(g_panelWnd, g_activityMsg, (WPARAM)(now - claimed), 0);
+}
+
+// (The panel's window handle is remembered by SettingsPanelSeen, declared in settings_ipc.h and defined down
+// in the apex::host block at the end of this file -- NOT here: an anonymous namespace has internal linkage, and
+// settings_host.cpp has to be able to call it.)
+
+
+
+void InitHostApi()
+{
+  g_hostApi.abiVersion = APEX_ABI_VERSION;
+  g_hostApi.structSize = sizeof(ApexHost);
+  g_hostApi.targetAt = TargetAt;
+  g_hostApi.injectDeltas = HostInjectDeltas;
+  g_hostApi.logLine = HostLog;
+  g_hostApi.featureDir = HostFeatureDir;
+  g_hostApi.activity = HostActivity;
+  g_hostApi.hostUser = nullptr;
+}
+
+// ---- the one decision ---------------------------------------------------------------------------
+//
+// RUNS IN THE OS INPUT PATH. It may only decide from the cache and record; every expensive thing is on
+// the frame. The single exception is the features' own onWheel, which the ABI requires to be cheap for
+// the same reason.
+struct Pending
+{
+  ApexWheelEvent ev;
+};
+
+const LONG kQueueMax = 256;
+Pending g_queue[256];
+volatile LONG g_qHead = 0;
+volatile LONG g_qCount = 0;
+
+// NOTE ON WHAT THE QUEUE IS FOR, since two of its fields were write-only until a review caught it: the feature
+// is told about a wheel IN THE HOOK (that is how it decides to take one), so nothing here needs to carry a
+// verdict or a time -- what the frame does with a wheel is log it. `swallow`/`t` used to be recorded and never
+// read, which reads as "this is where the swallow is decided" to anyone looking for that decision. It is not:
+// decision.h decides, in the hook, and the answer is used there.
+
+bool OnWheel(const ApexWheelEvent &ev, void *user)
+{
+  (void)user;
+
+  // THE DECISION IS IN apex/decision.h, as a pure function over the facts. It lives there for one reason: its
+  // failure mode is "scrolling stops working" (it has happened once -- with the switch off, the hook kept
+  // swallowing while nothing replaced the notch), and a pure function can be swept exhaustively by a test
+  // that runs the REAL code. A COPY of this logic used to live in that probe, which is exactly how a copy and
+  // its original come to disagree.
+  //
+  // What stays here is everything that needs the host: reading the caches, counting the features, and calling
+  // into them.
+  DecisionInputs in;
+  in.injected = ev.injected != 0;
+  in.acceptInjected = host::CaptureAcceptsInjected();
+
+  // ⚠️ ONE WHOLE SNAPSHOT OF THE CACHE, and the old comment here claimed that is what this did -- while
+  // reading `pid` and `handler` as two separate loads from a struct another thread rewrites in place. Those
+  // two loads could straddle a refresh, and the dangerous mix is a program that HAS a wheel handler being read
+  // as ABSENT (the cache still holding the previous target's verdict), because then a feature is allowed to
+  // smooth it. A failed snapshot means the cache is mid-rewrite: the target is simply UNKNOWN for this event,
+  // which is the safe direction (the decision passes and nothing is swallowed).
+  {
+    TargetInfo t;
+    if (SnapshotTarget(&t))
+    {
+      in.targetKnown = t.pid != 0;
+      in.handlerState = t.handler;
+      in.ownUi = t.ownUi; // a wheel over our own panel passes -- see decision.h rule 2
+    }
+  }
+
+  // How many features could actually deliver something: the same three conditions the loop below applies,
+  // counted instead of acted on. THIS IS WHAT MAKES THE INVARIANT TRUE -- the rule in decision.h refuses to
+  // eat an event when this is zero, because there would be nothing to replace it with.
+  in.featuresEnabled = 0;
+  for (int i = 0; i < g_loader.Count(); ++i)
+  {
+    const LoadedFeature &f = g_loader.At(i);
+    if (f.ok && f.api && f.api->onWheel && !g_cfg.FeatureOff(f.api->id) &&
+        (!f.api->flags || (f.api->flags() & APEX_FEATURE_ENABLED)))
+      ++in.featuresEnabled;
+  }
+
+  if (DecideWheel(in) == Decision::kPass)
+    return false; // let it through untouched
+
+  // THE FEATURES, in load order; the first that says "mine" wins. A feature that declines leaves the message
+  // untouched, which is the other half of the invariant: reaching here only means "you may ask", never "eat
+  // it".
+  int taken = -1;
+  for (int i = 0; i < g_loader.Count(); ++i)
+  {
+    const LoadedFeature &f = g_loader.At(i);
+    if (!f.ok || !f.api || !f.api->onWheel)
+      continue;
+    if (g_cfg.FeatureOff(f.api->id))
+      continue;
+    if (f.api->flags && !(f.api->flags() & APEX_FEATURE_ENABLED))
+      continue;
+    // The id is bracketed around the call so the feature can reach its own folder; see FeatureScope.
+    FeatureScope scope(f.api->id);
+    const int took = f.api->onWheel(&ev);
+    if (took)
+    {
+      taken = i;
+      break;
+    }
+  }
+
+  if (taken < 0)
+    return false;
+
+  // Recorded for the frame. The queue is bounded and the oldest is dropped rather than the newest: a
+  // wheel produces at most a few messages per frame, so this is a guard against a pathological burst, not
+  // a buffer anything expects to fill.
+  if ((int)InterlockedCompareExchange(&g_qCount, 0, 0) < (int)kQueueMax)
+  {
+    const LONG i = (g_qHead + g_qCount) % kQueueMax;
+    g_queue[i].ev = ev;
+    InterlockedIncrement(&g_qCount);
+  }
+  return true; // SWALLOW: the host is driving this wheel
+}
+
+// ---- the frame ----------------------------------------------------------------------------------
+double g_lastTickSec = 0.0;
+double g_lastWarmSec = 0.0;
+static const double kWarmEverySec = 0.25;
+
+void WarmTargetCache()
+{
+  const double now = host::NowSecondsPublic();
+  if (now - g_lastWarmSec < kWarmEverySec)
+    return;
+  g_lastWarmSec = now;
+
+  POINT pt;
+  GetCursorPos(&pt);
+  HWND w = WindowFromPoint(pt);
+  DWORD pid = 0;
+  if (w)
+    GetWindowThreadProcessId(w, &pid);
+  // The cache is still good if it is the SAME program and young enough -- decided from one whole snapshot, so
+  // `pid` and `at` cannot come from two different refreshes. (A failed snapshot falls through to a refresh,
+  // which is the right answer either way: it means a write is in flight, so the value is about to change.)
+  {
+    TargetInfo t;
+    if (SnapshotTarget(&t) && pid == t.pid && (now - t.at) < kTargetTtlSec)
+      return;
+  }
+  RefreshTarget(pt.x, pt.y);
+}
+
+void Tick(void *)
+{
+  const double now = host::NowSecondsPublic();
+  if (g_lastTickSec == 0.0)
+    g_lastTickSec = now;
+  double dt = now - g_lastTickSec;
+  g_lastTickSec = now;
+  if (dt <= 0.0)
+    return;
+  if (dt > 0.25)
+    dt = 0.25; // a stalled frame must not fling the receiver
+
+  // Drain the wheel queue. The feature was already told about these in the hook (that is how it decided
+  // to take them); this is only where the bookkeeping they imply is settled.
+  LONG n = InterlockedCompareExchange(&g_qCount, 0, 0);
+  while (n > 0)
+  {
+    const LONG h = InterlockedCompareExchange(&g_qHead, 0, 0);
+    const Pending p = g_queue[h % kQueueMax];
+    InterlockedIncrement(&g_qHead);
+    InterlockedDecrement(&g_qCount);
+    if (g_trace)
+      LogLine("wheel delta=%+5d at %d,%d", p.ev.delta, p.ev.x, p.ev.y);
+    n = InterlockedCompareExchange(&g_qCount, 0, 0);
+  }
+
+  // THE FEATURES' FRAMES. Only a feature that says it is ACTIVE is asked: ticking every feature at 250 Hz
+  // while nothing is moving would be the whole program's cost for no effect at all.
+  for (int i = 0; i < g_loader.Count(); ++i)
+  {
+    const LoadedFeature &f = g_loader.At(i);
+    if (!f.ok || !f.api || !f.api->tick || !f.api->flags)
+      continue;
+    if (g_cfg.FeatureOff(f.api->id))
+      continue;
+    const unsigned fl = f.api->flags();
+    if ((fl & APEX_FEATURE_ENABLED) == 0 || (fl & APEX_FEATURE_ACTIVE) == 0)
+      continue;
+    // The id is bracketed around the call so the feature can reach its own folder; see FeatureScope.
+    FeatureScope scope(f.api->id);
+    const double out = f.api->tick(dt);
+    if (out != 0.0)
+      HostInjectDeltas(out);
+  }
+
+  if (g_qCount == 0)
+    WarmTargetCache();
+}
+
+// ---- the tray -----------------------------------------------------------------------------------
+//
+// THE TRAY SPEAKS THE USER'S LANGUAGE, resolved here rather than taken from the panel: the tray exists
+// whether or not the panel has ever been opened, and a menu that is only correct after visiting the
+// settings would be the wrong way round. `lang = auto` follows the system, an explicit choice overrides it,
+// and both are the SAME rule the panel applies -- the two must not be able to disagree, since the user sees
+// them side by side.
+//
+// WIDE APIs, NOT ANSI. The strings are UTF-8 in this file, and the A variants of these calls interpret
+// their argument in the process's ANSI codepage -- on a non-Chinese Windows that turns 滑动滚轮 into
+// mojibake. The W variants take UTF-16, so every string goes through one conversion (U8) at the point of
+// use and nothing downstream has to know about codepages. (The plugin's notes record the same trap.)
+#define IDM_SETTINGS 40102
+#define IDM_OPEN_DIR 40103
+#define IDM_SHOW_LOG 40104
+#define IDM_QUIT 40105
+#define APEXWM_TRAY (WM_APP + 1)
+
+// "TaskbarCreated" is broadcast by the shell when Explorer starts or restarts. It has no fixed message
+// number, so it is registered at run time; the zero returned if that fails is harmless because the message
+// then simply never arrives (the tray icon would keep working until Explorer next restarts).
+UINT g_taskbarCreated = 0; // set in WinMain; see the note there
+
+NOTIFYICONDATAW g_tray = {};
+bool g_trayUp = false;
+
+// THE ICON IDS LIVE IN icons.h, shared with the .rc files -- see that file for the bug that put them there.
+// (In short: they used to be `#define`d HERE, where the RESOURCE COMPILER could not see them, so the
+// artwork was registered under string names and `MAKEINTRESOURCE(IDI_APEX_DARK)` found nothing at all.)
+
+// UTF-8 -> a static UTF-16 buffer. One buffer is enough because these are only ever used to build a string
+// for a single call; the call copies it (the shell and the menu both do), so nothing holds the pointer.
+const wchar_t *U8(const char *utf8)
+{
+  static wchar_t buf[512];
+  buf[0] = 0;
+  if (utf8)
+    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, buf, (int)(sizeof(buf) / sizeof(buf[0])) - 1);
+  return buf;
+}
+
+// Is the interface to be Chinese? `auto` resolves by asking Windows for the user's preferred UI language,
+// which is the same answer the panel gets (both call into system_win.cpp), so the two cannot disagree.
+bool UiIsChinese()
+{
+  if (g_cfg.lang == Lang::kZh)
+    return true;
+  if (g_cfg.lang == Lang::kEn)
+    return false;
+  char tag[64] = {0};
+  host::PreferredUiLanguage(tag, (int)sizeof(tag));
+  return host::LanguageTagIsChinese(tag);
+}
+
+// Every string the tray can show, in both languages. Chosen by UiIsChinese() at the moment of use rather
+// than cached, so a language change takes effect on the next menu without a restart.
+//
+// ⚠️ THERE IS NO "Enabled / Paused" ITEM ANY MORE, and no tooltip that says either. Apex had a master switch
+// (saved) and a runtime toggle (the tray), and both are gone: enabling is a FEATURE's own business, and a
+// user who wants to stop smoothing turns the feature off in its own page. Two places to say "off" was one
+// place too many -- see apex/decision.h for what replaced them (nothing: the rule's last step covers it).
+struct TrayText
+{
+  const char *tip, *settings, *openDir, *showLog, *quit;
+};
+
+const TrayText kTrayEn = {
+    "running", "Settings...", "Open the Apex folder", "Show log...", "Quit"};
+const TrayText kTrayZh = {
+    "运行中", "设置...", "打开 Apex 文件夹", "查看日志...", "退出"};
+
+const TrayText &TrayStrings() { return UiIsChinese() ? kTrayZh : kTrayEn; }
+
+// Which of the two marks the CURRENT THEME calls for -- the effective one, not the system's: a pinned
+// light/dark in the settings wins over the system, exactly as it does for the page and the caption.
+//
+// The theme question and the mark question are two separate rules, each with one home: `ThemeResolvesLight`
+// (hostconfig.h) resolves the appearance, and `ApexMarkForAppearance` (icons.h) turns it into a resource id.
+// Neither is written out again here -- see icons.h for why that matters.
+int TrayIconId()
+{
+  return ApexMarkForAppearance(ThemeResolvesLight(g_cfg.theme, host::SystemIsLightTheme()));
+}
+
+// The mark for a GIVEN id. The id is a parameter rather than chosen here, and that is on purpose: the
+// caller can then report the same number it loaded. An earlier version had this function pick its own id
+// while the caller computed one separately for the log line, so the log could describe a different mark
+// than the one that was handed to the shell -- the same "the evidence is about something else" failure
+// that let this bug survive a whole session.
+HICON LoadMark(int id)
+{
+  // Windows asks for a 16x16 icon in the tray and a 32x32 on a scaled display; LoadImage picks the closest
+  // size out of the multi-size .ico, which is why the file carries all of them. LR_SHARED is deliberately
+  // NOT used: it would hand back the same shared handle for both variants, and the two are different
+  // resources -- the whole point is to swap between them.
+  //
+  // NULL IS A POSSIBLE ANSWER and the callers check it. It is what happens when the resource is not in this
+  // build at all, which is exactly the failure that went unnoticed for a whole session: the ids lived in
+  // main.cpp where the resource compiler could not see them, so the second mark was never registered.
+  return (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(id), IMAGE_ICON,
+                           GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
+}
+
+// The tray's caption and icon, from the current state. Called on every change that can affect either --
+// the language and a system theme change.
+//
+// ⚠️ THE LOG LINE DESCRIBES THE LOAD, NOT THE INTENTION. It used to print the mark that had been SELECTED
+// ("icon=dark-mark"), which reads as proof that the switch happened while proving nothing of the kind:
+// LoadImage was returning NULL for that id, the shell was never given an icon, and this line said
+// everything was fine. So the id that is logged is the id that was PASSED TO LoadImage, and the load's own
+// result is reported beside it. The two now come from one call, not from two calculations that could drift.
+void TrayUpdate()
+{
+  if (!g_trayUp)
+    return;
+  const TrayText &t = TrayStrings();
+  const int iconId = TrayIconId();
+  const HICON fresh = LoadMark(iconId);
+  // Logged because NOTHING ELSE can show what the tray was given: it is the shell that displays it, so from
+  // outside this process the only evidence is this line. It is what makes "the tray did not change language"
+  // distinguishable from "the tray changed and looked the same".
+  //
+  // The theme in this line is DERIVED FROM THE ID rather than recomputed, so the two halves cannot
+  // disagree: the id IS the appearance, now that the mapping is the direct one. (Recomputing it from the
+  // settings is how a log comes to say "light theme" next to a mark chosen for a dark one.)
+  LogLine("tray: lang=%s icon=%s (%s theme, %s) load=%s tip=\"%s\"", UiIsChinese() ? "zh" : "en",
+          iconId == IDI_APEX_DARK ? "dark-mark" : "light-mark",
+          iconId == IDI_APEX_DARK ? "dark" : "light",
+          g_cfg.theme == Theme::kAuto ? "following the system" : "pinned in the settings",
+          fresh ? "ok" : "FAILED -- the resource is not in this exe; the tray keeps the mark it has", t.tip);
+  // The old icon is destroyed only after the shell has taken the new one: freeing it first would leave the
+  // tray pointing at a deleted handle for the moments in between. A FAILED LOAD CHANGES NOTHING AT ALL --
+  // the previous handle stays in place and is not destroyed, because an icon of the wrong shade is worth
+  // more to the user than no icon, and a NULL here followed by DestroyIcon is how a tray ends up drawing
+  // freed memory until Explorer next repaints.
+  HICON previous = g_tray.hIcon;
+  if (fresh)
+    g_tray.hIcon = fresh;
+  g_tray.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+  g_tray.uCallbackMessage = APEXWM_TRAY;
+  _snwprintf(g_tray.szTip, sizeof(g_tray.szTip) / sizeof(g_tray.szTip[0]), L"Apex -- %ls", U8(t.tip));
+  Shell_NotifyIconW(NIM_MODIFY, &g_tray);
+  if (fresh && previous && previous != fresh)
+    DestroyIcon(previous);
+}
+
+void TrayAdd(HWND h)
+{
+  const TrayText &t = TrayStrings();
+  g_tray.cbSize = sizeof(g_tray);
+  g_tray.hWnd = h;
+  g_tray.uID = 1;
+  g_tray.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+  g_tray.uCallbackMessage = APEXWM_TRAY;
+  // The id is asked for ONCE and used for both the load and the report, so the message cannot end up
+  // describing a different mark than the one that failed. (This used to re-derive the appearance from the
+  // settings here, which is a second answer to a question that already has one -- see icons.h.)
+  const int iconId = TrayIconId();
+  g_tray.hIcon = LoadMark(iconId);
+  // A NULL here means the exe has no such resource, and NIM_ADD then adds a tray entry with no icon --
+  // which the shell draws as a blank slot. Said out loud for the same reason the line in TrayUpdate is:
+  // this failure has no other symptom.
+  if (!g_tray.hIcon)
+    LogLine("tray: the %s mark (id %d) is missing from this exe (LoadImage failed, error %lu) -- the shell "
+            "is being given no icon",
+            iconId == IDI_APEX_DARK ? "dark" : "light", iconId, GetLastError());
+  _snwprintf(g_tray.szTip, sizeof(g_tray.szTip) / sizeof(g_tray.szTip[0]), L"Apex -- %ls", U8(t.tip));
+  g_trayUp = Shell_NotifyIconW(NIM_ADD, &g_tray) != 0;
+  if (g_trayUp)
+    TrayUpdate(); // the same path every other refresh uses, so the log line appears here too
+}
+
+void TrayRemove()
+{
+  if (g_trayUp)
+  {
+    Shell_NotifyIconW(NIM_DELETE, &g_tray);
+    g_trayUp = false;
+  }
+  if (g_tray.hIcon)
+  {
+    DestroyIcon(g_tray.hIcon);
+    g_tray.hIcon = nullptr;
+  }
+}
+
+// THE WINDOW'S OWN ICON, in the variant that belongs to the current appearance. Set on the class so both
+// the title bar and alt-tab use it, and re-set on a theme change -- the class icon is a cached property, so
+// it has to be written again rather than followed automatically.
+void ApplyWindowIcon(HWND h)
+{
+  const int id = TrayIconId();
+  HINSTANCE inst = GetModuleHandleW(nullptr);
+  const HICON big = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(id), IMAGE_ICON,
+                                      GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0);
+  const HICON small = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(id), IMAGE_ICON,
+                                        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
+  // The previous ones were loaded by this function for this window, so replacing them frees nothing the
+  // shell still needs; destroy them explicitly rather than leaking one pair per theme change.
+  HICON oldBig = (HICON)SendMessageW(h, WM_SETICON, ICON_BIG, 0);
+  HICON oldSmall = (HICON)SendMessageW(h, WM_SETICON, ICON_SMALL, 0);
+  // ONLY A HANDLE THAT LOADED IS SET. Passing NULL on would clear the window's icon rather than leave the
+  // previous one, which turns "this build is missing an artwork" into "this window has no icon at all".
+  if (big)
+    SendMessageW(h, WM_SETICON, ICON_BIG, (LPARAM)big);
+  if (small)
+    SendMessageW(h, WM_SETICON, ICON_SMALL, (LPARAM)small);
+  if (oldBig && oldBig != big)
+    DestroyIcon(oldBig);
+  if (oldSmall && oldSmall != small)
+    DestroyIcon(oldSmall);
+}
+
+// ---- settings, in their own process --------------------------------------------------------------
+//
+// THE PANEL MUST NOT BE ABLE TO STOP THE HOOK. It runs as a second process: the host launches it and the
+// two talk through a small window-message protocol. That also means the panel can be written, tested and
+// even crash-restarted without touching the thing that is holding the system's wheel input.
+void OpenSettings()
+{
+  if (g_panel.hProcess)
+  {
+    DWORD rc = 0;
+    GetExitCodeProcess(g_panel.hProcess, &rc);
+    if (rc == STILL_ACTIVE)
+    {
+      // Already up: bring it forward rather than starting a second copy.
+      HWND h = FindOwnWindow(APEX_SETTINGS_WND_CLASS);
+      if (h)
+      {
+        ShowWindow(h, SW_SHOW);
+        SetForegroundWindow(h);
+        return;
+      }
+    }
+    CloseHandle(g_panel.hProcess);
+    CloseHandle(g_panel.hThread);
+    g_panel.hProcess = nullptr;
+  }
+
+  char exeDir[512] = {0};
+  if (!ApexModuleDir(exeDir, (int)sizeof(exeDir)))
+    return;
+  char panel[560] = {0};
+  if (!JoinPath(exeDir, "apex-settings.exe", panel, (int)sizeof(panel)))
+    return;
+  if (GetFileAttributesA(panel) == INVALID_FILE_ATTRIBUTES)
+  {
+    LogLine("settings: apex-settings.exe is not next to apex.exe -- the panel needs it");
+    return;
+  }
+
+  STARTUPINFOA si = {0};
+  si.cb = sizeof(si);
+  char cmd[600] = {0};
+  _snprintf(cmd, sizeof(cmd), "\"%s\"", panel);
+  if (CreateProcessA(panel, cmd, nullptr, nullptr, FALSE, 0, nullptr, exeDir, &si, &g_panel))
+  {
+    LogLine("settings: launched the panel (pid %lu)", g_panel.dwProcessId);
+    CloseHandle(g_panel.hThread);
+    g_panel.hThread = nullptr;
+  }
+  else
+  {
+    LogLine("settings: could not launch the panel (error %lu)", GetLastError());
+  }
+}
+
+void TrayMenu(HWND h)
+{
+  // BUILT FRESH ON EVERY OPEN, and that is what makes the language change work: the menu is destroyed when
+  // it closes (below), so the next right-click rebuilds it from whatever the language resolves to NOW.
+  // Caching it would mean a language change that only takes effect after a restart.
+  //
+  // ⚠️ THERE IS NO "Enabled / Paused" ITEM. It was the first line of this menu and it is gone at the user's
+  // request: a global switch duplicates what a feature's own page already says, and having two of them means
+  // "why is nothing happening" has two answers. Enabling is a feature's business -- turn the feature off.
+  const TrayText &t = TrayStrings();
+
+  HMENU m = CreatePopupMenu();
+  AppendMenuW(m, MF_STRING, IDM_SETTINGS, U8(t.settings));
+  AppendMenuW(m, MF_STRING, IDM_OPEN_DIR, U8(t.openDir));
+  AppendMenuW(m, MF_STRING, IDM_SHOW_LOG, U8(t.showLog));
+  AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(m, MF_STRING, IDM_QUIT, U8(t.quit));
+
+  POINT pt;
+  GetCursorPos(&pt);
+  SetForegroundWindow(h);
+  // THE MENU HAS NO ANSI/UNICODE VARIANT, and that is not an oversight in the headers: a Win32 menu stores
+  // its items as UTF-16 internally (there is no CreateMenuA/W either), so AppendMenuW above put real Unicode
+  // in and TrackPopupMenu renders it. Confirmed against the exports of user32.dll -- it exposes
+  // `TrackPopupMenu` with no suffix at all, and no `TrackPopupMenuA`.
+  const UINT cmd = (UINT)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, nullptr);
+  DestroyMenu(m);
+
+  switch (cmd)
+  {
+  case IDM_SETTINGS:
+    OpenSettings();
+    break;
+  case IDM_OPEN_DIR:
+  {
+    char dir[512] = {0};
+    if (ApexModuleDir(dir, (int)sizeof(dir)))
+      ShellExecuteA(nullptr, "open", dir, nullptr, nullptr, SW_SHOWNORMAL);
+    break;
+  }
+  case IDM_SHOW_LOG:
+  {
+    char dir[512] = {0};
+    if (ApexModuleDir(dir, (int)sizeof(dir)))
+    {
+      char p[560] = {0};
+      if (JoinPath(dir, "apex.log", p, (int)sizeof(p)))
+        ShellExecuteA(nullptr, "open", p, nullptr, nullptr, SW_SHOWNORMAL);
+    }
+    break;
+  }
+  case IDM_QUIT:
+    DestroyWindow(h);
+    break;
+  }
+}
+
+LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+  switch (msg)
+  {
+  // THE LOW-RATE LOOK AT THE ACTIVITY COUNTER. ~30 ms, on this thread, for one reason: the features call
+  // ApexHost::activity() from the INPUT PATH, so the message to the panel must happen somewhere else -- see the
+  // note on the counter above, and kActivityNotifyMs.
+  //
+  // ⚠️ SetTimer IS FINE HERE AND ONLY HERE. This project's rule against it (AGENTS.md) is about THE FRAME
+  // CLOCK, where its ~15.6 ms floor turns a 4 ms model into a visible staircase -- measured. A UI notification
+  // has no such requirement: 30 ms of jitter on an animation nobody is timing is invisible, and this costs the
+  // engine's timer thread nothing.
+  case WM_TIMER:
+    if (wp == APEXWM_ACTIVITY_TIMER)
+    {
+      NotifyActivity();
+      return 0;
+    }
+    // The debounced settings write: the edit settled, so the file is brought up to date. One-shot by
+    // construction -- see SettingsTouch.
+    if (wp == APEXWM_SAVE_TIMER)
+    {
+      KillTimer(h, APEXWM_SAVE_TIMER);
+      host::SettingsSaveAll();
+      return 0;
+    }
+    break;
+
+  case APEXWM_TRAY:
+    if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU)
+      TrayMenu(h);
+    else if (LOWORD(lp) == WM_LBUTTONDBLCLK)
+      OpenSettings();
+    return 0;
+
+  // THE SETTINGS PANEL, which is a SEPARATE PROCESS. Everything it asks for arrives here, on this thread --
+  // the same one the tray lives on, and NOT the one the wheels are decided on. That separation is the
+  // reason a hung panel cannot stop smoothing: the hook and the engine never wait for this.
+  //
+  // ⚠️ THE SENDER IS `wp`, NOT `h`. In WM_COPYDATA the WPARAM carries the handle of the window that SENT
+  // the message -- which is the panel. Passing `h` (this window) had the host answering ITSELF: the reply
+  // went to the host's own window procedure, which ignored it, and the panel waited for an answer that
+  // never came. That is why the panel reported "the host is not running" while the host ran fine beside it.
+  case WM_COPYDATA:
+    return host::SettingsIpc((HWND)wp, (const COPYDATASTRUCT *)lp);
+
+  // THE SYSTEM CHANGED UNDER US. Three things arrive here and all three have to be re-read, because each
+  // was chosen for contrast or for the user's own settings rather than fixed at start-up:
+  //
+  //   * the app light/dark theme -- the tray icon and this window's icon are picked by it;
+  //   * the taskbar was re-created (Explorer restarting) -- the icon has to be re-added, not modified;
+  //   * the UI language -- the tray's own text is resolved by it.
+  //
+  // The lParam names WHICH setting changed ("ImmersiveColorSet" for the theme, "intl" for the language) but
+  // none of the three is expensive, so all of them are refreshed together. Re-reading is what makes this
+  // correct rather than clever: a language change does not always arrive as a message we can anticipate.
+  case WM_SETTINGCHANGE:
+  case WM_THEMECHANGED:
+    TrayUpdate();
+    ApplyWindowIcon(h);
+    return 0;
+
+  case WM_DESTROY:
+    TrayRemove();
+    PostQuitMessage(0);
+    return 0;
+  }
+
+  // Explorer was restarted: the old tray entry is gone with it, so the icon must be ADDED again rather than
+  // modified (NIM_MODIFY against a shell that no longer knows us does nothing at all).
+  //
+  // Checked HERE rather than in a case label because "TaskbarCreated" has no fixed message number -- it is
+  // registered at run time, so it is not a compile-time constant and a case label cannot hold it.
+  if (g_taskbarCreated != 0 && msg == g_taskbarCreated)
+  {
+    g_trayUp = false;
+    TrayAdd(h);
+    return 0;
+  }
+
+  return DefWindowProcA(h, msg, wp, lp);
+}
+
+bool LoadHostConfig()
+{
+  char path[560] = {0};
+  if (!HostConfigPath(path, (int)sizeof(path)))
+    return false;
+  FILE *f = fopen(path, "rb");
+  if (!f)
+  {
+    LogLine("host settings: none yet (%s) -- using defaults, and one is written on exit", path);
+    return false;
+  }
+  static char text[8192];
+  const size_t n = fread(text, 1, sizeof(text) - 1, f);
+  fclose(f);
+  text[n] = 0;
+  const bool ok = ParseHostConfig(text, g_cfg);
+  LogLine("host settings: %s (%s)", ok ? "loaded" : "kept defaults", path);
+  return ok;
+}
+
+void SaveHostConfig()
+{
+  char path[560] = {0};
+  if (!HostConfigPath(path, (int)sizeof(path)))
+    return;
+  static char text[8192];
+  FormatHostConfig(g_cfg, text, (int)sizeof(text));
+  char tmp[600] = {0};
+  if (_snprintf(tmp, sizeof(tmp), "%s.tmp", path) <= 0)
+    return;
+  FILE *f = fopen(tmp, "wb");
+  if (!f)
+    return;
+  fputs(text, f);
+  fclose(f);
+  MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING);
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// apex::host:: -- the two pieces of the host's state that OTHER translation units need to reach.
+//
+// They are defined here, OUTSIDE the anonymous namespace above and qualified as apex::host (not just
+// host), because that is the namespace host.h declares them in. An unqualified `namespace host` at this
+// point would be a global one, and the calls in this file would then be ambiguous between it and
+// apex::host -- which is exactly the error it produced.
+//
+// The state itself stays file-scope: nothing outside this file touches g_currentFeatureId directly.
+// ---------------------------------------------------------------------------
+namespace apex {
+namespace host {
+
+// THE TRAY FOLLOWS THE PANEL. The tray's icon and text are drawn from the host settings, and the panel can
+// change them, so this is the route back: settings_host.cpp calls it, and it touches the tray and nothing
+// else. Declared in host.h; defined below, where the tray lives.
+void TrayRefreshFromSettings()
+{
+  TrayUpdate();
+  if (g_wnd)
+    ApplyWindowIcon(g_wnd);
+}
+
+
+// THE PANEL'S WINDOW, learned from the sender of every IPC request (see settings_ipc.h). The host needs it
+// for the activity relay, and the reason it is remembered rather than searched for is that the search
+// (FindWindowA by class) ENUMERATES WINDOWS -- and the caller of this is the wheel hook. A stale handle is
+// harmless: PostMessage to a closed window fails, and the count is dropped, which is what "no panel to show
+// it to" means anyway.
+void SettingsPanelSeen(HWND panel)
+{
+  if (panel)
+    g_panelWnd = panel;
+}
+
+void SetCurrentFeature(const char *id) { g_currentFeatureId = id; }
+const char *CurrentFeature() { return g_currentFeatureId; }
+
+// Note that something worth persisting changed. Called by the IPC commands that alter a setting (see the call
+// sites in settings_host.cpp), so this is deliberately NOT a feature's business: the host owns the files, and
+// a future feature gets the same durability without doing anything.
+//
+// The window handle is checked because this can be reached before the host window exists -- the loader's
+// start-up path reads settings through the same functions -- and a timer armed with no window to deliver to
+// would simply never fire, silently, which is the failure this whole mechanism exists to prevent.
+void SettingsTouch()
+{
+  if (!g_wnd)
+    return;
+  // Re-arming the same id REPLACES the pending timer rather than adding a second one, which is exactly the
+  // debounce wanted: the clock restarts at every edit and only the last one fires a write.
+  SetTimer(g_wnd, APEXWM_SAVE_TIMER, APEXWM_SAVE_DELAY_MS, nullptr);
+}
+
+// The settings protocol's window onto the host's state. It reaches the SAME objects the tray does, so the
+// panel cannot do anything the tray could not -- and the alternatives (a second config instance, or a
+// copy of the loader) would each be a second source of truth for values the user can see in both places.
+HostConfig *SettingsConfig() { return &g_cfg; }
+Loader *SettingsLoader() { return &g_loader; }
+
+void SettingsLog(const char *fmt, ...)
+{
+  if (!g_log)
+    return;
+  char buf[512] = {0};
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
+  va_end(ap);
+  LogLine("%s", buf);
+}
+
+// Written on demand (the panel's Close, or its Save): the panel applies values in memory as the user moves
+// a control, so the file is only touched when the editing session ends.
+void SettingsSaveAll()
+{
+  SaveHostConfig();
+  for (int i = 0; i < g_loader.Count(); ++i)
+  {
+    const LoadedFeature &f = g_loader.At(i);
+    if (f.ok && f.api && f.api->saveSettings)
+    {
+      FeatureScope scope(f.api->id);
+      f.api->saveSettings();
+    }
+  }
+  LogLine("settings: saved");
+}
+
+// ⚠️ TWO FUNCTIONS WERE DELETED HERE, AND WHY THEY WERE WRONG RATHER THAN MERELY UNUSED:
+//
+//   SettingsRefreshTarget() -- it dropped the target cache so a blacklist change would bite at once. The
+//   blacklist is the FEATURE's now (see ApexFeature::listOp) and it is checked inside the feature's own
+//   onWheel, so there is no host-side list to invalidate. Nothing called it.
+//
+//   SettingsOpenFileForSlot() -- a second implementation of "open a feature's settings file", alongside the
+//   one the IPC actually uses (settings_host.cpp). They did NOT agree: this one indexed with Count()/At(),
+//   which counts only successfully loaded features, while the panel's slot numbers come from CountAll()/Seen(),
+//   which includes failed rows. Adding a feature that fails to load would have shifted every slot and opened
+//   the wrong file. One rule, one implementation -- and the surviving one is the one the panel talks to.
+
+} // namespace host
+} // namespace apex
+
+int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int)
+{
+  // -------------------------------------------------------------------------
+  // ONE HOST PER INSTALLATION -- a second launch is IGNORED, not refused.
+  //
+  // The user's requirement: "APP运行唯一化，不允许多个实例，多次运行不理会". Silently exiting is the right
+  // reading of 不理会: the program a user wanted is already running, and a message box telling them so would
+  // be a dialog they have to dismiss to reach the state they already had.
+  //
+  // ⚠️ IT IS CHECKED BEFORE THE LOG IS OPENED, and that is not tidiness. The log is opened with "w" --
+  // TRUNCATE -- so a second launch would wipe the running instance's log and then exit, leaving a fresh empty
+  // file and no trace of what happened. (That was already true before this check existed; it is the reason
+  // the check has to be the first thing in WinMain rather than the first thing after start-up.)
+  //
+  // ⚠️ AND "ONE" MEANS ONE PER INSTALLATION, NOT ONE PER MACHINE. Apex is portable and the folder is the
+  // installation, so the question is "is there already a host running from MY directory" -- the same identity
+  // the two processes of an install already use to find each other (FindOwnWindow, settings_ipc.h). Two
+  // copies of the folder are two programs and must not block one another; that is also what lets the gates
+  // run a private copy while the user's own is up.
+  // -------------------------------------------------------------------------
+  if (FindOwnWindow(APEX_HOST_WND_CLASS))
+    return 0;
+
+  char dir[512] = {0};
+  if (ApexModuleDir(dir, (int)sizeof(dir)))
+  {
+    char p[560] = {0};
+    if (JoinPath(dir, "apex.log", p, (int)sizeof(p)))
+    {
+      InitializeCriticalSection(&g_logLock);
+      g_log = fopen(p, "w");
+    }
+  }
+  LogLine("Apex -- starting");
+
+  LoadHostConfig();
+  // No `skip=` any more: the blacklist belongs to whichever feature owns one, and is read there (a
+  // feature that has a list logs it itself -- see the SmoothWheel settings line).
+  LogLine("host: lang=%s theme=%s off=%d", LangName(g_cfg.lang), ThemeName(g_cfg.theme), g_cfg.offN);
+
+  // The shell2019s "taskbar was re-created" broadcast, registered before the window exists. A zero here means
+  // the message will never arrive, which only costs the tray icon a restart of Explorer to come back.
+  g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+  // The "something happened" notification both processes know by name (see settings_ipc.h). Registered here,
+  // before any feature is loaded, so a feature's very first wheel can already be reported.
+  g_activityMsg = RegisterWindowMessageA(APEX_ACTIVITY_MSG_NAME);
+
+  InitHostApi();
+  const int n = g_loader.LoadAll(&g_hostApi);
+  for (int i = 0; i < g_loader.CountAll(); ++i)
+  {
+    const LoadedFeature &f = g_loader.Seen(i);
+    if (f.ok && f.api)
+      LogLine("feature: %s (%s) v%s %s", f.api->id, f.api->nameEn, f.api->version,
+              g_cfg.FeatureOff(f.api->id) ? "DISABLED by the user" : "enabled");
+    else
+      LogLine("feature: FAILED -- %s", f.why);
+  }
+  LogLine("features live: %d", n);
+
+  WNDCLASSA wc = {0};
+  wc.lpfnWndProc = WndProc;
+  wc.hInstance = inst;
+  wc.lpszClassName = APEX_HOST_WND_CLASS;
+  RegisterClassA(&wc);
+  // A real (hidden) top-level window, not a message-only one: the tray icon posts its mouse messages here
+  // and a message-only window never receives posted messages.
+  g_wnd = CreateWindowExA(0, wc.lpszClassName, "Apex", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr, inst,
+                          nullptr);
+  if (!g_wnd)
+  {
+    LogLine("FATAL: no window");
+    return 1;
+  }
+  // The window's icon, in the variant that belongs to the current appearance. The window is hidden, so this
+  // costs nothing here -- it matters because the same code path is the one a visible window would use, and
+  // because alt-tab can list even a hidden window's owner.
+  ApplyWindowIcon(g_wnd);
+
+  if (!host::CaptureStart(OnWheel, nullptr))
+  {
+    LogLine("FATAL: the wheel hook could not be installed (error %lu)", GetLastError());
+    return 1;
+  }
+  LogLine("wheel hook installed%s", host::CaptureAcceptsInjected()
+                                       ? "  [TEST MODE: also handling INJECTED wheels]"
+                                       : "");
+
+  if (!host::InjectThreadStart())
+  {
+    LogLine("FATAL: the injection thread could not be started (error %lu)", GetLastError());
+    return 1;
+  }
+  if (!host::EngineStart(Tick, nullptr, g_frameMs))
+  {
+    LogLine("FATAL: the engine clock could not be started (error %lu)", GetLastError());
+    return 1;
+  }
+  LogLine("engine running, period %.1f ms (~%.0f Hz)", g_frameMs, 1000.0 / g_frameMs);
+
+  TrayAdd(g_wnd);
+  LogLine("tray icon %s", g_trayUp ? "added" : "FAILED");
+
+  // The timer that hands the panel its animation cue (see the counter's note). Started once, here: it lives as
+  // long as the host does, and costs one no-op comparison when nothing is happening.
+  SetTimer(g_wnd, APEXWM_ACTIVITY_TIMER, kActivityNotifyMs, nullptr);
+
+  MSG msg;
+  while (GetMessageA(&msg, nullptr, 0, 0) > 0)
+  {
+    TranslateMessage(&msg);
+    DispatchMessageA(&msg);
+  }
+
+  LogLine("shutting down");
+  host::EngineStop();
+  host::InjectThreadStop();
+  host::CaptureStop();
+  g_loader.UnloadAll();
+  SaveHostConfig();
+
+  // THE PANEL IS ASKED TO GO, THEN MADE TO. The user's request is "插件进程什么的要退干净" -- nothing of ours
+  // left behind -- and the panel is the only other process Apex owns.
+  //
+  // WHY ASK AT ALL, when a kill is faster: the panel is a WebView2 host, and its browser processes are torn
+  // down by the controller's own Close() during WM_DESTROY (see ui_webview.cpp). A TerminateProcess skips that,
+  // so the msedgewebview2.exe children are left to notice their parent died -- which they do, but not
+  // instantly, and the delay is visible as processes that outlive the program. Asking is also the path the
+  // user's own close takes, so the exit route is one route.
+  //
+  // The wait is short and the kill is the fallback, so a panel that is hung (which is a thing this
+  // architecture explicitly allows -- it is why the panel is a separate process at all) cannot hold up the
+  // host's exit. A hung panel is killed exactly as it was before.
+  if (g_panel.hProcess)
+  {
+    HWND h = FindOwnWindow(APEX_SETTINGS_WND_CLASS);
+    if (h)
+      PostMessageA(h, WM_CLOSE, 0, 0);
+    if (WaitForSingleObject(g_panel.hProcess, 2000) != WAIT_OBJECT_0)
+    {
+      LogLine("shutdown: the panel did not close in time -- ending it");
+      TerminateProcess(g_panel.hProcess, 0);
+    }
+    CloseHandle(g_panel.hProcess);
+  }
+  if (g_log)
+  {
+    LogLine("exiting");
+    fclose(g_log);
+    g_log = nullptr;
+  }
+  return 0;
+}

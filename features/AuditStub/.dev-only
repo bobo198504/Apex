@@ -1,0 +1,24 @@
+THIS FOLDER IS A DEVELOPMENT TOOL, NOT A PRODUCT FEATURE.
+
+It exists to answer one question with evidence instead of assurance: does adding a feature really cost
+one folder and nothing else? It is a second feature written on purpose to share NOTHING with the first --
+a different id, one switch instead of five sliders, no curve, and Ctrl+wheel instead of a plain wheel --
+so that a host or a panel that secretly knew about its one feature would trip over it.
+
+It is kept because that question comes back every time a feature is added, and re-writing the stub to ask
+it again costs more than keeping it. It is HIDDEN from release builds, not deleted.
+
+HOW THE HIDING WORKS: the presence of this file is the marker. `apex/build.sh` skips any feature folder
+that contains `.dev-only` when it is run as a release build:
+
+    APEX_RELEASE=1 bash apex/build.sh      # no dev-only features in build/apex/
+    bash apex/build.sh                     # normal development build: they are there
+
+WHY A MARKER FILE RATHER THAN A LIST IN THE BUILD SCRIPT: the list would be a second place that has to be
+kept in step with the tree, and the failure -- a development feature shipping inside the product -- is
+one nobody notices until a user asks what it is (which is exactly how this file came to be written).
+A marker travels WITH the thing it marks.
+
+⚠️ THE GATES STILL NEED IT. check_apex_modular.sh asserts this folder exists, because its whole point is
+"the seam was proven against a foreign feature" -- so a normal build must keep building it. That is why
+the marker is opt-in at build time rather than the folder being deleted or renamed.

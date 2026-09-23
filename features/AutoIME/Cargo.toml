@@ -1,0 +1,49 @@
+[package]
+name = "autoime"
+version = "1.0.0"
+edition = "2021"
+
+# A FEATURE IS A DLL. This one is a Rust cdylib because the alternative is a REWRITE, not a port -- see the
+# note at the top of src/lib.rs. The upstream project's FAILED_APPROACHES.md records four approaches that were
+# tried and found broken; those corrections live in this code and must not be re-derived.
+[lib]
+name = "AutoIME"
+crate-type = ["cdylib"]
+
+# The crate name above is the PRODUCT name, not a Rust identifier: the file it must produce is AutoIME.dll,
+# because the layout rule is Plugins\<id>\<id>.dll and the id is AutoIME (see apex/paths.h). rustc warns that
+# `AutoIME` is not snake_case -- a warning nobody can act on, and one that is not harmless here: it is written
+# to stderr, and a caller that merges stderr into stdout (PowerShell does) reads that as a failure -- so a
+# green deploy can come back with an exit code of 1. (That warning is only ONE of the two sources; the other
+# is cargo's own progress output, silenced by `cargo build --quiet` in build.sh, next to the comment about it.)
+# Allow it here, next to the name that causes it, rather than in lib.rs where the connection would be invisible.
+# ⚠️ This is the ONE lint given up, and it is a style lint, not a correctness one: mis-cased names inside the
+# crate stop being reported. The crate is warning-free today; if that changes, do not silence the new one.
+[lints.rust]
+non_snake_case = "allow"
+
+[dependencies]
+# NO UI CRATES. Upstream also depends on eframe (the settings window) and tray-icon (the tray icon); Apex owns
+# both of those generically, so they are gone -- and dropping eframe is what takes this from a 24 MB exe to a
+# DLL of a few hundred KB.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+regex = "1.11"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Registry",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_TextServices",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+opt-level = 2
+panic = "abort"   # a panic must not unwind across the C ABI boundary

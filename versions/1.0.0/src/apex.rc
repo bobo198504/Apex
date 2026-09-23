@@ -1,0 +1,34 @@
+#include <windows.h>
+
+// THE PRODUCT MARK, in the two versions the contrast rule needs: the DARK artwork on a light system, the
+// LIGHT (cream) one on a dark one.
+//
+// ⚠️ THE IDS COME FROM icons.h, AND THAT IS NOT A STYLE CHOICE. This file used to write
+// `IDI_APEX_LIGHT ICON ...` while main.cpp `#define`d that name. The resource compiler does not read C++
+// definitions, so the artwork was registered under the STRING NAME "IDI_APEX_LIGHT" rather than under a
+// number -- and the code, which asks for the number 2 on a light system, got NULL and handed the tray no
+// icon at all. Every layer reported success. icons.h is included here by the RESOURCE COMPILER and by the
+// C++ files, so the two cannot disagree again. (The whole story: icons.h.)
+//
+// Regenerate the .ico files from the source art with (commanded from the PROJECT ROOT):
+//   build/png2ico.exe icon/Light.png icon/apex-light.ico 16 20 24 32 48 64 128 256
+//   build/png2ico.exe icon/dark.png  icon/apex-dark.ico  16 20 24 32 48 64 128 256
+// The two source PNGs are 900x900 and are the thing that gets edited; the .ico files are generated from
+// them. (This comment is not decoration -- the paths below are relative to THIS file, and the tool paths in
+// the command are relative to the root, which is a difference that costs a confused minute every time.)
+#include "icons.h"
+
+IDI_APEX_LIGHT  ICON  "../icon/apex-light.ico"
+IDI_APEX_DARK   ICON  "../icon/apex-dark.ico"
+
+// THE APPLICATION'S OWN ICON -- what Explorer and a shortcut show for the exe -- is id 1 above, the cream
+// artwork. There is no separate line for it: a `1 ICON` here would be a second copy of the same 374 KB,
+// and no file icon can follow the system theme anyway (the shell reads it from the file's resources and
+// does not re-read it when the theme changes). The two that DO follow are the pair above, and those are
+// the tray and the window.
+
+// A manifest, and it is NOT optional for a desktop app: without one Windows applies legacy behaviour to
+// the process -- DPI virtualisation, and DWM ignoring per-window theme requests.  The affected surface
+// here is per-monitor v2 DPI, so the panel is sharp on a scaled display instead of being stretched.
+// (The dark caption does NOT depend on this -- measured both ways, it works without a manifest.)
+1 24 "apex.manifest"

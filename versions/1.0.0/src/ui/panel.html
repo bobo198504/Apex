@@ -1,0 +1,1363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>Apex</title>
+<style>
+/* ---------------------------------------------------------------------------
+   THE COLOURS COME FROM CSS VARIABLES SET ONCE, so the light and dark themes are one block each and no
+   rule below has to know which one is in force.
+
+   ⚠️ THERE IS EXACTLY ONE PALETTE PER APPEARANCE, AND IT IS WRITTEN ONCE. The blocks below are arranged so
+   that this cannot be got wrong the way it was: `:root` IS the light theme, the media query swaps in the
+   dark one, and the pinned selectors restate the SAME two palettes for when `data-theme` is set. Nothing
+   here is a variant of anything else.
+
+   HOW THAT WENT WRONG, because it is the kind of mistake this arrangement prevents: the light theme's two
+   surfaces were swapped (see below), the swap was written into `:root[data-theme="light"]` only, and `:root`
+   was left holding the OLD light values. So a PINNED light theme looked one way and an AUTO light theme --
+   which falls through to `:root` -- looked like the version the user had already asked to be changed. The
+   user's report, "主界面浅色UI，颜色饱和度改低些，让它看起来再白淡些，现在太黄了", was about the AUTO path, which
+   was still the saturated cream. TWO PATHS FOR ONE APPEARANCE IS THE BUG; the fix is that there is now one.
+
+   THE MARK'S OWN CREAM (#F4EAC6) IS NOT THE PAGE BACKGROUND ANY MORE. It was, on the reasoning that the
+   icon, the window and the page should be the same material -- and that is still true of the dark theme,
+   where the mark's near-black is the page. In LIGHT it does not hold: at full saturation the mark's cream
+   is a strong yellow over a whole window (the icon only ever shows a few hundred pixels of it), and the user
+   asked for it paler. So the light surfaces are DESATURATED members of the same family -- same hue, a
+   quarter of the saturation -- and the mark's own cream survives where it is only a small area: the slider
+   tracks and the card edge, and the icon itself.
+
+   THE LIGHT THEME'S TWO SURFACES ARE THE OPPOSITE WAY ROUND FROM THE DARK THEME'S, on purpose. The user
+   asked for it: "大背景用更浅的，功能区用稍深点的" -- the page is the LIGHTER cream and the cards are the
+   slightly deeper one, so a card reads as a recessed area of the page rather than a sheet laid on top of it.
+   Dark mode keeps its own arrangement (a near-black page, slightly lifted cards) because that is how a dark
+   UI is read: there, lifting a card is what makes it visible at all. --line and --track are a step darker
+   than the surface they sit on for the same reason.
+
+   `prefers-color-scheme` FOLLOWS THE SYSTEM WITH NO HOST CODE. That was measured before this was written
+   (see _diag/DARK_TITLEBAR.md): WebView2 reports the system's app theme, so the page switches the moment
+   the user changes it. The host separately applies the same choice to the window's CAPTION, which the page
+   cannot reach -- a dark page under a light title bar is what looked broken in the first place.
+   --------------------------------------------------------------------------- */
+:root {
+  --bg: #f8f7f4;
+  --panel: #f0ede5;
+  --fg: #1a1a12;
+  --sub: #6b6553;
+  --line: #e4e1d8;
+  --accent: #1a1a12;
+  --accent-fg: #f8f7f4;
+  --track: #dedace;
+  --warn: #a4460f;
+  --radius: 10px;
+
+  /* ---- the state dot's three colours (see .dot) ----
+     ⚠️ THE ONLY COLOURS IN THIS FILE THAT ARE DELIBERATELY *NOT* PER-THEME, and the reason is geometric
+     rather than a shortcut: a dot sits on the page, on a card, AND on a SELECTED row -- and a selected row
+     is near-BLACK in the light theme and pale CREAM in the dark one. So one value has to stay legible
+     against near-white and near-black at once, in both themes, which pins each colour to a narrow band of
+     luminance. Measured (WCAG non-text minimum is 3:1): all three are >= 3.3:1 against the page, the card
+     and the selected row, in BOTH themes. A light/dark pair per state would be six numbers to keep in step
+     for no gain, and the first time one pair was missed the dot would vanish on one theme's selected row.
+     ⚠️ AND THEY MUST NOT BE RESTYLED FOR A SELECTED ROW -- that is what the old `.offdot` rule did, turning
+     the dot into the foreground colour and destroying the only thing it was there to say. */
+  --dot-on: #2e7d32;
+  --dot-off: #767676;
+  --dot-disabled: #c4453a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #10130c;
+    --panel: #191d15;
+    --fg: #f2ecd8;
+    --sub: #94907c;
+    --line: #2a2f24;
+    --accent: #f2ecd8;
+    --accent-fg: #10130c;
+    --track: #262b21;
+    --warn: #e0854a;
+  }
+}
+/* The pinned palettes: THE SAME TWO BLOCKS AGAIN, not a variation on them. Change a colour in `:root` and
+   change it here in the same commit -- and see the note above about how a half-done swap of exactly these
+   two blocks produced two different "light themes". */
+:root[data-theme="light"] {
+  --bg: #f8f7f4; --panel: #f0ede5; --fg: #1a1a12; --sub: #6b6553; --line: #e4e1d8;
+  --accent: #1a1a12; --accent-fg: #f8f7f4; --track: #dedace; --warn: #a4460f;
+}
+:root[data-theme="dark"] {
+  --bg: #10130c; --panel: #191d15; --fg: #f2ecd8; --sub: #94907c; --line: #2a2f24;
+  --accent: #f2ecd8; --accent-fg: #10130c; --track: #262b21; --warn: #e0854a;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* The panel is a page, not a document: nothing here should be selectable or draggable like a web page. */
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+/* ---- layout: a sidebar of features, and the selected one's controls ---- */
+#wrap { display: flex; height: 100%; }
+
+#side {
+  width: 208px; flex: 0 0 208px;
+  background: var(--bg);
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+/* THE BRAND BLOCK IS THE "GENERAL" ENTRY, at the user's request: the mark and the slogan are the heading of
+   the list, so clicking them is what shows the settings that belong to Apex itself, and the features are the
+   list underneath. It is styled as an item -- hover and a selected state -- because that is the only
+   affordance in this panel for "this is clickable", and inventing a second one would make the list below
+   look like the odd one out. */
+#brand {
+  margin: 10px 8px 2px; padding: 8px 10px;
+  border-radius: 8px; cursor: default;
+}
+#brand:hover { background: var(--track); }
+#brand.sel { background: var(--accent); color: var(--accent-fg); }
+#brand.sel .mark small, #brand.sel .slogan { color: var(--accent-fg); opacity: .75; }
+#brand .mark {
+  font-size: 22px; font-weight: 600; letter-spacing: .04em;
+  display: flex; align-items: baseline; gap: 8px;
+}
+#brand .mark small { font-size: 13px; font-weight: 400; color: var(--sub); letter-spacing: .02em; }
+#brand .slogan { margin-top: 3px; font-size: 11px; color: var(--sub); }
+/* A hairline between the general entry and the feature list, so the two read as heading and content rather
+   than as one long list of peers. */
+#nav { flex: 1; overflow-y: auto; padding: 6px 8px; border-top: 1px solid var(--line); margin-top: 6px; }
+.item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border-radius: 8px; cursor: default;
+  color: var(--fg);
+}
+.item:hover { background: var(--track); }
+.item.sel { background: var(--accent); color: var(--accent-fg); }
+.item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- the state dot, at the RIGHT END of the row ----
+   ⚠️ ALWAYS PRESENT, ONE OF THREE COLOURS -- it is not an error badge that appears and disappears. That is
+   the whole point of it: a glance down the list answers "which of my features are running" without opening
+   any of them, and a dot that is sometimes absent makes "off" and "not loaded yet" look the same.
+   `margin-left: auto` is what holds it right: `.nm` already grows, but the dot stays pinned to the edge if
+   the name's own rule ever changes. The default background is the OFF grey, so a dot whose state is somehow
+   unknown is visible rather than invisible. */
+.item .dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-left: auto;
+  background: var(--dot-off);
+}
+.item .dot.dot-on { background: var(--dot-on); }
+.item .dot.dot-off { background: var(--dot-off); }
+.item .dot.dot-disabled { background: var(--dot-disabled); }
+.item.dead { opacity: .55; }
+
+/* No #sidefoot rules: the footer held the General button, and the General entry is the brand block now.
+   (Its CSS outlived its markup for a while after the move -- dead selectors are harmless but they are also
+   how a reader concludes the button still exists.) */
+/* ---- main ---- */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#head {
+  padding: 14px 20px 12px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 10px;
+}
+#head h1 { margin: 0; font-size: 16px; font-weight: 600; }
+#head .ver { color: var(--sub); font-size: 12px; }
+#head .grow { flex: 1; }
+#body { flex: 1; overflow-y: auto; padding: 16px 20px 20px; }
+
+/* ---- a control ---- */
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 12px;
+}
+.row { display: flex; align-items: center; gap: 12px; }
+.row + .row { margin-top: 12px; }
+.row label { flex: 0 0 132px; color: var(--fg); }
+.row .ctl { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.row .val {
+  flex: 0 0 74px; text-align: right; color: var(--sub);
+  font-variant-numeric: tabular-nums; font-size: 13px;
+}
+
+input[type=range] {
+  -webkit-appearance: none; appearance: none;
+  flex: 1; height: 18px; background: transparent; margin: 0;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px; background: var(--track);
+}
+/* ⚠️ THE THUMB TAKES ITS COLOUR FROM A CUSTOM PROPERTY THE ROW SETS, falling back to the accent. That is what
+   lets a slider be the same colour as the piece of curve it moves (see rangeRow): the feature supplies a hue
+   per control, and this is the one place it is applied to the control itself. */
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--thumb, var(--accent)); margin-top: -5px;
+  border: none;
+}
+input[type=range]:disabled::-webkit-slider-thumb { opacity: .4; }
+
+/* The switch: a checkbox the browser draws as a track and a knob. Kept native-cheap (no images) so it
+   scales with DPI without a second asset.
+   ⚠️ THE DECORATION MUST NOT EAT THE CLICK, and without the pointer-events rule below that is exactly what
+   it did: .tr and .kn are absolutely positioned and come AFTER the input in the document, so they paint on
+   top of it -- and hit-testing follows painting, so the click landed on a DIV. The checkbox never toggled,
+   no `change` event was ever fired, and the switch was a picture that did nothing. That is what "开关不能用"
+   was: not a broken handler, a handler that could never run. (The panel's own probe could not see it either
+   -- see the note on the DOM stub in _diag/apex_panel_probe.js.) */
+.sw { position: relative; width: 40px; height: 22px; flex: 0 0 40px; }
+.sw input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: default; }
+.sw .tr, .sw .kn { pointer-events: none; }
+.sw .tr {
+  position: absolute; inset: 0; border-radius: 11px; background: var(--track);
+  transition: background .15s ease;
+}
+.sw .kn {
+  position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.3);
+  transition: transform .15s ease, background .15s ease;
+}
+.sw input:checked + .tr { background: var(--accent); }
+.sw input:checked + .tr + .kn { transform: translateX(18px); background: var(--accent-fg); }
+.sw input:disabled + .tr { opacity: .4; }
+
+select, input[type=text] {
+  font: inherit; color: var(--fg); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; min-width: 0;
+}
+input[type=text] { flex: 1; user-select: text; -webkit-user-select: text; }
+select { min-width: 130px; }
+
+button {
+  font: inherit; color: var(--fg); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px;
+  cursor: default;
+}
+button:hover { background: var(--track); }
+button.pri { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button.pri:hover { opacity: .88; }
+button:disabled { opacity: .45; }
+
+/* ---- the motion curve ---- */
+#curveCard { padding-bottom: 8px; }
+#curve { display: block; width: 100%; height: 132px; }
+#curveLegend { display: flex; justify-content: space-between; color: var(--sub); font-size: 11px; margin-top: 5px; }
+
+/* ---- notes and lists ---- */
+.note { color: var(--sub); font-size: 12px; margin: 2px 0 10px; }
+.skiprow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 2px; border-bottom: 1px solid var(--line);
+}
+/* ⚠️ THE LAST ROW IS MARKED BY THE RENDERER, NOT MATCHED BY A SELECTOR. `:last-child` never matched a row --
+   the add field is always the last thing in the card -- so the last entry kept a bottom border under it, which
+   reads as "there is another row below" when there is not. `:nth-last-child(2)` would work today and break
+   the moment anything is appended to the card, so the row that is last says so itself (see listRow). */
+.skiprow.last { border-bottom: none; }
+.skiprow .nm { flex: 1; user-select: text; -webkit-user-select: text; }
+.addrow { display: flex; gap: 8px; margin-top: 12px; }
+.err { color: var(--warn); font-size: 12px; margin-top: 6px; }
+/* The banner sits between the header and the scrolling body, so it needs the padding the body used to give
+   it. It is a sibling of #body rather than a child -- see the note in the markup for why that matters.
+   ⚠️ THE OUTER PADDING IS ON THE MESSAGE, NOT ON THE WRAPPER. With it on #banner the 16px stayed there even
+   while the message was hidden, so every page carried an empty band under its header. Padding on the thing
+   that can be hidden costs nothing when it IS hidden. */
+#banner { padding: 0; }
+#nohost {
+  display: none; margin: 16px 20px 0; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid var(--warn); color: var(--warn); font-size: 13px;
+}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <!--
+      THE BRAND BLOCK IS CLICKABLE AND MEANS "GENERAL".
+
+      It used to be a heading, with a separate General button pinned to the bottom of the sidebar -- and that
+      button never worked: the code set its text and its class on every render and NEVER ATTACHED A CLICK
+      HANDLER, so once the user opened a feature there was no way back to the general settings. Reported as
+      "列表和通用还不能正常的切换", which is exactly what a missing listener looks like from outside.
+
+      So the entry moved here (where the heading already was) and the handler is attached ONCE, below. Being
+      the heading of the list is what makes it read as "the settings for the list itself".
+    -->
+    <div id="brand">
+      <div class="mark"><span>端</span><small>/ Apex</small></div>
+      <div class="slogan" id="slogan"></div>
+    </div>
+    <div id="nav"></div>
+  </div>
+
+  <div id="main">
+    <div id="head">
+      <h1 id="title"></h1>
+      <span class="ver" id="ver"></span>
+      <span class="grow"></span>
+      <button id="btnFile" style="display:none"></button>
+    </div>
+    <!--
+      TWO CONTAINERS, AND THE BANNER IS NOT IN THE ONE THAT GETS REDRAWN.
+
+      The "the host is not running" banner used to live inside #body, and #body is what renderGeneral and
+      renderFeature EMPTY before drawing (b.innerHTML = ""). So the first render deleted the banner element,
+      and the next render -- any click, any refresh -- then threw "missing element #nohost" and left the page
+      half-drawn. The failure appeared on a CLICK, which is what made it look like a click bug rather than a
+      structural one.
+
+      Keeping it as a sibling means the two regions have separate lifetimes: the banner is written once and
+      toggled by display, and the body is thrown away and rebuilt as often as the view changes.
+    -->
+    <div id="banner">
+      <div id="nohost"></div>
+    </div>
+    <div id="body"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// THE PANEL'S JOB, IN ONE LINE: ask the host for the state, draw it, and tell the host when the user
+// changes something.
+//
+// THE PAGE IS DUMB ON PURPOSE. It knows about sliders, switches and lists -- general shapes -- and nothing
+// about smoothing, or about any particular feature. The host sends a description of the controls
+// (settingsJson), and this renders whatever it is given. That is why a second feature needs no UI work: it
+// describes its own controls and they appear.
+//
+// WHICH MEANS: no feature name, control name, or unit may be hard-coded here. Everything visible comes
+// from the host.
+// ---------------------------------------------------------------------------
+
+var TEXT = {
+  zh: {
+    slogan: "端，最前者也。",
+    general: "通用",
+    generalTitle: "通用设置",
+    language: "语言",
+    theme: "外观",
+    auto: "跟随系统",
+    light: "浅色",
+    dark: "深色",
+    add: "添加",
+    remove: "移除",
+    empty: "（空）",
+    settingsFile: "打开设置文件",
+    noHost: "Apex 主程序没有在运行，设置无法生效。",
+    features: "功能",
+    off: "已停用",
+    failed: "加载失败",
+    curveNote: "参数变化时，运动曲线会实时更新。",
+    curveTime: "时间 →",
+    curveSpeed: "速度",
+    enabledOff: "该功能已停用",
+  },
+  en: {
+    slogan: "Apex. The first point.",
+    general: "General",
+    generalTitle: "General",
+    language: "Language",
+    theme: "Appearance",
+    auto: "Follow system",
+    light: "Light",
+    dark: "Dark",
+    add: "Add",
+    remove: "Remove",
+    empty: "(empty)",
+    settingsFile: "Open the settings file",
+    noHost: "The Apex host is not running, so changes cannot take effect.",
+    features: "Features",
+    off: "disabled",
+    failed: "failed to load",
+    curveNote: "The motion curve follows the parameters as you move them.",
+    curveTime: "time →",
+    curveSpeed: "speed",
+    enabledOff: "this feature is disabled",
+  }
+};
+
+var S = {
+  lang: "en",
+  theme: "auto",
+  view: "general",  // "general" or a feature slot
+  snap: null,
+  controls: null,
+  connected: false
+};
+
+function t(k) { return (TEXT[S.lang] && TEXT[S.lang][k]) || TEXT.en[k] || k; }
+
+// The page's only way to say something went wrong. It cannot log anywhere the host can read, so it sends
+// the text over the same channel a settings change uses, and the host puts it in its log.
+function reportError(what) {
+  try { window.chrome.webview.postMessage({ cmd: "pageError", what: String(what) }); } catch (e) {}
+}
+
+function $(id) {
+  var e = document.getElementById(id);
+  if (!e) reportError("missing element #" + id);
+  return e;
+}
+function el(tag, cls, txt) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (txt !== undefined && txt !== null) e.textContent = txt;
+  return e;
+}
+
+// ---- talking to the host -----------------------------------------------------
+//
+// THE PANEL IS A CLIENT OF A SEPARATE PROCESS. Every call is a window message; when the host is not
+// running the call simply fails, which is a state the panel has to show rather than crash on -- the host
+// can be closed while the panel is open.
+//
+// `window.chrome.webview.postMessage` is the one-way channel to the host's C++ (used to send a request),
+// and the host calls `window.__apexReceive(json)` below for every answer. That split is what WebView2
+// gives: a message out, and a script call in.
+function hostCall(cmd, fields) {
+  var req = { cmd: cmd };
+  if (fields) for (var k in fields) req[k] = fields[k];
+  try { window.chrome.webview.postMessage(req); }
+  catch (e) { return false; }
+  return true;
+}
+
+// Called FROM C++ for every document the host sends.
+//
+// A PARSE ERROR IS REPORTED, NOT SWALLOWED. The first version caught and returned, which turned a broken
+// document into a panel that simply stayed empty -- every layer above reported success and there was
+// nothing anywhere saying why. The host's log is the only place that can be looked at from outside, so the
+// error goes there.
+window.__apexSnapshot = function (json) {
+  try { S.snap = JSON.parse(json); }
+  catch (e) { reportError("snapshot: " + e.message); return; }
+  S.connected = true;
+  applyHostToUi();
+  // ⚠️ THE BANNER HAS TO BE TOLD TOO. Setting `connected` is not enough: the warning was shown at boot
+  // (when the panel really was not connected yet), and nothing hid it again -- so a host that was running
+  // perfectly well sat behind a red "the Apex host is not running", which is worse than no banner at all.
+  //
+  // EVERY WRITE TO `connected` IS FOLLOWED BY renderConn(), and there are three: here, __apexHostGone and
+  // __apexHostBack. (renderAll calls renderConn as well, but it does not change the flag -- it is a redraw,
+  // not a change of state, and an earlier version of this comment claimed otherwise.)
+  renderConn();
+  renderNav();
+  if (S.view === "general") renderGeneral();
+  else loadFeature(S.view, true);
+};
+
+window.__apexControls = function (json) {
+  try { S.controls = JSON.parse(json); }
+  catch (e) { reportError("controls: " + e.message); return; }
+  if (S.view !== "general") renderFeature(S.view);
+};
+
+window.__apexHostGone = function () {
+  S.connected = false;
+  renderConn();
+  // (The panel PROCESS logs the transition -- see the liveness poll in ui_webview.cpp. Nothing is logged from
+  // here: this page has one channel out, `pageError`, and it means "something threw". A host going away is
+  // not an error, it is a state.)
+};
+
+// ⚠️ AND BACK, WHICH THE FIRST VERSION DID NOT HAVE. Without it a host that was restarted left the warning up
+// forever -- the page had no way to notice, and the only cure was closing and reopening the panel. The panel
+// process polls (see ui_webview.cpp) and calls this when the host window reappears.
+window.__apexHostBack = function () {
+  S.connected = true;
+  renderConn();
+  // Ask for everything again: the host that came back is not necessarily holding the state this page last
+  // saw, and it may have been a different build.
+  hostCall("snapshot");
+};
+
+// Anything the page itself throws is reported the same way: a script error inside the web view is
+// otherwise completely invisible from outside it.
+window.addEventListener("error", function (e) {
+  reportError("js: " + e.message + " @" + e.lineno);
+});
+
+// ---- shared widgets ---------------------------------------------------------
+
+function switchRow(label, checked, onToggle, disabled) {
+  var row = el("div", "row");
+  row.appendChild(el("label", null, label));
+  var ctl = el("div", "ctl");
+  var sw = el("div", "sw");
+  var inp = el("input");
+  inp.type = "checkbox";
+  inp.checked = !!checked;
+  inp.disabled = !!disabled;
+  // ⚠️ THE COMPARISON IS AGAINST THE LAST VALUE WE KNOW ABOUT, NOT THE ONE AT BUILD TIME. Comparing against
+  // the `checked` ARGUMENT looked like the echo guard the selects use, but an argument is frozen at build
+  // time: after one click the box is the opposite of `checked`, so the SECOND click matched the stale value
+  // and was silently dropped -- no message, no redraw, nothing. Reported from the outside as "the switch only
+  // works once", and it is worst for a feature's `bool` parameter, because `setFeature` is deliberately NOT
+  // answered with a snapshot (see ui_webview.cpp): nothing comes back to correct the display, so the panel
+  // and the host disagree until something else refreshes the page.
+  var last = !!checked;
+  inp.addEventListener("change", function () {
+    if (inp.checked === last)
+      return; // a rebuild that left the box matching what we last told the host: not an edit
+    last = inp.checked;
+    onToggle(inp.checked);
+  });
+  sw.appendChild(inp);
+  sw.appendChild(el("div", "tr"));
+  sw.appendChild(el("div", "kn"));
+  ctl.appendChild(sw);
+  row.appendChild(ctl);
+  return row;
+}
+
+// A `<select>`, from the host's options and its current value.
+//
+// ⚠️ A CHANGE EVENT FIRES WHILE THE CONTROL IS BEING BUILT, AND THAT CAUSED A LIVE BUG.
+//
+// Filling a select fires `change` as the options go in (the browser auto-selects the first one, then re-selects
+// as the matching option arrives), so the handler ran with no user involved. Each of those calls sent setHost,
+// the host answered with a fresh snapshot, the snapshot re-rendered the select, and the cycle repeated --
+// measured in the host's log as settings walking through their own values, unprompted:
+//
+//     setHost lang=zh   ->  setHost lang=auto  ->  setHost lang=en  ->  setHost theme=dark  ->  ...
+//
+// The guard is a comparison, not a flag or a timer: a change event whose value EQUALS the value the host just
+// reported is not an edit -- nothing needs to change, so nothing is sent. A real click always differs (that is
+// what makes it a different choice), so the user's own input is unaffected.
+//
+// This is also why it is fixed here rather than in the host: the host cannot tell a spurious echo from a real
+// edit, because they arrive identically. Only the side that knows whether a person touched the control can.
+function selectRow(label, options, value, onChange) {
+  var row = el("div", "row");
+  row.appendChild(el("label", null, label));
+  var ctl = el("div", "ctl");
+  var sel = el("select");
+  options.forEach(function (o) {
+    var op = el("option", null, o.label);
+    op.value = o.value;
+    if (o.value === value) op.selected = true;
+    sel.appendChild(op);
+  });
+  // The last value we know the host holds -- see switchRow for why the ARGUMENT must not be used as the
+  // guard. (A select is rebuilt after every setHost because the host answers with a snapshot, so this is
+  // belt-and-braces here; it is the same three lines, and two rules that are one rule should be written once.)
+  var last = value;
+  sel.addEventListener("change", function () {
+    if (sel.value === last)
+      return; // the echo described above, not an edit
+    last = sel.value;
+    onChange(sel.value);
+  });
+  ctl.appendChild(sel);
+  row.appendChild(ctl);
+  return row;
+}
+
+// A slider that reports EVERY move, which is the "parameters change in real time" requirement: the host
+// applies the value on the spot and only writes the file when the window closes.
+//
+// DOUBLE-CLICK RESTORES THE DEFAULT. The value is `def`, sent by the feature with the control -- so this
+// does not need a reset entry point on the ABI, a round trip, or the panel knowing what the parameter
+// means. A feature that omits `def` simply has a slider that does not reset.
+function rangeRow(p, slot, disabled) {
+  var row = el("div", "row");
+  row.appendChild(el("label", null, S.lang === "zh" ? p.labelZh : p.labelEn));
+  var ctl = el("div", "ctl");
+  var inp = el("input");
+  inp.type = "range";
+  inp.min = p.min; inp.max = p.max; inp.step = p.step || 1;
+  inp.value = p.value;
+  inp.disabled = !!disabled;
+  // THE ROW'S COLOUR, applied to the thumb (see the CSS). Same function the chart uses for the segment this
+  // parameter owns (channelColor) -- so the control and its piece of curve are one colour, not two that happen
+  // to match.
+  var thumb = channelColor(p.hue);
+  if (thumb) inp.style.setProperty("--thumb", thumb);
+  var val = el("div", "val");
+  function show() { val.textContent = fmt(inp.value, p); }
+  inp.addEventListener("input", function () {
+    show();
+    hostCall("setFeature", { slot: slot, id: p.id, value: inp.value });
+  });
+  // THE CURVE IS REDRAWN FROM THE HOST'S OWN NUMBERS, not from a local guess: ask for the controls again and
+  // the feature rebuilds its chart with the new value.
+  //
+  // ⚠️ ON `change`, NOT ON `input`, AND ONLY WHEN THERE IS A CURVE. This used to run on every input event,
+  // debounced by 60 ms -- which meant that if the user paused for a moment mid-drag, the answer arrived and
+  // the page rebuilt itself around the slider still under their finger. `change` fires when the value is
+  // COMMITTED (the drag has ended), which is the first moment a rebuild is harmless. And asking for controls
+  // a feature does not have only costs a round trip and a redraw.
+  inp.addEventListener("change", function () {
+    if (S.controls && S.controls.curve) queueCurve(slot);
+  });
+  if (typeof p.def === "number") {
+    inp.addEventListener("dblclick", function () {
+      inp.value = p.def;
+      show();
+      hostCall("setFeature", { slot: slot, id: p.id, value: p.def });
+      if (S.controls && S.controls.curve) queueCurve(slot);
+    });
+  }
+  // ---- THE WHEEL OVER A SLIDER CHANGES ITS VALUE ----
+  //
+  // THE USER ASKED FOR THIS ("插件拉杆、旋钮（以后会有）支持滚轮直接改值"), and the reason it is not already true is
+  // worth stating, because a range input looks like it should be: a focused `<input type=range>` DOES respond
+  // to a wheel in this browser, but only once the user has clicked it, and only by whatever the browser
+  // decides. What is wanted is a control that takes the wheel without being clicked first (a settings panel
+  // is a thing you point at), and that moves by the control's OWN step so the value stays on the grid the
+  // feature described.
+  //
+  // ⚠️ NOTHING HERE HAS TO FIGHT THE HOST FOR THE EVENT, because the host PASSES wheels over this panel.
+  // That is a rule in apex/decision.h, and it is load-bearing for this whole feature: if the host smoothed
+  // this wheel, one notch of the user's hand would arrive as dozens of tiny wheel messages and each would
+  // step the value again.
+  //
+  // THE STEP IS EXACTLY ONE `step`, in the direction of the scroll, and the resulting value goes through the
+  // SAME path a drag takes (`input` then the commit) rather than a private one -- so the number shown, the
+  // number sent, and the curve redraw cannot disagree about what happened.
+  //
+  // A trackpad's fine-grained wheel is handled by ACCUMULATING instead of stepping per event: a device that
+  // reports 3 deltas at a time would otherwise need forty flicks to move one step. The accumulator is in
+  // units of 120, Windows' own notch, so a notched mouse (which sends exactly 120) advances exactly one step
+  // per click, and a trackpad advances at the same RATE rather than the same number of events.
+  var accum = 0;
+  inp.addEventListener("wheel", function (e) {
+    if (inp.disabled) return;
+    e.preventDefault();
+    var step = Number(p.step) > 0 ? Number(p.step) : 1;
+    var lo = Number(p.min), hi = Number(p.max);
+    // DeltaMode: 0 = pixels, 1 = lines, 2 = pages. Only pixels and lines are worth accumulating; a page-mode
+    // event is a huge jump and is treated as a notch.
+    var unit = e.deltaMode === 1 ? 40 : (e.deltaMode === 2 ? 120 : 1);
+    accum += (-e.deltaY) * unit;
+    if (Math.abs(accum) < 120) return;
+    var notches = Math.trunc(accum / 120);
+    accum -= notches * 120;
+    var v = Number(inp.value) + notches * step;
+    // Clamp to the control's OWN range, then re-snap to the grid: floating point steps (1.5, 0.05) drift, and
+    // a value that is not on the grid makes the browser round it somewhere else on the next render.
+    if (v < lo) v = lo;
+    if (v > hi) v = hi;
+    v = Math.round((v - lo) / step) * step + lo;
+    v = Number(v.toFixed(6));
+    if (Number(inp.value) === v) return; // already at the end: do not report a change that did not happen
+    inp.value = v;
+    show();
+    hostCall("setFeature", { slot: slot, id: p.id, value: v });
+    if (S.controls && S.controls.curve) queueCurve(slot);
+  }, { passive: false });
+
+  show();
+  ctl.appendChild(inp);
+  row.appendChild(ctl);
+  row.appendChild(val);
+  return row;
+}
+
+function fmt(v, p) {
+  var n = Number(v);
+  var s = (Math.abs(n) >= 100 || n === Math.trunc(n)) ? String(Math.round(n * 100) / 100) : n.toFixed(2);
+  return p.unit ? s + " " + p.unit : s;
+}
+
+// ---- the curve ---------------------------------------------------------------
+//
+// A normalised polyline from the feature, drawn as a speed-over-time shape. The panel does not compute it:
+// a feature that wants to show its motion describes it, and one that does not simply sends no curve.
+var curveTimer = 0;
+function queueCurve(slot) {
+  if (curveTimer) clearTimeout(curveTimer);
+  curveTimer = setTimeout(function () {
+    curveTimer = 0;
+    hostCall("describe", { slot: slot });
+  }, 60);
+}
+
+// ASK FOR THIS FEATURE'S CONTROLS AGAIN. Used after an edit whose RESULT the page cannot predict -- a list
+// row the feature may have normalised or refused (see ApexFeature::listOp). The answer replaces S.controls
+// and redraws; asking is cheaper than guessing wrong and being contradicted on the next refresh.
+function refreshControls(slot) {
+  hostCall("describe", { slot: slot });
+}
+
+// THE MOTION CURVE: the shape of the motion, plus a ball that runs along it when a wheel turns.
+//
+// The feature sends a normalised polyline (x and y both 0..1, see ApexFeature::settingsJson) and this draws it.
+// That is the whole contract: the panel knows nothing about wheels, windows or speed, and a feature that sends
+// no curve gets no curve card.
+//
+// ⚠️ THE ANIMATION IS DRIVEN BY REAL WHEEL ACTIVITY, NEVER BY A TIMER. This is the user's requirement in their
+// own words -- "是有鼠标滚轮事件才有，没有就没有" -- and it is the difference between a picture and a decoration:
+//   * on a timer it animates while the user is idle and keeps animating while they scroll, so it says the same
+//     thing in every state and means nothing;
+//   * on real traffic it says exactly one thing, and it says it truthfully: a ball appears when a wheel was
+//     TAKEN by this feature, and there is no motion when nothing is happening.
+//
+// The count arrives from the host through __apexActivity (the feature reports every wheel it takes through
+// ApexHost::activity; the host coalesces and posts). The panel process forwards it here.
+//
+// ⚠️ AND IT WAS REMOVED ONCE, BY ME, DURING A REVIEW -- on the argument that it "spends the input path's budget
+// on decoration". That was wrong on the facts (the input path spends one interlocked increment; the messaging
+// is the host's own thread, off the input path) and wrong about the requirement, which had been asked for
+// explicitly. The feature is back; the reasoning is recorded so it is not deleted a third time.
+//
+// A ball is never recycled mid-flight -- one that vanished halfway reads as a glitch -- so when every slot is
+// busy the new one is simply not sent. The ones already out keep arriving, so a roll still reads as continuous
+// motion.
+var CURVE_BALLS = 6;
+var curveAnim = 0;      // the requestAnimationFrame handle, while something is moving
+var curveBorn = [];     // when each ball started, in ms, or 0 for a free slot
+var curveCanvas = null; // the canvas the current curve is drawn on
+var curveObj = null;    // the chart object it was drawn from
+var curveSpanMs = 400;  // how long a ball takes to cross it (from the feature's own window)
+
+function StopCurve() {
+  if (curveAnim) { cancelAnimationFrame(curveAnim); curveAnim = 0; }
+  curveBorn = [];
+  curveCanvas = null;
+  curveObj = null;
+}
+
+// TAKE OVER THE CANVAS, DRAW THE CURVE, AND WAIT. Nothing moves until a wheel happens -- but the SHAPE appears
+// at once, because a blank card is not "a chart waiting for input", it is a card that looks broken.
+function StartCurve(canvas, curve) {
+  StopCurve();
+  curveCanvas = canvas;
+  curveObj = curve;
+  // HOW LONG A BALL TAKES TO CROSS: the x axis IS time, so its length is the animation's length. Taken from
+  // the feature rather than invented here, so the ball runs at the speed of the motion it is drawing.
+  curveSpanMs = (curve && curve.spanMs > 0) ? curve.spanMs : 400;
+  drawCurve(canvas, curve);
+}
+
+// One ball per wheel the feature took. `n` is how many happened since the last look; they are staggered a
+// little so a burst reads as a stream rather than a clump at the same point.
+//
+// ⚠️ ASSIGNED TO `window`, NOT DECLARED AS A FUNCTION. The panel process calls it as an expression --
+// `window.__apexActivity(n)` -- so it has to be a PROPERTY of the page's window. A bare
+// `function __apexActivity(){}` is not: it is a binding in the script's scope, the call from C++ would find
+// nothing, and ExecuteScript returns S_OK for a script that throws -- so the notification would arrive and be
+// silently dropped.
+window.__apexActivity = function (n) {
+  if (!curveCanvas || !curveObj) return;
+  var count = Math.min(n | 0, 12); // a burst is still a burst; more than this in one hop is not readable
+  var now = Date.now();
+  for (var i = 0; i < count; i++) SpawnBall(now + i * 45);
+  if (!curveAnim) curveAnim = requestAnimationFrame(CurveFrame);
+};
+
+function CurveFrame() {
+  curveAnim = 0;
+  if (!curveCanvas || !curveObj) return;
+  drawCurve(curveCanvas, curveObj);
+  // Keep the loop alive only while a ball is still travelling: an idle panel does no work at all, the same
+  // rule the host's engine follows.
+  var now = Date.now(), running = false;
+  for (var i = 0; i < curveBorn.length; i++) {
+    if (curveBorn[i] && now - curveBorn[i] < curveSpanMs) { running = true; }
+  }
+  if (running) curveAnim = requestAnimationFrame(CurveFrame);
+}
+
+function SpawnBall(atMs) {
+  for (var i = 0; i < CURVE_BALLS; i++) {
+    // A FREE SLOT, or one whose ball has already arrived. Never one that is still travelling: a ball that
+    // vanished mid-flight reads as a glitch.
+    if (!curveBorn[i] || atMs - curveBorn[i] >= curveSpanMs) { curveBorn[i] = atMs; return; }
+  }
+  // Every slot genuinely busy: this one is not sent. The balls already out keep arriving, so the roll still
+  // reads as continuous motion.
+}
+
+// THE CHART. Everything about how it looks lives here; the feature only supplies numbers (see the `curve` block
+// in apex/abi.h), which is what keeps this a generic renderer rather than a picture of wheels.
+//
+// WHAT IS DRAWN, and each part has a job:
+//
+//   * the GRID, from the feature's own tick steps, with the numbers printed. The axes are the two scales the
+//     parameters actually move -- x is real milliseconds, y is real wheel deltas -- so a slider that rescales
+//     the picture moves the NUMBERS too. A fixed 1/6 grid would sit in the same place whatever the sliders
+//     said, which makes it decoration.
+//   * the NATIVE LINE, where the raw wheel's own travel tops out.
+//   * the WHEEL's path as a dotted staircase: one hop per notch, the raw input this picture is an answer to.
+//   * the SHAPED path, IN ONE COLOUR PER SEGMENT -- see below.
+//   * the BALLS, one per wheel the feature took, riding the shaped path (see __apexActivity).
+//
+// ⚠️ THE SEGMENT COLOURS COME FROM THE SLIDERS THEMSELVES. The feature tags each point with which parameter
+// owns it (`seg`), and this looks the colour up in the CONTROL LIST it was given -- not in a table of its own.
+// So the rise is Slow step's colour, the climb is Ramp-up's, the flat top is Top speed's, and they cannot come
+// out different from the sliders: there is one place the colour is written down, and it is the slider.
+//
+// The colour is BLENDED toward the card's background by the slider's own position, which is how the plugin does
+// it: a parameter at 30% is a faint version of its hue, one at 100% is the full colour, and the picture says at
+// a glance how far up each control is. (That blend is why this needs the CSS variables rather than the hues
+// alone.)
+function drawCurve(canvas, curve) {
+  var dpr = window.devicePixelRatio || 1;
+  var w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  var g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+
+  var css = getComputedStyle(document.documentElement);
+  var grid = css.getPropertyValue("--line").trim() || "#2a2f24";
+  var sub = css.getPropertyValue("--sub").trim() || "#888";
+  var panelBg = css.getPropertyValue("--panel").trim() || "#191d15";
+  var fg = css.getPropertyValue("--fg").trim() || "#fff";
+
+  if (!curve || !curve.shape || curve.shape.length < 2) {
+    // No chart (a feature that sends none): a baseline, so the card still reads as a chart area rather than as
+    // a box that failed to load.
+    g.strokeStyle = grid;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(0, h - 0.5);
+    g.lineTo(w, h - 0.5);
+    g.stroke();
+    return;
+  }
+
+  // THE PLOT BOX, inset so the tick numbers have room: the y labels sit down the left edge and the x labels
+  // under the floor, both inside the canvas so nothing is clipped.
+  var padL = 34, padR = 8, padT = 8, padB = 18;
+  var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+  var wIn = x1 - x0, hIn = y0 - y1;
+  if (wIn < 20 || hIn < 20) return; // a card too small to draw in: nothing readable fits
+  var toX = function (u) { return x0 + u * wIn; };
+  var toY = function (v) { return y0 - v * hIn; };
+
+  // The axis lines.
+  g.strokeStyle = grid;
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(x0, y0); g.lineTo(x1, y0);
+  g.moveTo(x0, y1); g.lineTo(x0, y0);
+  g.stroke();
+
+  // THE GRID AND ITS NUMBERS. The box is filled by the curve (see the feature: it is sized so the motion reaches
+  // its top and right edge), and the ticks are labelled in REAL units -- milliseconds along x, wheel deltas up y
+  // -- from the two ranges the feature sends. Those ranges MOVE with the settings, so a slider that changes one
+  // changes these numbers; a fixed 1/6 grid would sit in the same place whatever the sliders said.
+  var spanMs = curve.spanMs > 0 ? curve.spanMs : 1;
+  var yTop = curve.yTopDeltas > 0 ? curve.yTopDeltas : 1;
+  g.fillStyle = sub;
+  g.font = "10px system-ui, sans-serif";
+  g.textBaseline = "top";
+  g.textAlign = "center";
+  if (curve.stepX > 0) {
+    for (var vx = curve.stepX; vx < spanMs - 1e-9; vx += curve.stepX) {
+      var px = toX(vx / spanMs);
+      g.strokeStyle = grid;
+      g.beginPath(); g.moveTo(px, y1); g.lineTo(px, y0); g.stroke();
+      g.fillText(String(Math.round(vx)), px, y0 + 3);
+    }
+  }
+  g.textAlign = "right";
+  g.textBaseline = "middle";
+  if (curve.stepY > 0) {
+    for (var vy = curve.stepY; vy < yTop - 1e-9; vy += curve.stepY) {
+      var py = toY(vy / yTop);
+      g.strokeStyle = grid;
+      g.beginPath(); g.moveTo(x0, py); g.lineTo(x1, py); g.stroke();
+      g.fillText(String(Math.round(vy)), x0 - 4, py);
+    }
+  }
+
+  // THE NATIVE LINE: where the raw wheel's own travel tops out. It is the reference the whole picture is
+  // measured against, so it is drawn under everything else and in the muted colour.
+  if (curve.nativeY > 0 && curve.nativeY <= 1) {
+    g.strokeStyle = sub;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(x0, toY(curve.nativeY));
+    g.lineTo(x1, toY(curve.nativeY));
+    g.stroke();
+  }
+
+  // THE WHEEL'S OWN PATH: a dotted staircase, one hop per notch.
+  if (curve.native && curve.native.length >= 2) {
+    g.save();
+    g.setLineDash([2, 3]);
+    g.strokeStyle = sub;
+    g.lineWidth = 1;
+    g.beginPath();
+    for (var i = 0; i < curve.native.length; i++) {
+      var nx = toX(curve.native[i][0]), ny = toY(curve.native[i][1]);
+      if (i === 0) g.moveTo(nx, ny); else g.lineTo(nx, ny);
+    }
+    g.stroke();
+    g.restore();
+  }
+
+  // THE SHAPED PATH, broken into runs by segment and stroked in each segment's own colour. A run is started with
+  // moveTo at the colour change rather than drawn through it, so no line is drawn across the boundary -- the
+  // plugin's own note: "a fresh run: no line drawn across the colour change".
+  // WHICH PARAMETER OWNS WHICH SEGMENT. The feature says which piece each slider moves, so this is knowledge
+  // about THIS feature -- but it is expressed as slider IDS, not as colours, and a feature without those ids
+  // falls back to the foreground colour. (The alternative -- asking the feature for each segment's colour --
+  // would put theme colours inside the feature, and the theme is the panel's business.)
+  // ⚠️ IT READS THE CONTROLS ITSELF (`S.controls.params`) RATHER THAN A LOCAL NAME, and that is not laziness:
+  // drawCurve is called from renderFeature, which has its own local `params`, and referring to that here threw
+  // "params is not defined" -- the two are in different scopes and only one of them is visible at this point.
+  // Reading the same object through the state it lives in is the version that cannot be wrong about scope (and
+  // the probe caught it, which is what the probe is for).
+  var segPid = ["slow", "ramp", "top"]; // the rise, the climb, the flat top -- see the chart note in the feature
+  var ctlParams = (S.controls && S.controls.params) || [];
+  function segColor(seg) {
+    var pid = segPid[seg];
+    var p = null;
+    ctlParams.forEach(function (x) { if (x.id === pid) p = x; });
+    return (p ? channelColor(p.hue) : null) || fg;
+  }
+
+  var LINE = 3; // heavier than a hairline: it is the subject of the picture
+  var prevSeg = -1, started = false;
+  g.lineWidth = LINE;
+  g.lineJoin = "round";
+  g.lineCap = "round";
+  for (var k = 0; k < curve.shape.length; k++) {
+    var p = curve.shape[k];
+    var cx = toX(p[0]), cy = toY(p[1]);
+    var seg = p.length > 2 ? p[2] : 0;
+    if (seg !== prevSeg) {
+      if (started) g.stroke();
+      g.beginPath();
+      g.strokeStyle = segColor(seg);
+      g.moveTo(cx, cy);
+      started = true;
+      prevSeg = seg;
+    } else {
+      g.lineTo(cx, cy);
+    }
+  }
+  if (started) g.stroke();
+
+  // THE BALLS, on top of the line they are riding -- one per wheel the feature took (see __apexActivity). A
+  // ball's place is a fraction of the elapsed time and its height is the curve's own value there, so it is ON
+  // the line at every moment: it shows WHERE in the motion that wheel currently is.
+  if (!curveBorn.length) return;
+  var now = Date.now();
+  for (var b = 0; b < curveBorn.length; b++) {
+    if (!curveBorn[b]) continue;
+    var u = (now - curveBorn[b]) / curveSpanMs;
+    if (u >= 1) { curveBorn[b] = 0; continue; }
+    var by = curveValueAt(curve.shape, Math.max(0, Math.min(1, u)));
+    g.beginPath();
+    g.arc(toX(Math.max(0, Math.min(1, u))), toY(by), 4, 0, Math.PI * 2);
+    g.fillStyle = fg;
+    g.fill();
+  }
+}
+
+// A point of the shaped path with segment tags: [x, y, seg]. Interpolating must IGNORE the tag -- averaging a
+// segment number would invent a segment that does not exist.
+function curveValueAt(shape, u) {
+  if (!shape || shape.length < 2) return 0;
+  if (u <= shape[0][0]) return shape[0][1];
+  if (u >= shape[shape.length - 1][0]) return shape[shape.length - 1][1];
+  for (var i = 1; i < shape.length; i++) {
+    if (u <= shape[i][0]) {
+      var a = shape[i - 1], b = shape[i];
+      var f = (b[0] > a[0]) ? ((u - a[0]) / (b[0] - a[0])) : 0;
+      return a[1] + (b[1] - a[1]) * f;
+    }
+  }
+  return shape[shape.length - 1][1];
+}
+
+// `#rrggbb` blended toward another: `a` is how much of `hex` comes through (0 = all `toward`, 1 = all `hex`).
+function mixHex(toward, hex, a) {
+  function part(s, i) { return parseInt(s.substr(i, 2), 16); }
+  var t = toward.charAt(0) === "#" ? toward.substr(1) : toward;
+  var c = hex.charAt(0) === "#" ? hex.substr(1) : hex;
+  if (t.length !== 6 || c.length !== 6) return hex;
+  var r = Math.round(part(t, 0) + (part(c, 0) - part(t, 0)) * a);
+  var gg = Math.round(part(t, 2) + (part(c, 2) - part(t, 2)) * a);
+  var bl = Math.round(part(t, 4) + (part(c, 4) - part(t, 4)) * a);
+  return "rgb(" + r + "," + gg + "," + bl + ")";
+}
+
+// THE COLOUR OF ONE PARAMETER, AS THE USER SEES IT -- and there is exactly ONE of this function on purpose.
+//
+// It is used twice: for the slider's own thumb, and for the piece of the motion chart that parameter owns. If
+// each place computed it, they would be two implementations of "what colour is Ramp-up" and would eventually
+// disagree -- which is the failure the plugin's table avoids by keeping the hue in the control row, and which
+// this avoids by keeping the BLEND here.
+//
+// ⚠️ THE COLOUR DOES NOT DEPEND ON THE VALUE, AND THAT WAS THE USER'S POINT: a slider has ONE colour, always
+// the same one, so "the green one" is a way to refer to Ramp-up whether it is at 60 or 2000. The first version
+// faded the colour with the value -- the plugin does that, and it makes the row and the curve agree moment to
+// moment, but it also means the control changes identity as you drag it and the four colours are unreadable at
+// the bottom of their ranges. Fixed is what was asked for.
+function channelColor(hue) {
+  if (!hue) return null;
+  var bg = getComputedStyle(document.documentElement).getPropertyValue("--panel").trim();
+  // Blended only enough to sit on the card rather than glare against it; the hue is fully present.
+  return mixHex(bg && bg.charAt(0) === "#" ? bg : "#191d15", hue, 0.85);
+}
+function renderConn() {
+  var n = $("nohost");
+  if (S.connected) { n.style.display = "none"; return; }
+  n.textContent = t("noHost");
+  n.style.display = "block";
+}
+
+// TAKE THE HOST'S OWN VALUES AS THE STARTING POINT, before anything is drawn.
+//
+// This exists because of a real bug: __apexSnapshot called it and the function did not exist. The call threw
+// a ReferenceError, which killed the rest of the handler -- so `connected` was set, the drawing never
+// happened, and the panel showed its "the host is not running" banner while everything behind it had
+// worked. Two lessons are baked in here: a page that dies mid-handler looks exactly like a page that never
+// got the message, and __apexSnapshot must not call anything that is not defined above it.
+//
+// What it does: resolves `auto` into the language actually being used, and applies the saved theme, so the
+// first frame is already correct instead of flashing the defaults and then correcting itself.
+function applyHostToUi() {
+  var h = S.snap.host;
+
+  S.lang = (h.lang === "auto") ? (h.systemIsChinese ? "zh" : "en") : h.lang;
+
+  S.theme = h.theme;
+  applyTheme(h.theme);
+
+  document.getElementById("slogan").textContent = t("slogan");
+  document.documentElement.lang = (S.lang === "zh") ? "zh" : "en";
+}
+
+function renderNav() {
+  var nav = $("nav");
+  nav.innerHTML = "";
+  // The general entry: selected-ness only. The CLICK is attached once, at boot -- attaching it here would
+  // stack one listener per render, and the symptom of that is a view that redraws several times per click.
+  $("brand").className = (S.view === "general") ? "sel" : "";
+  if (!S.snap) return;
+  S.snap.features.forEach(function (f) {
+    var it = el("div", "item" + (String(f.slot) === String(S.view) ? " sel" : "") + (f.ok ? "" : " dead"));
+    var nm = el("div", "nm", S.lang === "zh" ? (f.nameZh || f.nameEn) : (f.nameEn || f.nameZh));
+    if (!f.ok) nm.textContent = (S.lang === "zh" ? "加载失败" : "failed to load");
+    it.appendChild(nm);
+    // THE DOT IS ALWAYS APPENDED -- see the CSS. Three states, and the distinction between the last two is
+    // the point of having three: "I turned this off" and "it failed to load" both stop it working and want
+    // different reactions from the user.
+    //
+    // ⚠️ THE DISABLED STATE IS NOT REACHABLE YET, AND THE PANEL IS BUILT FOR IT ANYWAY. The host has no way
+    // to disable a feature -- not even itself: Apex can only be stopped by closing it, and every control down
+    // this path is an IPC call INTO the running host. The user asked for the interface to be left in place
+    // ahead of the behaviour ("禁用功能目前没有开发的打算，只留接口"), so the third state has a colour, a name
+    // and a branch here, and the day the host grows that ability nothing in the page has to change. The
+    // snapshot simply has to start sending `disabled`.
+    var state = !f.ok ? "disabled" : (f.off ? "off" : "on");
+    it.appendChild(el("div", "dot dot-" + state));
+    it.addEventListener("click", function () {
+      // ⚠️ THROUGH loadFeature, NOT `S.view = f.slot; renderAll()`. The controls are not part of the
+      // snapshot: the page has to ASK for them, and only loadFeature sends that request. Selecting a feature
+      // with renderAll alone drew its page from `S.controls`, which was still null -- so the feature appeared
+      // with its switch and an EMPTY CARD where its parameters belong. That is "设置页面不全", and it was
+      // not a missing render: the request was never made.
+      //
+      // force=true because S.controls may still hold the PREVIOUS feature's parameters, which would be drawn
+      // under this one's name for as long as the answer takes to arrive.
+      loadFeature(f.slot, true);
+    });
+    nav.appendChild(it);
+  });
+}
+
+// `hasFile` is false for a feature that failed to load: its page is an explanation, and the settings-file
+// button would ask the host to open a file that does not exist.
+function renderHead(name, ver, hasFile) {
+  $("title").textContent = name;
+  $("ver").textContent = ver || "";
+  var show = (S.view !== "general") && (hasFile !== false);
+  $("btnFile").style.display = show ? "" : "none";
+  $("btnFile").textContent = t("settingsFile");
+}
+
+function renderGeneral() {
+  renderHead(t("generalTitle"), "");
+  var b = $("body");
+  b.innerHTML = "";
+
+  var c2 = el("div", "card");
+  c2.appendChild(selectRow(t("language"), [
+    { value: "auto", label: t("auto") + " (" + S.snap.host.systemLang + ")" },
+    { value: "zh", label: "中文" },
+    { value: "en", label: "English" }
+  ], S.snap.host.lang, function (v) {
+    hostCall("setHost", { key: "lang", value: v });
+    S.snap.host.lang = v;
+    S.lang = (v === "auto") ? (S.snap.host.systemIsChinese ? "zh" : "en") : v;
+    renderAll();
+  }));
+  c2.appendChild(selectRow(t("theme"), [
+    { value: "auto", label: t("auto") + (S.snap.host.systemLight ? " (light)" : " (dark)") },
+    { value: "light", label: t("light") },
+    { value: "dark", label: t("dark") }
+  ], S.snap.host.theme, function (v) {
+    hostCall("setHost", { key: "theme", value: v });
+    S.snap.host.theme = v;
+    applyTheme(v);
+  }));
+  b.appendChild(c2);
+
+  // ⚠️ THE BLACKLIST CARD USED TO BE HERE, AND IT MOVED TO THE FEATURE THAT OWNS IT. "Do not smooth in
+  // this program" is a statement about smoothing, not about Apex: a future feature with nothing to do with
+  // wheels has no reason to inherit a wheel-shaped list. It is now one of SmoothWheel's own controls
+  // (`type: "list"`), edited by the generic listRow below and stored in SmoothWheel.ini -- and the host
+  // never sees it. The panel got no blacklist-specific code out of the move; it lost some.
+}
+
+// A LIST THE USER EDITS -- one of A FEATURE's controls, and the panel has no idea what is in it.
+//
+// This is the generic version of what used to be the blacklist card: a heading, the rows with a remove
+// button each, and an add field. A `list` parameter from `describe` gets this, whatever it means -- a
+// blacklist today, something else in the next feature.
+//
+// The feature validates (see ApexFeature::listOp): it may lower-case, normalise a path, refuse a duplicate
+// or refuse outright. So after every edit the panel ASKS AGAIN rather than assuming the row appeared --
+// otherwise a refused row would show as added and then vanish on the next refresh.
+function listRow(p, slot) {
+  var card = el("div", "card");
+  card.appendChild(el("div", "row", S.lang === "zh" ? p.labelZh : p.labelEn));
+  var values = p.values || [];
+  if (!values.length) {
+    card.appendChild(el("div", "note", t("empty")));
+  } else {
+    values.forEach(function (name, i) {
+      // The last row is marked so it can drop its bottom border (see the CSS). The row that is last knows it;
+      // a selector would have to guess, and the guess breaks when anything else lands in this card.
+      var r = el("div", "skiprow" + (i === values.length - 1 ? " last" : ""));
+      r.appendChild(el("div", "nm", name));
+      var btn = el("button", null, t("remove"));
+      btn.addEventListener("click", function () {
+        hostCall("listOp", { slot: slot, id: p.id, op: "remove", index: i });
+        refreshControls(slot);
+      });
+      r.appendChild(btn);
+      card.appendChild(r);
+    });
+  }
+  var add = el("div", "addrow");
+  var inp = el("input");
+  inp.type = "text";
+  inp.placeholder = S.lang === "zh" ? (p.placeholderZh || "") : (p.placeholderEn || "");
+  var ab = el("button", "pri", t("add"));
+  function doAdd() {
+    var v = inp.value.trim();
+    if (!v) return;
+    inp.value = "";
+    hostCall("listOp", { slot: slot, id: p.id, op: "add", value: v });
+    refreshControls(slot);
+  }
+  ab.addEventListener("click", doAdd);
+  inp.addEventListener("keydown", function (e) { if (e.key === "Enter") doAdd(); });
+  add.appendChild(inp);
+  add.appendChild(ab);
+  card.appendChild(add);
+  return card;
+}
+
+function renderFeature(slot) {
+  var f = null;
+  S.snap.features.forEach(function (x) { if (String(x.slot) === String(slot)) f = x; });
+  if (!f) { S.view = "general"; renderAll(); return; }
+
+  // ⚠️ A FAILED FEATURE HAS NO VERSION AND NO FILE, so both of those must be conditional. The version comes
+  // back as an empty string for a row that would not load (see the snapshot in settings_host.cpp), and
+  // "v" + "" is a bare "v" sitting in the title bar; and the settings-file button asks the host to open a
+  // file that does not exist, which the host refuses -- so it is a button that does nothing when pressed.
+  // A failed feature's page is an explanation, and it should not carry controls that cannot act.
+  renderHead(S.lang === "zh" ? (f.nameZh || f.nameEn) : (f.nameEn || f.nameZh),
+             f.ok && f.version ? "v" + f.version : "", f.ok);
+
+  var b = $("body");
+  b.innerHTML = "";
+  if (!f.ok) {
+    var e = el("div", "card");
+    e.appendChild(el("div", "err", f.why || ""));
+    b.appendChild(e);
+    return;
+  }
+
+  // ⚠️ THERE IS EXACTLY ONE "ENABLE" ON THIS PAGE, AND IT IS THIS ONE. The feature used to describe its own
+  // `enabled` bool as well, so a feature page carried two switches meaning the same thing (the user: "插件页
+  // 只要一个'启用'就可"). The generic one won: the host draws it for every feature, it is the one that
+  // actually stops the host from asking the feature about a wheel, and a new feature gets it for free
+  // without describing anything.
+  var c = el("div", "card");
+  c.appendChild(switchRow(
+    (S.lang === "zh" ? "启用 " + f.nameZh : "Enable " + f.nameEn),
+    !f.off,
+    function (v) {
+      hostCall("featureOff", { slot: slot, value: v ? 0 : 1 });
+      f.off = !v;
+      renderNav();
+    }
+  ));
+  b.appendChild(c);
+
+  // The feature's own controls, exactly as it described them -- and the panel still knows nothing about
+  // them. `bool` and `range` go in one card; `list` gets a card of its own (it is a block of rows, not a
+  // labelled row); the chart is the last card.
+  var cc = el("div", "card");
+  var params = (S.controls && S.controls.params) || [];
+  var disabled = !!f.off;
+  var anyRow = false;
+  params.forEach(function (p) {
+    if (p.type === "list") {
+      if (anyRow) { b.appendChild(cc); cc = el("div", "card"); anyRow = false; }
+      b.appendChild(listRow(p, slot));
+    } else if (p.type === "bool") {
+      cc.appendChild(switchRow(S.lang === "zh" ? p.labelZh : p.labelEn, p.value,
+                              function (v) {
+                                hostCall("setFeature", { slot: slot, id: p.id, value: v ? 1 : 0 });
+                                // Only if there is a chart to redraw -- see the note in rangeRow.
+                                if (S.controls && S.controls.curve) queueCurve(slot);
+                              }, disabled));
+      anyRow = true;
+    } else {
+      cc.appendChild(rangeRow(p, slot, disabled));
+      anyRow = true;
+    }
+  });
+  if (anyRow) b.appendChild(cc);
+
+  // ⚠️ `curve` IS AN OBJECT WITH A `shape` ARRAY IN IT -- see ApexFeature::settingsJson. THIS GUARD HAS BEEN
+  // WRONG IN BOTH DIRECTIONS, and both times the symptom was identical (an empty card, from a render function
+  // whose condition simply never matched):
+  //
+  //   * it asked for `curve.shape` while the feature sent a bare points array;
+  //   * it asked for an array (`.length >= 2`) while the feature sent this object, so `.length` was undefined
+  //     and the comparison false.
+  //
+  // The shape of the data is the feature's to change and the panel's to follow, so the guard asks the question
+  // the renderer actually needs: does it have a polyline to draw?
+  if (S.controls && S.controls.curve && S.controls.curve.shape &&
+      S.controls.curve.shape.length >= 2) {
+    var cv = el("div", "card");
+    cv.id = "curveCard";
+    var canvas = el("canvas");
+    canvas.id = "curve";
+    cv.appendChild(canvas);
+    // ⚠️ AN ID, MATCHING THE CSS (`#curveLegend`). This set a CLASS, so the rule never matched and the two
+    // end labels sat next to each other instead of being pushed apart -- a bug that was invisible while the
+    // whole card was (see the guard above).
+    var lg = el("div", null);
+    lg.id = "curveLegend";
+    lg.appendChild(el("span", null, t("curveSpeed")));
+    lg.appendChild(el("span", null, t("curveTime")));
+    cv.appendChild(lg);
+    var note = el("div", "note", t("curveNote"));
+    note.style.marginTop = "8px";
+    cv.appendChild(note);
+    b.appendChild(cv);
+    // The span comes from the feature (it is the window the curve was computed from), so the ball runs at the
+    // real speed of the motion rather than at a speed this page invented.
+    StartCurve(canvas, S.controls.curve);
+  } else if (disabled) {
+    b.appendChild(el("div", "note", t("enabledOff")));
+  }
+}
+
+
+function loadFeature(slot, force) {
+  S.view = slot;
+  if (force || !S.controls) S.controls = null;
+  hostCall("describe", { slot: slot });
+  renderAll();
+}
+
+function renderAll() {
+  // ⚠️ THE ANIMATION STOPS ON EVERY REDRAW, before anything decides what to draw. The frame loop runs on
+  // requestAnimationFrame, which does not care what the page is showing: left running it would keep repainting
+  // a canvas the next render detached -- a leak that looks like nothing until the panel has been left open on
+  // another page for a while. renderFeature starts it again if the page it draws has a curve.
+  StopCurve();
+  renderConn();
+  renderNav();
+  if (S.view === "general") renderGeneral();
+  else renderFeature(S.view);
+}
+
+// ---- theme -------------------------------------------------------------------
+//
+// THE PAGE FOLLOWS THE SYSTEM BY ITSELF (prefers-color-scheme, see the note in the CSS). A pinned theme
+// overrides it by setting data-theme on :root, which the CSS has rules for. The host applies the SAME
+// decision to the window's caption, so the two cannot disagree.
+function applyTheme(mode) {
+  var root = document.documentElement;
+  if (mode === "light" || mode === "dark") root.setAttribute("data-theme", mode);
+  else root.removeAttribute("data-theme");
+  syncNativeTheme();
+}
+
+// Tell the host which way the page resolved, so it can set both parts of the chrome the page cannot reach --
+// the caption AND the icon beside it, which must contrast with what the page actually looks like. It also
+// says whether the theme is PINNED: the page only re-reports on a system change when it is following the
+// system, so without that the host could not tell "the theme follows the system, re-read it" from "the theme
+// is pinned, and this change is none of its business".
+function syncNativeTheme() {
+  var pinned = document.documentElement.getAttribute("data-theme") !== null;
+  var dark = document.documentElement.getAttribute("data-theme") === "dark" ||
+             (!pinned && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  hostCall("nativeTheme", { dark: dark ? 1 : 0, pinned: pinned ? 1 : 0 });
+}
+
+// ---- wiring ------------------------------------------------------------------
+
+// THE GENERAL ENTRY, attached ONCE. It is the brand block at the top of the sidebar (see the markup), and the
+// handler lives here rather than in renderNav because renderNav runs on every refresh -- attaching there
+// would add one more listener per render, and a click would then draw the view several times over.
+$("brand").addEventListener("click", function () {
+  if (S.view !== "general") { S.view = "general"; renderAll(); }
+});
+
+$("btnFile").addEventListener("click", function () {
+  if (S.view !== "general") hostCall("openFile", { slot: S.view });
+});
+
+// A real system theme change: the media query moves and the page follows on its own, so only the caption
+// needs telling.
+try {
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+    if (!document.documentElement.getAttribute("data-theme")) syncNativeTheme();
+  });
+} catch (e) { /* older engines: no live listener, which only costs a repaint on the next open */ }
+
+function boot() {
+  applyTheme("auto");
+  hostCall("snapshot");
+  // ⚠️ NO POLL HERE, AND THE ONE THAT USED TO BE HERE COULD NOT HAVE WORKED. It was a setInterval whose body
+  // checked `window.chrome.webview` and then returned in both branches -- empty. It also looked at the wrong
+  // thing entirely: whether THIS page's webview exists says nothing about whether the HOST process does, and
+  // a page cannot see another process's windows at all. The liveness check belongs to the panel process, which
+  // owns `FindWindow`; it runs there and calls __apexHostGone / __apexHostBack (see ui_webview.cpp).
+  //
+  // Kept as a note because the shape of the old code is seductive: a poll that reads plausibly, sits in the
+  // right place, and does nothing.
+}
+
+// The host sends the first snapshot in reply to `snapshot`; until then the panel shows the connecting
+// state rather than an empty frame that looks broken.
+renderConn();
+boot();
+</script>
+</body>
+</html>
