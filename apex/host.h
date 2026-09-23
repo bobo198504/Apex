@@ -17,7 +17,7 @@
 // the number for Apex itself, which the panel puts beside the slogan in the sidebar ("Apex主程序版本号1.0 ... 居右").
 // One definition, because the snapshot and anything else that reports it must not be able to disagree.
 // ---------------------------------------------------------------------------
-#define APEX_HOST_VERSION "1.0"
+#define APEX_HOST_VERSION "1.3"
 
 // ---------------------------------------------------------------------------
 // THE HOST'S OWN INTERFACE: everything apex.exe needs from host_win.cpp, plus the places where the

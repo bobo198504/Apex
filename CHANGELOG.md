@@ -157,6 +157,7 @@
 # 修复深色主题下熄屏按钮上的显示器图标看不见（白图标画在近白底上，按钮成了一块空白方块）
 + 快速面板：开关做小，和设置面板的开关一样大（26×15）
 # 修复通用设置里快速面板分组的顺序改不动（整串新顺序被宿主当成多行，只剩下第一个键）
++ 版本号：主程序 1.3（设置界面标语旁显示的那个），媒体控制 1.3.0
 ```
 
 ## What's changed
@@ -355,6 +356,7 @@
 + Quick panel: the switches are smaller, the same size as the settings page's (26x15)
 # Fixed the quick-panel groups not reordering on the General page (the whole new order was read as several lines,
 +  so only the first key arrived)
++ Version numbers: the program reports 1.3 on the settings page, and Media Control 1.3.0
 ```
 
 ## 1.2.0

@@ -63,7 +63,7 @@
 namespace {
 
 const char *kId = "MediaControl";
-const char *kVersion = "1.0.0";
+const char *kVersion = "1.3.0";
 
 const int kMaxDisplays = 8;
 const int kMaxSessions = 32;
