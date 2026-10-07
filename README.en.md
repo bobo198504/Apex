@@ -6,8 +6,8 @@
 
 *[中文](README.md)*
 
-**端** (duān) — the foremost point of a body, where it can no longer be divided. The smallest unit, and the
-starting point.
+**Apex** — the foremost point of a body, where it can no longer be divided. The smallest unit, and the starting
+point.
 
 ---
 
