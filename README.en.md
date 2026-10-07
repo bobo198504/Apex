@@ -17,10 +17,10 @@ A Windows tool set in the shape of PowerToys: each feature does one thing.
 
 | Feature | What it does |
 |---|---|
-| **Silky Scroll**<br>丝滑滚动 | Takes over the mouse wheel system-wide — scrolling anywhere gains acceleration and a smooth landing |
-| **Auto IME**<br>自动输入法 | Switches the input method by the program or control that has focus; rules are reordered by dragging and recorded by pressing a key |
-| **Keep Awake**<br>保持唤醒 | A list of programs, two switches per row — "keep awake" and "keep the screen on"; plus one unremovable "system-wide" row |
-| **Media Control**<br>媒体控制 | One brightness slider and one screen-off button per monitor; one volume slider and one mute button per application |
+| **Silky Scroll** | Takes over the mouse wheel system-wide — scrolling anywhere gains acceleration and a smooth landing |
+| **Auto IME** | Switches the input method by the program or control that has focus; rules are reordered by dragging and recorded by pressing a key |
+| **Keep Awake** | A list of programs, two switches per row — "keep awake" and "keep the screen on"; plus one unremovable "system-wide" row |
+| **Media Control** | One brightness slider and one screen-off button per monitor; one volume slider and one mute button per application |
 
 Every feature **minds its own business**: its own switch, its own settings file, its own *Exclude* list.
 
