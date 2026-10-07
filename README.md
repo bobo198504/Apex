@@ -25,14 +25,12 @@
 
 ## 与两个自带引擎的项目
 
-有些程序自己就带滚轮平滑，Apex 对它们让路——**不管对方的引擎有没有打开**：
+有些应用里嵌了**自己单独一套**滚轮平滑引擎，Apex 对它们让路——**不管对方的引擎有没有打开**：
 
 | 项目 | 是什么 |
 |---|---|
 | **[SmoothWheelScroll](https://github.com/bobo198504/SmoothWheelScroll)** | REAPER 的平滑滚动插件，也是本项目平滑模型的来源（`shared/` 是它 `src/` 的副本） |
 | **[Lertaro](https://github.com/bobo198504/Lertaro)** | 独立的 Windows 工具（**fork 版**），移植了同一套平滑模型 |
-
-**丝滑滚动**的设置页里，「排除」右边那行灰字列出此刻在跑的引擎（如 `REAPER、Lertaro专用引擎已运行`，谁先启动谁在前）。
 
 ## 用法
 

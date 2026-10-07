@@ -26,16 +26,13 @@ Every feature **minds its own business**: its own switch, its own settings file,
 
 ## The two projects that bring their own engine
 
-Some programs smooth the wheel themselves, and Apex steps aside for them — **whether or not their own engine is
-switched on**:
+Some applications have **a smoothing engine of their own built into them**, and Apex steps aside for those —
+**whether or not that engine is switched on**:
 
 | Project | What it is |
 |---|---|
 | **[SmoothWheelScroll](https://github.com/bobo198504/SmoothWheelScroll)** | The smooth-scrolling plugin for REAPER, and where this project's smoothing model comes from (`shared/` is a copy of its `src/`) |
 | **[Lertaro](https://github.com/bobo198504/Lertaro)** | A standalone Windows tool (**the fork**) that ports the same smoothing model |
-
-On the **Silky Scroll** page the grey line beside *Exclude* names the engines running right now (for example
-`REAPER、Lertaro专用引擎已运行`, earliest-started first).
 
 ## Using it
 
