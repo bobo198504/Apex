@@ -31,7 +31,7 @@ Every feature **minds its own business**: its own switch, its own settings file,
 
 | Project | What it is |
 |---|---|
-| **[SmoothWheelScroll](https://github.com/bobo198504/SmoothWheelScroll)** | The smooth-scrolling plugin for REAPER, and where this project's smoothing model comes from (`shared/` is a copy of its `src/`) |
+| **[SmoothWheelScroll](https://github.com/bobo198504/SmoothWheelScroll)** | The smooth-scrolling plugin for REAPER |
 | **[Lertaro](https://github.com/bobo198504/Lertaro)** | A standalone Windows tool (**the fork**) that ports the same smoothing model |
 
 ## Using it

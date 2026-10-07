@@ -29,7 +29,7 @@
 
 | 项目 | 是什么 |
 |---|---|
-| **[SmoothWheelScroll](https://github.com/bobo198504/SmoothWheelScroll)** | REAPER 的平滑滚动插件，也是本项目平滑模型的来源（`shared/` 是它 `src/` 的副本） |
+| **[SmoothWheelScroll](https://github.com/bobo198504/SmoothWheelScroll)** | REAPER 的平滑滚动插件 |
 | **[Lertaro](https://github.com/bobo198504/Lertaro)** | 独立的 Windows 工具（**fork 版**），移植了同一套平滑模型 |
 
 ## 用法
