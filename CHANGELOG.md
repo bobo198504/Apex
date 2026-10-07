@@ -14,7 +14,7 @@
 # 修复触控板滚轮被当成鼠标滚轮平滑（现在按设备分类，触控板原样放行）
 + 快速面板：保持唤醒每一行的两个开关各带一个短标签（防睡 / 防熄）
 + 滑动滚轮插件改名为「丝滑滚动 / Silky Scroll」
-+ 「排除」右边那句提示改成按引擎显示（`REAPER、Lertaro专用引擎已运行`，谁先运行谁在前）
++ 「排除」右边那句提示改成按引擎显示（`REAPER、Lertaro专用引擎已运行`）
 + 自带平滑引擎的程序（REAPER、Lertaro）一律不接管它的滚动，不管它的引擎开没开
 + 全新安装时所有插件开关默认关闭，快速面板两半也默认关闭（已有配置的用户不受影响）
 + 新增 `apex/package.sh`：一条命令打出便携包
@@ -29,7 +29,7 @@
 + Keep Awake: the two switches on each flyout row are labelled (Awake / Display), so it is clear which one keeps
 +  the machine up and which one keeps the screen on
 + The wheel feature is now called "Silky Scroll"
-+ The note beside "Exclude" names every engine that is running (`REAPER、Lertaro专用引擎已运行`), earliest first
++ The note beside "Exclude" names every engine that is running (`REAPER、Lertaro专用引擎已运行`)
 + A program that brings its own smoothing engine (REAPER, Lertaro) is never taken over, whether or not that engine
 +  is switched on
 + On a fresh install every feature starts switched off, and both halves of the quick panel start off too (an
