@@ -26,8 +26,8 @@ Every feature **minds its own business**: its own switch, its own settings file,
 
 ## The two projects that bring their own engine
 
-Some applications have **a smoothing engine of their own built into them**, and Apex steps aside for those —
-**whether or not that engine is switched on**:
+**This smoothing engine has been embedded into a few applications individually**, and Apex steps aside for those
+— **whether or not that engine is switched on**:
 
 | Project | What it is |
 |---|---|
