@@ -5,8 +5,9 @@
 
 ## 零、这个项目是什么
 
-**Apex 是一个功能集（PowerToys 那种形态），不是单一工具。** 现在有三个功能：SmoothWheel（滑动滚轮）、
-AutoIME（自动输入法）、KeepAwake（保持唤醒）——清单与现状见 §三，细节见 `docs/rules/features.md`。
+**Apex 是一个功能集（PowerToys 那种形态），不是单一工具。** 现在有四个功能：SmoothWheel（丝滑滚动）、
+AutoIME（自动输入法）、KeepAwake（保持唤醒）、MediaControl（媒体控制）——清单与现状见 §三，
+细节见 `docs/rules/features.md`。
 
 ```
 端，体之无序而最前者也。   —— 《墨经》
@@ -208,7 +209,7 @@ bash apex/deploy.sh                  # 只部署（门已经单独跑过时）
 | 改一个 `.cpp` 之后构建 | 4.1 s |
 | 改 AutoIME（Rust）之后构建 | 5.7 s |
 | 改 `panel.html` 之后构建 | 3.3 s |
-| **跑一遍构建层的全部门** | **约 50 s**（**19 扇**；大的几扇：modular 14.2 / deploy 7.3 / keepawake 5.3 / ime 4.1 / quickpanel 3.8 / mediacontrol 3.0 / **chart 2.8**。⚠️ 这个 50 是 48 加上 2026-09-23 新增那扇 `check_apex_hostconfig` 自己量到的 2.7 s —— **不是**一次重新量的整轮：那一轮赶在机器很忙的时候，逐扇相加到了 234 s，比安静时慢四倍，所以旧数不动、新数单独加） |
+| **跑一遍构建层的全部门** | **约 50 s**（**19 扇**；大的几扇：modular 14.2 / deploy 7.3 / keepawake 5.3 / ime 4.1 / quickpanel 3.8 / mediacontrol 3.0 / **chart 2.8**。⚠️ 这个 50 是 48 加上 2026-09-23 新增那扇 `check_apex_hostconfig` 自己量到的 2.7 s —— **不是**一次重新量的整轮：那一轮赶在机器很忙的时候，逐扇相加到了 234 s，比安静时慢四倍，所以旧数不动、新数单独加。⚠️ 本来还有一扇 `check_feature_unifiedui`（2026-10-06 当天加、当天随功能一起撤掉），所以这个总数仍然只配一个「约」） |
 | **构建层 + 装配层一次跑完** | **约 155 s**（十扇装配门；九扇时是 140 s，`check_apex_flyout` 是 2026-09-22 加的。⚠️ 这条是从 PowerShell 量的整轮 169 s 减掉约 1 秒 Git-bash 启动推出来的，**不是 bash 内的读数**——要精确值就跑 `test/timing.sh`） |
 | `cargo` 空跑一次 | 61 ms —— **它从来不是"构建慢"的原因** |
 
@@ -233,25 +234,36 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 
 | 功能 id | 名字 | 用什么写的 | 状态 |
 |---|---|---|---|
-| `SmoothWheel` | 滑动滚轮 / Smooth Wheel Scroll | C++ | 完成（`versions\1.0.0\`） |
+| `SmoothWheel` | 丝滑滚动 / Silky Scroll | C++ | 完成（`versions\1.0.0\`） |
 | `AutoIME` | 自动输入法 / Auto IME | **Rust**（cdylib） | 完成 |
 | `KeepAwake` | 保持唤醒 / Keep Awake | C++ | 完成 |
 | `MediaControl` | 媒体控制 / Media Control | C++ | 完成（每屏亮度与熄屏、每个应用的音量） |
 
-- **ABI 版本 = 18**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
+- **ABI 版本 = 22**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
   `features/AutoIME/src/abi.rs` —— **升版必须同时改两处**（漏了那边不是"退化"，是那个功能**直接加载失败**）。
   宿主要求版本**精确相等**；改契约就要升版，"只是加一个位"也要升。
   （11 → 12 是 `quickItems`：功能可以往**快速面板**里放几个自己的控件；
   12 → 13 是 `ApexQuickItem` 的 `groupZh`/`groupEn`：那些控件可以声明自己属于**哪一组**，
   同一组的落在一块板里并以组名为标题；
   13 → 14 是 `group` 的 `noAdd`：一组行"用户不能新建"——面板曾经给**每一个** rows 组都画了「添加」按钮，
-  而显示器、应用、熄屏快捷键这三组的行是机器给的；
+  而显示器、应用、熄屏快捷键这三组（后一组 2026-09-23 并进了「亮度」行）的行是机器给的；
   14 → 15 是 `ApexQuickItem` 的 `toggleId`/`toggleOn`：推子右边可以带一个**同伴开关**——音量行的静音按钮；
   15 → 16 是它的 `toggleIcon`：那个同伴开关**是什么**（静音 / 熄屏），面板照它选图标；
   16 → 17 是**一组一个**的 `group.quick`（映射整个组进快速面板的那一个开关，画在组自己那一行的右端），
   **并且 `toggleId` 现在也画在开关行上**——保持唤醒的列表就是"每个程序一行、行里两个开关"；
   17 → 18 是 `group.live`：这一组的行是**页面外面那个东西的实时写照**，面板在那一页打开期间自己重读
-  （它替掉了媒体控制音量组上那个「刷新应用列表」按钮）。
+  （它替掉了媒体控制音量组上那个「刷新应用列表」按钮）；
+  18 → 19 是 `ApexWheelEvent` 的 `extraInfo`：**这条滚轮是哪个设备发的**（触控板 / 无级滚轮 / 带刻度鼠标），
+  宿主只搬 `dwExtraInfo` 不做解释，分类规则在 `common/device.h`，触控板一律放行不平滑——见
+  `docs/rules/wheel.md` §3.6.5；
+  19 → 20 是 `ApexQuickItem` 的 `switchLabel*`/`toggleLabel*`：**一行两个开关各自的短标签**，快速面板里就是
+  「防睡 / 防熄」；标签由功能给、面板按**固定列宽**画，没发标签的功能一个像素都不多占——见
+  `docs/rules/quickpanel.md`；
+  20 → 21 是 `ApexHost` 的 `reaperPluginRunning` **换成** `activeEngines`：**哪些外部平滑引擎在跑、按谁先启动
+  排序**（REAPER 与 Lertaro），提示句由功能拼——见 `docs/rules/cases.md` §3.9.1；
+  21 → 22 是它**从"一串 kind"变成"一串 `ApexEngine`（kind + 程序自己的名字）"**：只有 kind 时加一个引擎要改
+  宿主**和每个功能**，没改的功能会**静默丢掉**新引擎；名字随答案给之后，加引擎只是宿主那边一行表 + 一个探测函数
+  （见 `common/engines.h` 与 `docs/rules/cases.md` §3.9.1）。
   都见 `docs/rules/quickpanel.md`。）
 - **加一个功能 = 只写一个文件夹**（`features\<id>\`），面板一行都不用改。要画的新形状，**加进 `abi.h` 的契约**，
   绝不在页面里写死某个功能的名字、id 或字段。边界与理由：`docs/rules/features.md`。

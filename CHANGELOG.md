@@ -5,6 +5,38 @@
 `*` 和 `+` 会变成同一种圆点，符号的区分就没了）。只写"改了什么"。
 -->
 
+## 1.4.0
+
+## 更新内容
+
+```
++ 版本号：主程序 1.4
+# 修复触控板滚轮被当成鼠标滚轮平滑（现在按设备分类，触控板原样放行）
++ 快速面板：保持唤醒每一行的两个开关各带一个短标签（防睡 / 防熄）
++ 滑动滚轮插件改名为「丝滑滚动 / Silky Scroll」
++ 「排除」右边那句提示改成按引擎显示（`REAPER、Lertaro专用引擎已运行`，谁先运行谁在前）
++ 自带平滑引擎的程序（REAPER、Lertaro）一律不接管它的滚动，不管它的引擎开没开
++ 全新安装时所有插件开关默认关闭，快速面板两半也默认关闭（已有配置的用户不受影响）
++ 新增 `apex/package.sh`：一条命令打出便携包
+```
+
+## What's changed
+
+```
++ Version: the host is 1.4 (the number beside the slogan in the sidebar)
+# Fixed a touchpad's wheel being smoothed like a mouse wheel (each message is classified by DEVICE now, and a
++  touchpad is left entirely alone)
++ Keep Awake: the two switches on each flyout row are labelled (Awake / Display), so it is clear which one keeps
++  the machine up and which one keeps the screen on
++ The wheel feature is now called "Silky Scroll"
++ The note beside "Exclude" names every engine that is running (`REAPER、Lertaro专用引擎已运行`), earliest first
++ A program that brings its own smoothing engine (REAPER, Lertaro) is never taken over, whether or not that engine
++  is switched on
++ On a fresh install every feature starts switched off, and both halves of the quick panel start off too (an
++  existing settings file is left exactly as it is)
++ New `apex/package.sh`: one command builds the portable package
+```
+
 ## 1.3.0
 
 ## 更新内容
@@ -152,11 +184,19 @@
 + 通用设置：快速面板下面新增一个小面板，列出当前有映射的功能，可拖动调整它们在快速面板里的顺序（两个总开关固定在上面，不参与排序）
 # 修复宿主发给面板的快照漏了一个 `]`（面板会把「宿主没在运行」显示出来）；`check_apex_persist` 现在真的解析一次那份快照
 + 通用设置：那个小面板按**单个开关**（一组）列，不是按插件；进入通用页时会重新向宿主读一次，所以跟着映射开关实时变
+# 修复换外接显示器后设置会串到别的屏上：显示器报得出型号时，只按型号找记录，不再按 \\.\DISPLAY 插槽找
+# 修复拔掉的显示器会丢掉自己那一行（亮度、名字、快捷键）
+# 修复显示器的型号可能读成同一个口上那块旧屏的型号（取 Windows 标为"已连接"的那一项）
+# 修复 WMI 没回答时型号写法不同（SDC4190 / SDC-4190），导致同上一条记录认不出来
+# 修复设置文件里「名字为空的那一行」被读成旧格式（亮度、快捷键、身份三者错位，记录下一次启动就自我毁坏）
+# 修复设置文件里字段错位的行会把里面的数字当成快捷键（解析不了的组合现在一律不采纳）
 + 快速面板：插件总开关关掉后，它的局部控件整个隐藏（再打开时按各局部开关的状态原样回来，位置也留在原处）
 + 保持唤醒：快速面板里「阻止熄屏」改用和「保持唤醒」一样的滑动开关（原来是带图标的小按钮）
 # 修复深色主题下熄屏按钮上的显示器图标看不见（白图标画在近白底上，按钮成了一块空白方块）
 + 快速面板：开关做小，和设置面板的开关一样大（26×15）
 # 修复通用设置里快速面板分组的顺序改不动（整串新顺序被宿主当成多行，只剩下第一个键）
++ 媒体控制：自定义设备名只作用于快速面板，设置页那一列仍显示设备原名（应用行同样）
++ 媒体控制：「熄屏快捷键」并进「亮度」面板，快捷键框跟在「熄屏」开关右边
 + 版本号：主程序 1.3（设置界面标语旁显示的那个），媒体控制 1.1.0
 ```
 
@@ -356,7 +396,20 @@
 + Quick panel: the switches are smaller, the same size as the settings page's (26x15)
 # Fixed the quick-panel groups not reordering on the General page (the whole new order was read as several lines,
 +  so only the first key arrived)
++ Media Control: a custom device name applies to the quick panel only; the settings page keeps the device's own
++  name (the application rows work the same way)
++ Media Control: the screen-off shortcuts are part of the Brightness card now, with the shortcut box after the
++  screen-off switch
 + Version numbers: the program reports 1.3 on the settings page, and Media Control 1.1.0
+# Fixed a replaced external monitor dragging its settings onto another screen: a panel that names itself is only
++  ever matched by that name, never by its \\.\DISPLAY slot
+# Fixed an unplugged monitor losing its line (brightness, name and shortcut with it)
+# Fixed a monitor's model being read from the screen that used to be in that port (the attached entry is used now)
+# Fixed WMI not answering changing how the model is spelled (SDC4190 vs SDC-4190), which lost the record
+# Fixed a settings line with an EMPTY last field (every screen with no custom name) being read as the previous
++  format, which shifted the identity, the level and the shortcut into each other's fields
+# Fixed a line whose fields are in the wrong order putting its number in the shortcut box (an unparseable
++  combination is refused now)
 ```
 
 ## 1.2.0

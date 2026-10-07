@@ -80,11 +80,13 @@ run_gate check_apex_paths      # where the files land (the portability promise)
 run_gate check_apex_language   # the tray/panel language rule and the UTF-8 conversion
 run_gate check_apex_hostconfig # the host's own settings file: what it means, and the quick panel's order
 run_gate check_app_swallow     # swallowing implies delivering -- the rule that broke once
+run_gate check_app_engines     # a program with its own smoothing engine is always left alone (sentence AND rule)
 run_gate check_app_core        # the model: conservation and the travel rules
 run_gate check_app_config      # the settings: ranges, clamping, a mangled file
 run_gate check_app_tail        # the payout shape
 run_gate check_app_release     # how long a window lasts (the small model before the delivery layer)
 run_gate check_feature_chart   # the feature's own controls document: valid JSON, and every slider moves it
+run_gate check_feature_device  # which DEVICE sent the wheel: the classifier, and that a touchpad is left alone
 run_gate check_feature_ime     # AutoIME's matching engine: the rules, the order, the anchoring
 run_gate check_feature_keepawake  # KeepAwake: two independent switches, a gated list, and the power requests it makes
 # ⚠️ THE ONE BUILD-LAYER GATE THAT TOUCHES THE SCREEN, AND IT SAYS SO: it checks that a "screen off" is a WINDOW

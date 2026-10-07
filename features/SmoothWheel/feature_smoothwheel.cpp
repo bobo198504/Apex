@@ -42,6 +42,7 @@
 #include "core.h"
 #include "model.h"
 #include "release.h" // the window the chart stands for, so the picture follows the delivery
+#include "device.h"  // which DEVICE sent this wheel -- a touchpad is not ours to smooth
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -58,6 +59,10 @@ namespace {
 const ApexHost *g_host = nullptr;
 app::Config g_cfg;
 app::Core g_core;
+// THE RUNNING EVIDENCE OF WHICH DEVICE THIS GESTURE IS, one per feature instance. It lives here rather than in
+// the host for the same reason the exclude list does: "do not smooth a touchpad" is a statement about smoothing.
+// See common/device.h (the rule) and doc/rules/wheel.md (why it is the feature's).
+app::DeviceTracker g_device;
 
 double g_lastMsgSec = 0.0;
 double g_owed = 0.0; // travel the model has produced but not yet handed to the host
@@ -228,6 +233,62 @@ void AddBool(char *out, int outSize, int &off, bool &first, const char *id, cons
   first = false;
 }
 
+// THE SENTENCE BESIDE 「排除」, IN BOTH LANGUAGES, FROM THE ENGINES THE HOST REPORTS (ABI 20 -> 21).
+//
+// ⚠️ THE WORDS ARE THE USER'S, VERBATIM: one engine is "REAPER专用引擎已运行", and more than one is written as one
+// block -- "REAPER、Lertaro专用引擎已运行" -- the names joined with 、and the tail written once. The user's rule for
+// the order: "谁先运行谁显式在前面".
+//
+// ⚠️ THE ORDER IS THE HOST'S AND IS NOT TOUCHED HERE. It is start order, earliest first, and it is the whole
+// reason the ABI carries a list instead of a set: sorting (or re-sorting) here would be a second opinion about a
+// question that already has an answer, and the answer would then depend on which side you asked.
+//
+// ⚠️ AND THE PANEL CANNOT DO THIS, which is why the sentence is built here: the panel draws a `noteZh`/`noteEn`
+// string it is handed and knows nothing about engines -- it never learns what REAPER or Lertaro is (see cases.md).
+static void EngineNote(const ApexEngine *engines, int n, char *zh, int zhSize, char *en, int enSize)
+{
+  if (zh && zhSize > 0)
+    zh[0] = 0;
+  if (en && enSize > 0)
+    en[0] = 0;
+  if (!zh || zhSize <= 0 || !en || enSize <= 0)
+    return;
+
+  int zoff = 0, eoff = 0;
+  int shown = 0;
+  for (int i = 0; i < n; ++i)
+  {
+    // ⚠️ THE NAME COMES FROM THE HOST, and this feature deliberately keeps NO kind -> word table of its own (see
+    // ApexEngine in abi.h). A table here would have to be edited for every program added, and a program nobody
+    // remembered to add would be dropped by this very branch -- in silence, on a note whose whole job is to explain
+    // smoothing the user cannot account for.
+    const char *name = engines[i].name;
+    if (!name[0])
+      continue;
+
+    // Chinese: the names, joined with 、.
+    int wrote = _snprintf(zh + zoff, (size_t)(zhSize - zoff), "%s%s", shown ? "\xe3\x80\x81" : "", name);
+    if (wrote > 0)
+      zoff += wrote;
+
+    // English: "The A", "The A and B", "The A, B and C".
+    wrote = _snprintf(en + eoff, (size_t)(enSize - eoff), "%s%s%s", shown == 0 ? "The " : "",
+                      shown == 0 ? "" : (i == n - 1 ? " and " : ", "), name);
+    if (wrote > 0)
+      eoff += wrote;
+    ++shown;
+  }
+  if (shown == 0)
+  {
+    zh[0] = 0;
+    en[0] = 0;
+    return;
+  }
+  _snprintf(zh + zoff, (size_t)(zhSize - zoff),
+            "\xe4\xb8\x93\xe7\x94\xa8\xe5\xbc\x95\xe6\x93\x8e\xe5\xb7\xb2\xe8\xbf\x90\xe8\xa1\x8c"); // 专用引擎已运行
+  _snprintf(en + eoff, (size_t)(enSize - eoff), shown == 1 ? " engine is running" : " engines are running");
+}
+
 // A list the user edits -- this feature's blacklist. THE PANEL KNOWS NOTHING ABOUT BLACKLISTS: it draws a
 // list, sends "add"/"remove" through ApexFeature::listOp, and re-reads. That is why a future feature with
 // no blacklist costs the panel nothing, and one with a different KIND of list needs no panel change either.
@@ -247,11 +308,12 @@ void AddList(char *out, int outSize, int &off, bool &first, const char *id, cons
   }
   Append(out, outSize, off, "]");
   // THE NOTE BESIDE THE LABEL, and it is sent ONLY WHEN IT IS TRUE. The panel draws whatever it is handed and
-  // makes no judgement about it, so the whole decision -- "is the REAPER plugin actually running" -- lives
-  // here, where the fact is, and the panel does not learn what REAPER is.
+  // makes no judgement about it, so the whole decision -- "which external engines are running right now" -- lives
+  // where the fact is (EngineNote above), and the panel never learns what REAPER or Lertaro is.
   //
-  // ⚠️ THE TEXT IS THE USER'S, VERBATIM: "REAPER专用插件已运行". It is a statement of fact in their own words,
-  // and paraphrasing a sentence they wrote would be answering a different request.
+  // ⚠️ THE TEXT IS THE USER'S, VERBATIM: "REAPER专用引擎已运行", and one block for several -- "REAPER、Lertaro专用
+  // 引擎已运行". It is a statement of fact in their own words, and paraphrasing a sentence they wrote would be
+  // answering a different request.
   if (noteZh && *noteZh)
   {
     Append(out, outSize, off, ",\"noteZh\":");
@@ -587,18 +649,26 @@ static int SwsSettingsJson(char *out, int outSize)
   // The placeholder shows a PATTERN rather than a bare name, because that is what the list takes: a user who
   // sees "game.exe" types exactly that, and one who sees "game*" has learned the whole feature.
   //
-  // ⚠️ THE REAPER NOTE IS ASKED FOR HERE, AND THIS IS THE ONE PLACE IT CAN BE ASKED FROM. The host's answer
-  // is a machine-wide fact read from a module list -- the panel process cannot see other processes at all, and
-  // the host cannot push it (it never initiates except for the activity count). A settings document is built
-  // when the panel asks for one, which is exactly when the user is looking at this page.
-  const bool reaper = g_host && g_host->reaperPluginRunning && g_host->reaperPluginRunning() != 0;
+  // ⚠️ THE ENGINE NOTE IS ASKED FOR HERE, AND THIS IS THE ONE PLACE IT CAN BE ASKED FROM. The host's answer is a
+  // machine-wide fact read from a module list and a named event -- the panel process cannot see other processes
+  // at all, and the host cannot push it (it never initiates except for the activity count). A settings document
+  // is built when the panel asks for one, which is exactly when the user is looking at this page.
+  char noteZh[160] = {0};
+  char noteEn[192] = {0};
+  if (g_host && g_host->activeEngines)
+  {
+    // ⚠️ THE HOST'S ORDER IS KEPT AS GIVEN (start order, earliest first) and the NAMES COME WITH IT -- this side
+    // names no engine itself (see EngineNote).
+    ApexEngine engines[4];
+    ZeroMemory(engines, sizeof(engines));
+    const int got = g_host->activeEngines(engines, 4);
+    EngineNote(engines, got, noteZh, (int)sizeof(noteZh), noteEn, (int)sizeof(noteEn));
+  }
   AddList(out, outSize, off, first, "exclude", "\xe6\x8e\x92\xe9\x99\xa4", "Exclude",
           "\xe4\xbe\x8b\xe5\xa6\x82 game* \xe6\x88\x96 *tool.exe",
           "e.g. game* or *tool.exe",
-          reaper ? "\x52\x45\x41\x50\x45\x52\xe4\xb8\x93\xe7\x94\xa8\xe6\x8f\x92\xe4\xbb\xb6\xe5\xb7\xb2"
-                   "\xe8\xbf\x90\xe8\xa1\x8c"
-                 : nullptr,
-          reaper ? "The REAPER plugin is running" : nullptr);
+          noteZh[0] ? noteZh : nullptr,
+          noteEn[0] ? noteEn : nullptr);
 
   // ⚠️ THE `]` CLOSES `params` AND THE `}` CLOSES THE ROOT, AND THEY BELONG HERE. This document has been
   // broken twice by a bracket that was emitted by the wrong function: once because a bare _snprintf's return
@@ -808,6 +878,11 @@ static int SwsOnWheel(const ApexWheelEvent *ev)
   if (!ev)
     return 0;
 
+  // WHICH DEVICE SENT THIS WHEEL, and it is fed BEFORE anything here can decline the message. The classifier
+  // is a state machine over the delta stream (common/device.h), so skipping a message it would have seen is
+  // exactly how a gesture stops being recognisable.
+  const app::Device device = g_device.Feed(ev->delta, ev->extraInfo);
+
   // Apex can be asked about every wheel on the system, so this is where a feature says what it does NOT
   // want. SmoothWheel is plain-wheel-only: a modified wheel belongs to the program under the cursor
   // (Ctrl+wheel is zoom nearly everywhere, Alt+wheel is a horizontal scroll on some, and REAPER has its
@@ -815,6 +890,24 @@ static int SwsOnWheel(const ApexWheelEvent *ev)
   if (ev->key != 0)
     return 0;
   if (ev->delta == 0)
+    return 0;
+
+  // ⚠️ A TOUCHPAD IS NOT OURS TO SMOOTH, AND A WHEEL WE CANNOT IDENTIFY YET IS NOT EITHER. A continuous surface
+  // is already smooth in the OS -- it reports what the finger is doing rather than a step -- so a second,
+  // feature-side easing on top would be easing something that was never stepped in the first place. This is
+  // the plugin project's rule, moved here at the user's own instruction ("那个过滤，在 SmoothWheelScroll for
+  // reaper 这个项目里有实现过，直接搬过来就可以"); the rule itself is common/device.h and the cases it must get
+  // right are in _diag/app_device_probe.cpp.
+  //
+  // ⚠️ `kUnknown` DECLINING IS THE HALF THAT MATTERS MOST. It is the first messages of EVERY gesture (a whole
+  // notch is identified at once, a sub-notch step only after kDeviceMinSamples), and animating those leaked a
+  // touchpad into the model at the start of each gesture -- measured in the plugin, see its
+  // _diag/device_swipe_probe.cpp. Waiting a couple of messages costs a free-spinning wheel the first fraction
+  // of a turn and costs a notched mouse nothing.
+  //
+  // ⚠️ AND THE DECLINE MUST STAY A DECLINE: returning 0 here leaves the message untouched, which is the same
+  // direction as every other refusal in this function (the host only swallows what a feature claims).
+  if (device != app::Device::kNotched && device != app::Device::kFreeSpin)
     return 0;
 
   // THE PROGRAM UNDER THE CURSOR decides whether this is ours at all.
@@ -867,8 +960,8 @@ static const ApexFeature kFeature = {
     APEX_ABI_VERSION,
     sizeof(ApexFeature),
     "SmoothWheel",
-    "\xe6\xbb\x91\xe5\x8a\xa8\xe6\xbb\x9a\xe8\xbd\xae",        // 滑动滚轮
-    "Smooth Wheel Scroll",
+    "\xe4\xb8\x9d\xe6\xbb\x91\xe6\xbb\x9a\xe5\x8a\xa8",        // 丝滑滚动
+    "Silky Scroll",
     // ⚠️ THE VERSION OF THE REAPER PLUGIN THIS FEATURE CAME FROM (1.7.1), at the user's request: the two are the
     // same thing in two hosts, so a version that says "1.1.0" here would tell the user they are running
     // something older than the plugin they already have. (AutoIME's is 1.2.1 for the same reason.)

@@ -432,8 +432,22 @@ button:disabled { opacity: .45; }
    card and writes that number onto every cell in it, so the rows stay aligned. This value is what stands when
    there is no layout to measure -- a DOM stub, or a page rendered before it is attached (see the note there). */
 .rowlist .skiprow .nm { flex: 0 0 auto; width: 140px; min-width: 0; }
-/* ... and the row's own group of controls is what stretches, so the fader can use the width the name gave back. */
-.rowlist .skiprow > .row { flex: 1 1 auto; min-width: 0; margin: 0; }
+/* ... and the row's own group of controls is what stretches, so the fader can use the width the name gave back.
+   ⚠️⚠️ BUT ONLY THE FADER STRETCHES, AND THAT IS THE PART THAT TOOK A SECOND PASS (2026-09-23). This rule used to
+   be `flex: 1 1 auto` for EVERY field row, which was written when a row held one control besides the name. The
+   user's own rule for this page is "the name column is as narrow as its names allow and the fader gets what that
+   frees" -- and equal shares do not do that: a row with a name box AND a shortcut box AND a fader split the
+   leftover three ways, so every control the feature added made the FADER narrower. The fader is the one the user
+   reads the row by ("设置里的亮度和音量是推子"), so it is the one that grows (`.grow`, set by the page on a `range`
+   field); a name box and a shortcut box are fixed-width controls and take only what they need. */
+.rowlist .skiprow > .row { flex: 0 0 auto; min-width: 0; margin: 0; }
+.rowlist .skiprow > .row.grow { flex: 1 1 auto; }
+/* ⚠️ AND A LABEL IN ONE OF THOSE ROWS IS AS WIDE AS ITS OWN TEXT, NOT A 132-PX COLUMN. `.row label` reserves that
+   column for the parameter FORMS, where every value starts at the same x -- a rows list is not a form: its left
+   column is the item's own name, and the controls after it are read in the order the feature declared them. The
+   screen-off switch is a field of MediaControl's row now ("快捷键录入框跟在「熄屏」开关右边"), and a 132-px label in
+   front of a 26-px switch would have been a hole in the middle of the line. */
+.rowlist .skiprow > .row label { flex: 0 0 auto; }
 /* ⚠️ AND WHAT CANNOT STRETCH SITS AT THE RIGHT END OF WHAT IS LEFT. The shortcut rows have no fader in them: their
    one control has a fixed width, so without this the label and the box would drift left, away from the edge the
    user is used to reaching for. (A row WITH a fader has no spare space at all, so this has no effect there.) */

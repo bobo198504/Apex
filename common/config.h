@@ -454,7 +454,7 @@ inline void FormatConfigText(const Config &c, char *out, int outSize)
   // in a settings file is documentation the user actually reads, so it is checked with the same suspicion as
   // the code.
   off += _snprintf(out + off, outSize - off,
-                   "# Smooth Wheel Scroll -- settings, kept beside the feature's own dll\n"
+                   "# Silky Scroll -- settings, kept beside the feature's own dll\n"
                    "#\n"
                    "# glide / slow / ramp / top are the model's four parameters, with the same meaning, ranges\n"
                    "# and defaults as the plugin's panel; the model itself is the plugin's, unmodified.\n"

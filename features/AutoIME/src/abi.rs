@@ -21,9 +21,32 @@ pub struct ApexHost {
     pub logLine: Option<unsafe extern "C" fn(*const c_char)>,
     pub featureDir: Option<unsafe extern "C" fn(*mut c_char, c_int) -> c_int>,
     pub activity: Option<unsafe extern "C" fn()>,
-    pub reaperPluginRunning: Option<unsafe extern "C" fn() -> c_int>,
+    /// WHICH EXTERNAL SMOOTHING ENGINES ARE RUNNING, EARLIEST-STARTED FIRST (abi.h: `activeEngines`). It replaced a
+    /// call that asked about REAPER alone: the note the user asked for names every program that brings its own
+    /// smoothing -- "REAPER、Lertaro专用引擎已运行". `out` receives one `ApexEngine` per running engine and the return
+    /// value is how many were written. ⚠️ The NAME travels with each one, so a program added to the host's table
+    /// appears without any feature being edited.
+    pub activeEngines: Option<unsafe extern "C" fn(*mut ApexEngine, c_int) -> c_int>,
     pub featureEnabled: Option<unsafe extern "C" fn(*const c_char) -> c_int>,
     pub hostUser: *mut c_void,
+}
+
+/// `APEX_ENGINE_*` from apex/abi.h -- which external program has its own smoothing running, for
+/// `ApexHost::activeEngines`. Transcribed for the same reason the shapes below are: this file is a complete copy
+/// of the C contract, whether or not this crate reads it.
+#[allow(dead_code)]
+pub const APEX_ENGINE_REAPER: c_int = 1;
+#[allow(dead_code)]
+pub const APEX_ENGINE_LERTARO: c_int = 2;
+
+/// One running engine (apex/abi.h: `ApexEngine`). ⚠️ `name` IS THE PROGRAM'S OWN SPELLING, NOT A TRANSLATION --
+/// "REAPER" and "Lertaro" read the same in every language, and the sentence around them belongs to the feature that
+/// writes it. The name travels with the answer so that adding a program is a change in ONE place on the host side.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ApexEngine {
+    pub kind: c_int,
+    pub name: [c_char; 32],
 }
 
 /// ApexTarget in apex/abi.h: pid, a bare lower-case exe name, and who handles wheels there.
@@ -43,6 +66,9 @@ pub struct ApexWheelEvent {
     pub y: c_int,
     pub key: c_uint,
     pub injected: c_int,
+    /// The message's extra-info word as the hook read it. Windows tags touch/pen input with 0xFF515700
+    /// (see common/device.h); the host never interprets it.
+    pub extraInfo: u64,
 }
 
 /// One control this feature puts in the host's QUICK PANEL (apex/abi.h: ApexQuickItem).
@@ -79,6 +105,14 @@ pub struct ApexQuickItem {
     /// mute button and a screen-off button are both two-state switches and must not look alike. One of
     /// `APEX_QUICK_ICON_*` below; an unknown value is drawn as the plain one.
     pub toggleIcon: c_int,
+    /// The short word beside the row's OWN switch and beside its companion (abi.h: `switchLabel*`/`toggleLabel*`,
+    /// ABI 19 -> 20) -- what tells two identically drawn switches apart, which is KeepAwake's "keep the machine
+    /// awake" / "keep the screen on" pair ("注明哪个是防睡，哪个是防熄"). The panel owns the drawing but cannot
+    /// invent the words, so they come from the feature; empty means "no label", and the column is not reserved.
+    pub switchLabelZh: [c_char; 24],
+    pub switchLabelEn: [c_char; 24],
+    pub toggleLabelZh: [c_char; 24],
+    pub toggleLabelEn: [c_char; 24],
 }
 
 /// `APEX_QUICK_ICON_PLAIN` / `_MUTE` / `_DISPLAY` from apex/abi.h -- what a companion switch is, for the purpose of
@@ -154,12 +188,23 @@ pub struct ApexFeature {
 /// `ApexQuickItem::toggleId` now being drawn on a TOGGLE row as well as a range row -- which is a change to the
 /// meaning of an existing field, the kind an exact-match version exists to make loud. To 18 it went with `group`
 /// gaining `live`: a group whose rows are a picture of something outside the page, which the panel keeps
-/// re-reading while it is on screen (this replaced MediaControl's "refresh the application list" button). This
+/// re-reading while it is on screen (this replaced MediaControl's "refresh the application list" button). To 19
+/// it went with `ApexWheelEvent` gaining `extraInfo` -- the message's own extra-info word, which is where Windows
+/// says a wheel came from a touchpad or a pen (signature 0xFF515700) rather than from a mouse; the classifier
+/// that reads it lives in common/device.h on the C side. To 20 it went with `ApexQuickItem` gaining
+/// `switchLabel*`/`toggleLabel*`: the short words beside a row's two switches, which is how the flyout tells
+/// "防睡" from "防熄" on KeepAwake's rows. To 21 it went when `reaperPluginRunning` was REPLACED by
+/// `activeEngines` -- a set of external smoothing engines in start order instead of one program's yes/no, because
+/// Lertaro brought its own smoothing and the note names every engine that has one. To 22 it went the very next day,
+/// when `activeEngines` stopped handing back bare `APEX_ENGINE_*` values and started handing back `ApexEngine` --
+/// the kind PLUS the program's own name -- because the user's next sentence was "包括以后可能会增加的 APP": with
+/// kinds alone, adding an engine meant editing the host AND every feature, and a feature nobody updated would drop
+/// the new engine in silence. This
 /// feature uses none of these, but the host requires an EXACT match --
 /// so forgetting this line does not degrade anything, it makes AutoIME fail to load with a line in the log.
 /// (That is exactly what happened once, and the end-to-end wheel gate went red because of it: one feature
 /// missing changes what the host decides about a wheel.)
-pub const APEX_ABI_VERSION: c_uint = 18;
+pub const APEX_ABI_VERSION: c_uint = 22;
 
 pub const APEX_FEATURE_ENABLED: c_uint = 1;
 

@@ -58,7 +58,8 @@ struct Palette
   // to 200 (78%) when the user asked for more glass ("快速面板的透明度不够，玻璃感要加强下"), and is now **230 (90%)**
   // because 78% turned out to be the wrong KIND of see-through: with nothing behind the panel blurred, 78% does not
   // read as glass at all -- it reads as a sticker, and the desktop showing through it is legible enough to fight
-  // with the labels ("底下内容完全显示出来，视觉上有干扰", the user's words). At 90% what is behind is a tint and
+  // with the labels ("底下内容完全显示出来，视觉上有干扰", the user's words). At 95% -- the value the user settled on
+  // after living with 90% ("现在还是有点透") -- what is behind is a tint and
   // nothing more, while the pane is still visibly not opaque.
   //
   // ⚠️ AND REAL BLUR IS NOT AN OPTION HERE, WHICH IS WHY THIS IS A NUMBER RATHER THAN AN EFFECT. Both of Windows'
@@ -85,7 +86,7 @@ const Palette kLightQuick = {
     {0x76, 0x76, 0x76},                     // --dot-off
     {0xFF, 0xFF, 0xFF},                     // the switch's dot
     {0xFF, 0xFF, 0xFF},                     // the highlight along the top edge
-    230};
+    242};
 
 const Palette kDarkQuick = {
     {0x1C, 0x1C, 0x1C}, {0x14, 0x14, 0x14}, // --bg is #141414
@@ -99,7 +100,7 @@ const Palette kDarkQuick = {
     {0x76, 0x76, 0x76},                     // --dot-off
     {0xFF, 0xFF, 0xFF},                     // the switch's dot
     {0x46, 0x46, 0x46},                     // the highlight: lighter than the card, not white
-    230};
+    242};
 
 inline const Palette &QuickPalette(bool light) { return light ? kLightQuick : kDarkQuick; }
 

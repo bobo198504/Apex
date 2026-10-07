@@ -426,6 +426,13 @@ void Rebuild()
         }
         it->on = q.value >= 0.5;
         it->featureOff = off;
+        // ⚠️ AND THE WORDS BESIDE THE TWO SWITCHES (ABI 19 -> 20) -- what tells KeepAwake's pair apart, since the
+        // two switches are drawn identically and the row's own label is the program's name. Empty for a feature
+        // that sends none, and an empty label draws nothing and reserves no column (see MeasureModel).
+        CopyStr(it->switchLabelZh, kLabelLen, q.switchLabelZh);
+        CopyStr(it->switchLabelEn, kLabelLen, q.switchLabelEn);
+        CopyStr(it->toggleLabelZh, kLabelLen, q.toggleLabelZh);
+        CopyStr(it->toggleLabelEn, kLabelLen, q.toggleLabelEn);
       }
     }
   }

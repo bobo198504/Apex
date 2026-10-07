@@ -78,6 +78,22 @@ const char *kGlobalTitleEn = "System-wide";
 #define kQuickGroupZh "\xe4\xbf\x9d\xe6\x8c\x81\xe5\x94\xa4\xe9\x86\x92" // 保持唤醒
 #define kQuickGroupEn "Keep awake"
 
+// ⚠️ THE TWO WORDS THAT TELL A ROW'S TWO SWITCHES APART (abi.h: `switchLabel*` / `toggleLabel*`, ABI 19 -> 20).
+//
+// The row is one program with two switches drawn identically, so nothing on the panel said which one keeps the
+// machine awake and which one keeps the screen on. The user asked for the words to be there: "保持唤醒两组开关给个
+// 文字标签，注明哪个是防睡，哪个是防熄". The Chinese is the user's own phrasing; the English follows the SETTINGS
+// PAGE's names for the same two switches (`awake` / `display`, "Keep awake" / "Keep the screen on") in shortened
+// form.
+//
+// ⚠️ SHORT ON PURPOSE: the panel draws these in a FIXED column (see `tagW` in apex/quickpanel.h -- its layout is
+// arithmetic with no font in it), so a longer phrase is truncated rather than given more room. The two settings
+// page labels above are the long form and stay where they are.
+#define kQuickAwakeTagZh "\xe9\x98\xb2\xe7\x9d\xa1" // 防睡
+#define kQuickAwakeTagEn "Awake"
+#define kQuickScreenTagZh "\xe9\x98\xb2\xe7\x86\x84" // 防熄
+#define kQuickScreenTagEn "Display"
+
 // ---------------------------------------------------------------------------
 // THE SETTINGS. Written by the panel's thread (setControl / listOp / reloadSettings), read by the worker, so
 // every access is under `g_lock` -- and the worker COPIES them out before doing anything slow (the process
@@ -945,6 +961,11 @@ static void QuickToggle(ApexQuickItem *q, const char *id, const char *zh, const 
   // The pane the whole list shares, in both languages (the host compares both to decide what belongs together).
   QuickCopy(q->groupZh, (int)sizeof(q->groupZh), kQuickGroupZh);
   QuickCopy(q->groupEn, (int)sizeof(q->groupEn), kQuickGroupEn);
+  // ⚠️ AND THE WORD BESIDE THIS SWITCH (ABI 19 -> 20). The row's own label is the PROGRAM's name (or 系统全局), so
+  // without this the two switches of the row are two identical controls and the user has to remember which is
+  // which -- the request was exactly that: "注明哪个是防睡，哪个是防熄".
+  QuickCopy(q->switchLabelZh, (int)sizeof(q->switchLabelZh), kQuickAwakeTagZh);
+  QuickCopy(q->switchLabelEn, (int)sizeof(q->switchLabelEn), kQuickAwakeTagEn);
 }
 
 // The second switch of a row: 阻止熄屏. ⚠️ IT CARRIES NO ICON, AND THAT IS NOT AN OMISSION: the panel draws the
@@ -956,6 +977,10 @@ static void QuickScreenSwitch(ApexQuickItem *q, int row, bool on)
 {
   _snprintf(q->toggleId, sizeof(q->toggleId), "rules[%d].display", row);
   q->toggleOn = on ? 1 : 0;
+  // ⚠️ THE COMPANION'S OWN WORD (ABI 19 -> 20). It is read where the companion is drawn -- beside the second
+  // switch -- and it is what makes the pair readable: 防睡 is the machine staying up, 防熄 is the screen staying on.
+  QuickCopy(q->toggleLabelZh, (int)sizeof(q->toggleLabelZh), kQuickScreenTagZh);
+  QuickCopy(q->toggleLabelEn, (int)sizeof(q->toggleLabelEn), kQuickScreenTagEn);
 }
 
 static int KaQuickItems(ApexQuickItem *out, int max)

@@ -295,7 +295,7 @@ P.snapshot(JSON.stringify({
   // different thing and are still sent.
   host: { lang: "zh", theme: "dark", skip: ["game.exe"], systemLight: 0,
           systemLang: "zh-CN", systemIsChinese: 1 },
-  features: [{ slot: 0, ok: 1, id: "SmoothWheel", nameZh: "滑动滚轮", nameEn: "Smooth Wheel Scroll",
+  features: [{ slot: 0, ok: 1, id: "SmoothWheel", nameZh: "丝滑滚动", nameEn: "Silky Scroll",
                version: "1.0.0", off: 0, enabled: 1 }],
 }));
 check("a snapshot marks it connected", P.S.connected === true);
@@ -1152,6 +1152,44 @@ check("both pages render without throwing", rendered, renderError);
     const bar = findBy(bodyRows, (n) => (n.className || "").split(" ").indexOf("grpbar") >= 0);
     check("  the bar holds the add box and nothing that acts on a selection",
           !!bar && countButtons(bar, 0) === 1, "bar buttons=" + (bar ? countButtons(bar, 0) : "?"));
+  }
+
+  // ---- ONLY THE FADER TAKES THE ROW'S SPARE WIDTH (2026-09-23) ----
+  //
+  // ⚠️ A ROW CAN NOW HOLD FOUR THINGS: the device's name, the user's own name for it, the fader, the screen-off
+  // switch and the screen-off shortcut ("「熄屏快捷键」合并到「亮度」面板，快捷键录入框跟在「熄屏」开关右边"). Every field row
+  // shrinks to what it needs and the ONE that is a `range` asks for the rest (`.grow`, see the CSS note) -- because
+  // equal shares would mean the fader got narrower every time the feature added a control to the row.
+  {
+    const doc = JSON.stringify({ params: [{
+      id: "displays", type: "group", labelZh: "亮度", labelEn: "Brightness",
+      layout: "rows", noAdd: true,
+      fields: [ { id: "alias", type: "text", labelZh: "", labelEn: "", placeholderZh: "自定义" },
+                { id: "brightness", type: "range", labelZh: "", labelEn: "", min: 0, max: 100, value: 50 },
+                { id: "off", type: "bool", labelZh: "熄屏", labelEn: "Screen off" },
+                { id: "hotkey", type: "hotkey", labelZh: "", labelEn: "" } ],
+      items: [ { title: "SDC4190 2880x1800", locked: true,
+                 values: { alias: "", brightness: 50, off: 0, hotkey: "" } } ],
+    }]});
+    const b = renderGroup(doc);
+    const line = findBy(b, (n) => (n.className || "").split(" ").indexOf("skiprow") >= 0);
+    const kids = (line && line.children) || [];
+    const grow = kids.filter((c) => (c.className || "").split(" ").indexOf("grow") >= 0);
+    const sliders = kids.filter((c) => !!findBy(c, (n) => n.type === "range"));
+    check("  a row with three controls marks the FADER as the one that grows",
+          grow.length === 1 && sliders.length === 1 && grow[0] === sliders[0],
+          "grow=" + grow.length + " slider-rows=" + sliders.length);
+    // ⚠️ AND THE ORDER IS THE FEATURE'S OWN, WHICH IS THE WHOLE POINT OF THE MERGE: the shortcut box comes AFTER
+    // the switch it stands for, so the two ways of putting a screen out read as one control. The page draws a
+    // field row where the field was declared (see the rows layout), so this is checked on the rendered line.
+    const idxHotkey = kids.findIndex((c) => !!findBy(c, (n) => (n.className || "").split(" ").indexOf("hotkey") >= 0));
+    const idxSwitch = kids.findIndex((c) => !!findBy(c, (n) => n.type === "checkbox"));
+    check("  and the shortcut box is drawn after the screen-off switch, as the feature asked",
+          idxHotkey > 0 && idxSwitch > 0 && idxHotkey > idxSwitch,
+          "switch@" + idxSwitch + " hotkey@" + idxHotkey);
+    // ⚠️ AND THE PAGE IS PUT BACK, for the same reason as the other block that borrows this container: the checks
+    // below ask about the fixture rendered here, not about this one.
+    renderGroup(rowsGroupDoc());
   }
 
   // ---- THE GROUP'S OWN QUICK-PANEL SWITCH (apex/abi.h, `quick`, ABI 16 -> 17) ----

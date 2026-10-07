@@ -152,6 +152,16 @@ struct Item
   char toggleId[kIdLen] = {0};
   bool toggleOn = false;
   CompanionIcon icon = CompanionIcon::kPlain;
+
+  // ⚠️ THE SHORT WORD BESIDE EACH OF THIS ROW'S TWO SWITCHES (abi.h, ABI 19 -> 20). Two switches drawn identically
+  // say nothing about which one is which: KeepAwake's row asks one program "keep the machine awake" and "keep the
+  // screen on", and the user asked for the words to be on screen -- "保持唤醒两组开关给个文字标签，注明哪个是防睡，
+  // 哪个是防熄". They are the FEATURE's words, because the panel owns the drawing but cannot invent a meaning; an
+  // empty one means "draw nothing, and reserve no room for it" (see `blockSwitchTag` in MeasureModel).
+  char switchLabelZh[kLabelLen] = {0};
+  char switchLabelEn[kLabelLen] = {0};
+  char toggleLabelZh[kLabelLen] = {0};
+  char toggleLabelEn[kLabelLen] = {0};
 };
 
 struct Section
@@ -309,6 +319,16 @@ struct Metrics
   int extraH = 20;
   int extraGap = 6;     // between the read-out and the button
 
+  // ⚠️ THE COLUMN A SWITCH'S OWN WORD SITS IN (abi.h: `switchLabel*` / `toggleLabel*`, ABI 19 -> 20). FIXED, like
+  // `labelW`, and for the same reason this file already gives for the label column: the layout is arithmetic with
+  // no font in it, so a width that followed the words would have to be measured by something that cannot measure.
+  // It is sized for the SHORT words the contract asks for -- two characters of Chinese (about 24 px in the small
+  // font the panel draws them with) or a Latin word of about six characters -- and a longer one is drawn truncated
+  // rather than being given room it cannot have. Fifty covers the widest word either language actually sends
+  // ("Display"), and what it takes comes out of the program name, which scrolls when the pointer rests on it.
+  int tagW = 50;
+  int tagGap = 6;       // between a switch's word and the switch itself
+
   int switchColMin = 128; // a grid cell narrower than this is not worth two columns
 };
 
@@ -398,6 +418,11 @@ inline Metrics DefaultMetrics(int scalePercent)
   m.extraW = Scaled(26, scalePercent);
   m.extraH = Scaled(20, scalePercent);
   m.extraGap = Scaled(6, scalePercent);
+  // ⚠️ THE LABEL COLUMNS SCALE WITH EVERYTHING ELSE, and leaving them out would be the quiet kind of bug: the
+  // font the words are drawn in DOES scale (see PaintPanel), so at 150% an unscaled 44 px column would truncate
+  // words that fit at 100% -- on exactly the machines whose users cannot afford to lose the label.
+  m.tagW = Scaled(50, scalePercent);
+  m.tagGap = Scaled(6, scalePercent);
   m.switchColMin = Scaled(128, scalePercent);
   return m;
 }
@@ -421,6 +446,11 @@ struct Layout
   Rect labels[kMaxItems];    // what the label may use before the control starts
   Rect values[kMaxItems];    // the read-out, right-aligned
   Rect extras[kMaxItems];    // the companion switch (abi.h: `toggleId`), empty when the row has none
+  // ⚠️ THE WORDS BESIDE THE TWO SWITCHES (abi.h: `switchLabel*` / `toggleLabel*`, ABI 19 -> 20). Kept apart from
+  // `labels` because they are not the ROW's name: they name the CONTROLS, they are drawn right-aligned hard against
+  // the switch they belong to, and a row with none leaves both empty rather than reusing the name's space.
+  Rect switchTags[kMaxItems]; // the row's own switch's word, empty when it has none
+  Rect toggleTags[kMaxItems]; // the companion's word, empty when it has none
   // ⚠️ WHERE A CLICK ON A ROW ACTUALLY ACTS, which is NOT the same as the row's own rectangle (see FaderBox):
   // the click target of a fader is the fader, and nothing else on the line.
   Rect faderHit[kMaxItems];
@@ -524,11 +554,21 @@ inline int MeasureModel(const Model &m, const Metrics &mx, Layout *out)
     // column line up only if the space their neighbours' buttons take is reserved for both. See the toggle branch
     // below, and the note on `toggleId` in abi.h for why a switch row has a companion at all.
     bool blockExtra = false;
+    // ⚠️ AND THE SAME QUESTION FOR THE TWO WORDS (ABI 19 -> 20), ASKED SEPARATELY: a word is a COLUMN, and a
+    // column that only some rows have would move the switches of the others -- the alignment rule this block
+    // already holds itself to. A feature that sends no labels (every feature but KeepAwake) reserves nothing.
+    bool blockSwitchTag = false, blockToggleTag = false;
     for (int i = first; i < first + count; ++i)
+    {
       if (m.items[i].toggleId[0] &&
           (m.items[i].kind == RowKind::kSlider || m.items[i].kind == RowKind::kKnob ||
            m.items[i].kind == RowKind::kToggle))
         blockExtra = true;
+      if (m.items[i].switchLabelZh[0] || m.items[i].switchLabelEn[0])
+        blockSwitchTag = true;
+      if (m.items[i].toggleLabelZh[0] || m.items[i].toggleLabelEn[0])
+        blockToggleTag = true;
+    }
 
     for (int i = first; i < first + count; ++i)
     {
@@ -569,7 +609,13 @@ inline int MeasureModel(const Model &m, const Metrics &mx, Layout *out)
         const bool hasExtra = it.toggleId[0] != 0;
         const int cw = CompanionW(mx, it.kind), ch = CompanionH(mx, it.kind);
         const int extraX = rx + rw - cw;
-        const int rightEdge = blockExtra ? (extraX - mx.extraGap) : (rx + rw);
+        // ⚠️ THE TWO WORDS ARE COLUMNS TOO (ABI 19 -> 20), reserved block-wide exactly like the companion itself:
+        // the row reads [name] [word] [switch] [word] [switch], and every one of those columns has to be the same x
+        // in every row of the block or the pair stops reading as a pair. `tagW + tagGap` is what one word takes
+        // out of the row, so a block with no labels is laid out exactly as it was before this existed.
+        const int toggleTagW = blockToggleTag ? (mx.tagW + mx.tagGap) : 0;
+        const int switchTagW = blockSwitchTag ? (mx.tagW + mx.tagGap) : 0;
+        const int rightEdge = (blockExtra ? (extraX - mx.extraGap) : (rx + rw)) - toggleTagW;
         if (hasExtra)
         {
           out->extras[i] = Rect{extraX, ry + (rowH - ch) / 2, cw, ch};
@@ -578,8 +624,14 @@ inline int MeasureModel(const Model &m, const Metrics &mx, Layout *out)
           const int grow = 3;
           out->extraHit[i] = Rect{extraX - grow, ry, cw + 2 * grow, rowH};
         }
+        if (blockToggleTag)
+          // Right-aligned hard against the switch it names -- the same "hard against" the switch itself gets, so
+          // the word and its switch read as one thing rather than as two columns of text.
+          out->toggleTags[i] = Rect{extraX - mx.tagGap - mx.tagW, ry, mx.tagW, rowH};
         out->control[i] = Rect{rightEdge - mx.switchW, ry + (rowH - mx.switchH) / 2, mx.switchW, mx.switchH};
-        out->labels[i] = Rect{rx, ry, rightEdge - mx.switchW - mx.labelGap - rx, rowH};
+        if (blockSwitchTag)
+          out->switchTags[i] = Rect{rightEdge - mx.switchW - mx.tagGap - mx.tagW, ry, mx.tagW, rowH};
+        out->labels[i] = Rect{rx, ry, rightEdge - mx.switchW - mx.labelGap - switchTagW - rx, rowH};
         out->values[i] = Rect{rx + rw, ry, 0, 0};
       }
       else if (it.kind == RowKind::kNote)

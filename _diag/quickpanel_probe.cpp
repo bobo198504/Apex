@@ -137,11 +137,25 @@ static Model BuildSampleModel()
     CopyStr(a->toggleId, kIdLen, "rules[0].display");
     a->toggleOn = false;
     a->icon = CompanionIcon::kDisplay;
+    // ⚠️ AND THE TWO WORDS (ABI 19 -> 20), exactly as the real feature sends them on every row of this list. They
+    // are what makes the pair tellable apart, and they are also what this sample needs to be: without them the
+    // alignment of the columns this change added could not be checked here at all.
+    CopyStr(a->switchLabelZh, kLabelLen, "\xe9\x98\xb2\xe7\x9d\xa1"); // 防睡
+    CopyStr(a->switchLabelEn, kLabelLen, "Awake");
+    CopyStr(a->toggleLabelZh, kLabelLen, "\xe9\x98\xb2\xe7\x86\x84"); // 防熄
+    CopyStr(a->toggleLabelEn, kLabelLen, "Display");
     Item *b2 = m.AddItem(list, RowKind::kToggle, "rules[1].awake");
     CopyStr(b2->labelZh, kLabelLen, "probe-list.exe");
     CopyStr(b2->labelEn, kLabelLen, "probe-list.exe");
     CopyStr(b2->groupZh, kGroupLen, "\xe4\xbf\x9d\xe6\x8c\x81\xe5\x94\xa4\xe9\x86\x92");
     CopyStr(b2->groupEn, kGroupLen, "Keep awake");
+    // ⚠️ THE SECOND ROW CARRIES THE WORDS BUT NO COMPANION OF ITS OWN, which is the case that fails if a column is
+    // reserved per ROW rather than per BLOCK: this row's own switch would sit in a different place than the first
+    // row's (see the alignment checks).
+    CopyStr(b2->switchLabelZh, kLabelLen, "\xe9\x98\xb2\xe7\x9d\xa1");
+    CopyStr(b2->switchLabelEn, kLabelLen, "Awake");
+    CopyStr(b2->toggleLabelZh, kLabelLen, "\xe9\x98\xb2\xe7\x86\x84");
+    CopyStr(b2->toggleLabelEn, kLabelLen, "Display");
   }
   return m;
 }
@@ -370,6 +384,55 @@ static void TestLayout()
     // first volume row, whose mute button the section above measured.)
     Check(ly.extras[6].w == mx.extraW && ly.extras[6].h == mx.extraH,
           "while a FADER row's companion is still the compact button", detail);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // ⚠️⚠️ AND THE WORDS BESIDE THE TWO SWITCHES (ABI 19 -> 20). Two switches drawn identically say nothing about
+  // which is which; the user asked for the words ("保持唤醒两组开关给个文字标签，注明哪个是防睡，哪个是防熄"), and
+  // the panel can only draw what the feature tells it. BOTH HALVES ARE CHECKED HERE, because "reserve the column"
+  // and "reserve it only when there is something to put in it" are two different mistakes:
+  //   * the column has to be where the switch it names is, and be the same x in every row of the block -- including
+  //     a row whose own companion is missing (the second sample row), which is the case a per-ROW column breaks;
+  //   * and a feature that sends no words must be laid out EXACTLY as before, or this change would narrow every
+  //     other feature's rows to make room for a label none of them has.
+  {
+    const int list0 = 8, list1 = 9;
+    char detail[240] = {0};
+    _snprintf(detail, sizeof(detail),
+              "own word %d..%d, switch %d..%d | companion word %d..%d, switch %d..%d", ly.switchTags[list0].x,
+              ly.switchTags[list0].Right(), ly.control[list0].x, ly.control[list0].Right(),
+              ly.toggleTags[list0].x, ly.toggleTags[list0].Right(), ly.extras[list0].x,
+              ly.extras[list0].Right());
+    Check(ly.switchTags[list0].w > 0 && ly.toggleTags[list0].w > 0,
+          "a row whose feature sent two words has a column for each", detail);
+    Check(ly.switchTags[list0].Right() <= ly.control[list0].x,
+          "the row's own word sits LEFT of the switch it names", detail);
+    Check(ly.toggleTags[list0].Right() <= ly.extras[list0].x,
+          "and the companion's word sits left of the companion", detail);
+    Check(ly.switchTags[list0].x == ly.switchTags[list1].x && ly.toggleTags[list0].x == ly.toggleTags[list1].x,
+          "both columns are the same x in every row of the block", detail);
+    Check(ly.labels[list0].Right() <= ly.switchTags[list0].x,
+          "and the program's name still ends before the first word starts", detail);
+    Check(ly.switchTags[list0].x >= ly.rows[list0].x && ly.switchTags[list0].Bottom() <= ly.rows[list0].Bottom(),
+          "the words are inside the row they belong to", detail);
+
+    Model plain = BuildSampleModel();
+    for (int i = 0; i < plain.itemCount; ++i)
+    {
+      plain.items[i].switchLabelZh[0] = 0;
+      plain.items[i].switchLabelEn[0] = 0;
+      plain.items[i].toggleLabelZh[0] = 0;
+      plain.items[i].toggleLabelEn[0] = 0;
+    }
+    Layout lz;
+    MeasureModel(plain, mx, &lz);
+    char pdetail[160] = {0};
+    _snprintf(pdetail, sizeof(pdetail), "switch at %d with words, %d without", ly.control[list0].x,
+              lz.control[list0].x);
+    Check(lz.switchTags[list0].w == 0 && lz.toggleTags[list0].w == 0,
+          "a feature that sends no words gets no column", pdetail);
+    Check(lz.control[list0].x > ly.control[list0].x,
+          "and its switches sit exactly where they did before this existed", pdetail);
   }
 
   // AN EMPTY MODEL HAS NO HEIGHT, and the caller draws nothing. A panel with a border and no content is worse
@@ -834,10 +897,13 @@ static void TestPalette(const char *root)
   Check(pals[0]->dotOn.r == pals[1]->dotOn.r && pals[0]->dotOn.g == pals[1]->dotOn.g &&
             pals[0]->dotOn.b == pals[1]->dotOn.b,
         "\"on\" is one colour in both themes (the stylesheet says why: it must read on both)");
-  // ⚠️ A RANGE, NOT A NUMBER. How much glass is enough is a judgement, and the user moved it once already
-  // ("透明度不够，玻璃感要加强下"). What the gate can hold onto is the two ends: fully opaque is not glass, and
-  // past ~150 the labels stop being readable over a busy wallpaper.
-  Check(pals[0]->bgAlpha >= 150 && pals[0]->bgAlpha <= 235 && pals[1]->bgAlpha == pals[0]->bgAlpha,
+  // ⚠️ A RANGE, NOT A NUMBER. How much glass is enough is a judgement, and THE USER HAS NOW MOVED IT THREE
+  // TIMES: 246 ("玻璃感要加强下"), 230 ("透明度拉低，90左右即可"), and 242 ("现在还是有点透"). What the gate can hold
+  // onto is the two ends: fully opaque is not glass, and past ~150 the labels stop being readable over a busy
+  // wallpaper. ⚠️ THE UPPER END MOVED from 235 to 250 when the user asked for 95% -- 242 is still short of 255,
+  // so "it is not a solid fill" remains true, and a gate that refused the value the user chose would be the
+  // gate overruling the very judgement it exists to bracket.
+  Check(pals[0]->bgAlpha >= 150 && pals[0]->bgAlpha <= 250 && pals[1]->bgAlpha == pals[0]->bgAlpha,
         "the body is glass rather than a solid fill, in both themes");
 }
 
@@ -855,7 +921,14 @@ static int StubDir(char *out, int cap)
   return 1;
 }
 static void StubActivity(void) {}
-static int StubReaper(void) { return 0; }
+// The ABI's external-engine list (see ApexEngine in abi.h). This probe does not care WHICH engines are running --
+// it is about the flyout -- only that the host offers the call at all, so the stub reports none.
+static int StubEngines(ApexEngine *out, int max)
+{
+  (void)out;
+  (void)max;
+  return 0;
+}
 static int StubEnabled(const char *) { return 1; }
 
 static void BuildStubHost(ApexHost *h)
@@ -868,7 +941,7 @@ static void BuildStubHost(ApexHost *h)
   h->logLine = StubLog;
   h->featureDir = StubDir;
   h->activity = StubActivity;
-  h->reaperPluginRunning = StubReaper;
+  h->activeEngines = StubEngines;
   h->featureEnabled = StubEnabled;
   h->hostUser = nullptr;
 }
@@ -1292,6 +1365,17 @@ static void TestFeatures(const char *pluginsDir, const char *scratchDir)
         Check(rows[found].type == APEX_QUICK_TOGGLE && strcmp(rows[found].toggleId, "rules[1].display") == 0 &&
                   rows[found].toggleIcon == APEX_QUICK_ICON_PLAIN,
               what2, detail);
+        // ⚠️ AND THE WORDS BESIDE THOSE TWO SWITCHES (ABI 19 -> 20). This is the half of the contract the geometry
+        // checks cannot see: the panel draws the words the FEATURE sends, so a feature that forgot them would leave
+        // two identical switches on the row with nothing to tell them apart -- the user's request, verbatim:
+        // "保持唤醒两组开关给个文字标签，注明哪个是防睡，哪个是防熄".
+        _snprintf(what2, sizeof(what2), "  and each of the two switches carries its word (防睡 / 防熄)");
+        _snprintf(detail, sizeof(detail), "own=\"%s\"/\"%s\" companion=\"%s\"/\"%s\"", rows[found].switchLabelZh,
+                  rows[found].switchLabelEn, rows[found].toggleLabelZh, rows[found].toggleLabelEn);
+        const bool tagsOk = strcmp(rows[found].switchLabelZh, "\xe9\x98\xb2\xe7\x9d\xa1") == 0 &&
+                            strcmp(rows[found].toggleLabelZh, "\xe9\x98\xb2\xe7\x86\x84") == 0 &&
+                            rows[found].switchLabelEn[0] && rows[found].toggleLabelEn[0];
+        Check(tagsOk, what2, detail);
       }
       else
         Check(false, what2, "(no item for rules[1] -- the list is not what got mapped)");

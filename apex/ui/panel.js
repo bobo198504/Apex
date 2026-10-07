@@ -663,10 +663,17 @@ function actionShortcuts() {
 
 function hotkeyRow(p, slot, disabled, pathOverride) {
   // ⚠️ SAME REASON AS `rangeRow`: a recorded combination can be a field INSIDE a group row -- MediaControl
-  // keeps one screen-off shortcut per monitor -- and its address is `offkeys[1].hotkey`, not `hotkey`.
+  // keeps one screen-off shortcut per monitor -- and its address is `displays[1].hotkey`, not `hotkey`.
   var path = pathOverride || p.id;
   var row = el("div", "row");
-  row.appendChild(el("label", null, S.lang === "zh" ? p.labelZh : p.labelEn));
+  // ⚠️ AN EMPTY LABEL DRAWS NOTHING, THE SAME RULE THE NAME BOX AND THE FADER ALREADY FOLLOW (see textRow and
+  // rangeRow). This function used to append the `<label>` unconditionally, and inside a rows list that is not a
+  // cosmetic difference: `.row label` is a FIXED 132 px column, so the box was pushed a whole label's width away
+  // from whatever came before it. That was invisible while the shortcut was the only control on its own line (the
+  // gap read as "right-aligned"), and it is exactly what the user is looking at when the box has to follow the
+  // screen-off switch: "快捷键录入框跟在「熄屏」开关右边".
+  var lbl = S.lang === "zh" ? p.labelZh : p.labelEn;
+  if (lbl) row.appendChild(el("label", null, lbl));
   var ctl = el("div", "ctl");
 
   var stored = (p.value === undefined || p.value === null) ? "" : String(p.value);
@@ -1516,7 +1523,15 @@ function groupField(p, fld, item, i, slot, disabled, sink) {
   // control is a top-level one, which is the only change they needed to work in both places.
   if (fld.type === "range") {
     var rp = shallowCopy(fld); rp.value = one;
-    return rangeRow(rp, slot, disabled, path);
+    var rangeRowEl = rangeRow(rp, slot, disabled, path);
+    // ⚠️⚠️ THE FADER IS THE ONE THING IN A ROW THAT TAKES THE SPARE WIDTH (see the CSS note on `.grow`). A row can
+    // hold three or four controls now -- a name box, a fader, a switch, a shortcut -- and if every one of them grew
+    // equally the fader paid for all of them: with two growing fields in a row it kept half the leftover, with
+    // three it kept a third, and the control the user reads the row by got narrower every time the feature added
+    // something to it. The page knows which field is which because the FEATURE said so (`type`), so this is not a
+    // guess about MediaControl: it is "a slider is the control that wants room", written once.
+    rangeRowEl.className += " grow";
+    return rangeRowEl;
   }
   if (fld.type === "hotkey") {
     var hp = shallowCopy(fld); hp.value = one;

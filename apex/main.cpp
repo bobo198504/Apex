@@ -59,6 +59,12 @@ using namespace apex;
 namespace {
 
 HostConfig g_cfg;
+// ⚠️ WHETHER THIS MACHINE HAD AN apex.ini WHEN WE STARTED -- which is not the same question as "is anything
+// configured", and it is the one the defaults hang on. The user's rule (2026-10-07): a fresh install starts with
+// EVERY feature switched off and both quick-panel halves off ("用户全新用上时，什么功能也不开，让用户按需打开"),
+// while a machine that already has a file keeps every choice in it ("已经有配置过的用户不影响"). So "no file" is
+// the only thing that may act on a default, and it is recorded once, by LoadHostConfig, before anything reads it.
+bool g_cfgFileExisted = false;
 Loader g_loader;
 HWND g_wnd = nullptr;
 
@@ -351,14 +357,45 @@ void HostActivity()
     PostMessageA(g_panelWnd, g_activityMsg, (WPARAM)(now - claimed), 0);
 }
 
-// IS THE REAPER PLUGIN RUNNING? The ABI's answer, with a log line -- see the note where it is installed into
-// the host API for why the logging belongs HERE and not in the platform layer.
-int HostReaperPluginIsRunning()
+// "REAPER, Lertaro" -- the engines in the order the platform layer gave them, for the log lines below.
+//
+// ⚠️ ONE PLACE SPELLS THIS, and that is not tidiness: the ABI wrapper and the change watcher both name the same
+// list, and two spellings of it is how a log comes to disagree with what the panel was actually told. The ORDER
+// is part of what is being reported (see ApexHost::activeEngines), so it is printed, not sorted.
+//
+// ⚠️ THE NAMES COME OFF `ApexEngine`, not out of a table here: a program added to the host's engine table must not
+// need this file edited too (see ApexEngine in abi.h).
+static void EnginesText(const ApexEngine *engines, int n, char *out, int outSize)
 {
-  const int running = host::ReaperPluginIsRunning();
-  LogLine("reaper check: %s", running ? "the plugin is running -- the note will be shown"
-                                      : "not running (or not confirmed) -- no note");
-  return running;
+  if (!out || outSize <= 0)
+    return;
+  out[0] = 0;
+  int off = 0;
+  for (int i = 0; i < n; ++i)
+  {
+    const char *name = engines[i].name[0] ? engines[i].name : "?";
+    const int left = outSize - off;
+    if (left <= 1)
+      break;
+    const int wrote = _snprintf(out + off, (size_t)left, "%s%s", i ? ", " : "", name);
+    if (wrote <= 0)
+      break;
+    off += wrote;
+  }
+}
+
+// WHICH EXTERNAL SMOOTHING ENGINES ARE RUNNING? The ABI's answer, with a log line -- see the note where it is
+// installed into the host API for why the logging belongs HERE and not in the platform layer.
+//
+// ⚠️ THE LOG PRINTS THE ORDER, because that is the part a reader cannot recover from the set alone: "Lertaro,
+// REAPER" and "REAPER, Lertaro" are the same set and two different sentences.
+int HostActiveEngines(ApexEngine *out, int max)
+{
+  const int n = host::ActiveEngines(out, max);
+  char names[96] = {0};
+  EnginesText(out, n, names, (int)sizeof(names));
+  LogLine("engines: %s", n > 0 ? names : "none running (or not confirmed) -- no note");
+  return n;
 }
 
 // Watch the facts that can change while the panel is open, and tell it when one does. Called from the timer,
@@ -381,8 +418,17 @@ void NotifyStateChanges()
   //
   // The cost of always posting once is one message at start-up. The cost of not doing it is a state the user
   // can see on screen never being sent.
-  static int lastReaper = -1; // -1 = nothing reported yet
-  const int reaper = host::ReaperPluginIsRunning();
+  static int lastFingerprint = -1; // -1 = nothing reported yet
+  // ⚠️ THE ENGINE SET **AND THE ORDER INSIDE IT**, because the sentence the panel draws names the engines in that
+  // order: a set that stayed the same while the order changed would leave the note showing the old order for
+  // ever. Building and comparing this is a couple of dozen arithmetic operations, which is what a two-second
+  // timer can afford -- the expensive part is inside ActiveEngines, and only when the set changes (see there).
+  ApexEngine engines[4];
+  ZeroMemory(engines, sizeof(engines));
+  const int count = host::ActiveEngines(engines, 4);
+  int fingerprint = count;
+  for (int i = 0; i < count; ++i)
+    fingerprint = fingerprint * 31 + engines[i].kind;
 
   // ⚠️ NOTHING IS REMEMBERED UNTIL SOMETHING WAS ACTUALLY SENT, AND THIS IS THE BUG THAT COST A ROUND TRIP.
   // The first version recorded the value and then tried to post -- so on the ticks before the panel had opened,
@@ -398,11 +444,16 @@ void NotifyStateChanges()
   if (!g_stateMsg || !g_panelWnd)
     return; // nowhere to send it: treat the value as not yet reported
 
-  if (reaper == lastReaper)
+  if (fingerprint == lastFingerprint)
     return;
-  const bool first = (lastReaper < 0);
-  lastReaper = reaper;
-  LogLine("state: the REAPER plugin is %s -- telling the panel%s", reaper ? "running" : "not running",
+  const bool first = (lastFingerprint < 0);
+  lastFingerprint = fingerprint;
+  char names[96] = {0};
+  EnginesText(engines, count, names, (int)sizeof(names));
+  // ⚠️ THE MESSAGE KIND KEEPS ITS OLD NAME (`kStateReaper`): it is a KEY the panel acts on -- "re-read the
+  // controls, something outside the page changed" -- and renaming it would mean touching the IPC header, the page
+  // and the gates for a word. What changed is what the host WATCHES, not what the panel does about it.
+  LogLine("state: the engines are %s -- telling the panel%s", count > 0 ? names : "none",
           first ? " (the first report)" : "");
   PostMessageA(g_panelWnd, g_stateMsg, (WPARAM)kStateReaper, 0);
 }
@@ -434,7 +485,7 @@ void InitHostApi()
   g_hostApi.logLine = HostLog;
   g_hostApi.featureDir = HostFeatureDir;
   g_hostApi.activity = HostActivity;
-  g_hostApi.reaperPluginRunning = HostReaperPluginIsRunning;
+  g_hostApi.activeEngines = HostActiveEngines;
   g_hostApi.featureEnabled = HostFeatureEnabled;
   g_hostApi.hostUser = nullptr;
 }
@@ -1352,9 +1403,13 @@ bool LoadHostConfig()
   if (!HostConfigPath(path, (int)sizeof(path)))
     return false;
   FILE *f = fopen(path, "rb");
+  // ⚠️ "THERE IS NO FILE YET" IS ITSELF A FACT THIS PROGRAM USES, and it is recorded BEFORE the early return
+  // below: it is what tells a machine nobody has configured from one whose user has made choices (see the
+  // fresh-install seeding in WinMain). Reading it anywhere else would be a second answer to the same question.
+  g_cfgFileExisted = (f != nullptr);
   if (!f)
   {
-    LogLine("host settings: none yet (%s) -- using defaults, and one is written on exit", path);
+    LogLine("host settings: none yet (%s) -- a fresh install: defaults now, every feature off", path);
     return false;
   }
   static char text[8192];
@@ -1791,6 +1846,35 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int)
 
   InitHostApi();
   const int n = g_loader.LoadAll(&g_hostApi);
+
+  // ⚠️⚠️ A FRESH INSTALL STARTS WITH EVERY FEATURE SWITCHED OFF, AND THIS IS WHERE "FRESH" IS ACTED ON. The user's
+  // rule: "所有插件的开关默认值改成关…就是用户全新用上时，什么功能也不开，让用户按需打开。已经有配置过的用户不影响。"
+  //
+  // ⚠️ SO THE DEFAULT IS NOT A VALUE -- IT IS A ONE-TIME SEEDING OF THE `off` LIST, and only for a machine with no
+  // apex.ini. An existing file keeps every choice in it, including an EMPTY off list: that still means "everything
+  // on", exactly as it did before this existed, which is what makes "an existing user is unaffected" true rather
+  // than hoped for.
+  //
+  // ⚠️ WHY IT IS WRITTEN OUT RATHER THAN REMEMBERED AS "nothing was configured yet": the list has to exist BEFORE
+  // the user's first real edit. A user who then switches one feature on must end up with the OTHER three named in
+  // `off` -- and that falls out of this for free, because by then the list is already the whole set. Keeping it in
+  // memory instead would need the save path to know about first runs, which is a second implementation of the
+  // same rule.
+  //
+  // ⚠️ IT RUNS AFTER LoadAll ON PURPOSE: the ids are the ones actually loaded, so a feature that failed to load is
+  // not written into a list the user would have to clean up by hand.
+  if (!g_cfgFileExisted)
+  {
+    for (int i = 0; i < g_loader.CountAll(); ++i)
+    {
+      const LoadedFeature &f = g_loader.Seen(i);
+      if (f.ok && f.api && f.api->id[0])
+        g_cfg.FeatureSetOff(f.api->id, true);
+    }
+    LogLine("host settings: fresh install -- every feature starts switched off (%d seeded)", g_cfg.offN);
+    SaveHostConfig();
+  }
+
   for (int i = 0; i < g_loader.CountAll(); ++i)
   {
     const LoadedFeature &f = g_loader.Seen(i);

@@ -423,9 +423,23 @@ int main(int argc, char **argv)
   printf("\n2. the brightness group: one row per monitor, and no way to add or remove one\n");
   Check(Has(doc, "\"id\":\"displays\",\"type\":\"group\""), "there is a monitors group", "");
   Check(Has(doc, "\"layout\":\"rows\""), "  drawn as rows (one line per monitor)", "");
-  Check(Has(doc, "\"rowToggle\":[\"off\"]"), "  with the screen-off switch in the row", "");
   Check(Has(doc, "\"id\":\"brightness\",\"type\":\"range\",\"min\":0,\"max\":100"),
         "  and a 0-100 fader as a field of the row", "");
+  // ⚠️⚠️ THE SCREEN-OFF SWITCH IS AN ORDINARY FIELD OF THE ROW, AND THE SHORTCUT BOX FOLLOWS IT, WHICH IS ONE
+  // DECISION SEEN TWO WAYS (the user's, 2026-09-23): "「熄屏快捷键」合并到「亮度」面板，快捷键录入框跟在「熄屏」开关右边."
+  // A `rowToggle` field is drawn at the row's RIGHT-HAND END, after every ordinary field (see apex/abi.h), so the
+  // old shape would have put the box to the LEFT of the switch it has to follow -- hence no `rowToggle` here, and
+  // hence this check reads the DOCUMENT'S OWN ORDER rather than trusting the fixture on the page.
+  {
+    const char *g = strstr(doc, "\"id\":\"displays\"");
+    const char *bright = g ? strstr(g, "\"id\":\"brightness\"") : nullptr;
+    const char *offSw = g ? strstr(g, "\"id\":\"off\",\"type\":\"bool\"") : nullptr;
+    const char *hk = g ? strstr(g, "\"id\":\"hotkey\",\"type\":\"hotkey\"") : nullptr;
+    Check(offSw != nullptr && hk != nullptr && bright != nullptr && bright < offSw && offSw < hk,
+          "  the screen-off switch is a FIELD of the row, with the shortcut box after it", "");
+    Check(!Has(doc, "\"rowToggle\":[\"off\"]"),
+          "  and it is not a row-switch any more (those are drawn at the far right)", "");
+  }
   {
     const int rows = CountOf(doc, "\"values\":{\"brightness\":");
     char detail[64] = {0};
@@ -434,14 +448,18 @@ int main(int argc, char **argv)
     Check(CountOf(doc, ",\"locked\":true,\"values\":{\"brightness\":") == rows,
           "  every one of them locked (a monitor is not the user's to remove)", "");
   }
-  Check(Has(doc, "\"id\":\"offkeys\",\"type\":\"group\"") && Has(doc, "\"type\":\"hotkey\""),
-        "the screen-off shortcuts are a group of their own, recorded rather than typed", "");
-  Check(CountOf(doc, "\"values\":{\"hotkey\":") == monitors, "  with one row per monitor as well", "");
+  // ⚠️ AND THE CARD THAT USED TO HOLD THE SHORTCUTS IS GONE, WITH ITS ID: the shortcut lives in the row above now,
+  // so `offkeys[1].hotkey` is a path that names nothing. Asserted rather than merely deleted, because a group that
+  // quietly comes back is a card the user has to close twice.
+  Check(!Has(doc, "\"id\":\"offkeys\""), "  the separate screen-off-shortcuts card is gone", "");
+  Check(CountOf(doc, ",\"hotkey\":") == monitors,
+        "  with one shortcut box per monitor, on the monitors' own rows", "");
   // ⚠️ AND THE SHORTCUT FIELD CARRIES NO LABEL OF ITS OWN, WHICH IS THE USER'S ARRANGEMENT FOR THIS ROW: "每个设备
   // 后面有个「快捷键」的文字去掉". The page draws nothing where a label would be when the label is empty (the same
   // rule the name box and the fader use), so the two halves have to agree: a feature that started sending the words
-  // back would put them on the page again. Asserted on the DOCUMENT rather than read from the source, because this
-  // is the thing the page acts on.
+  // back would put them on the page again -- and in a row, a label is a fixed 132-px column, so this is the
+  // difference between "right after the switch" and "a hole in the middle of the line". Asserted on the DOCUMENT
+  // rather than read from the source, because this is the thing the page acts on.
   Check(Has(doc, "\"id\":\"hotkey\",\"type\":\"hotkey\",\"labelZh\":\"\",\"labelEn\":\"\""),
         "  and the shortcut field asks for no label of its own", "");
   // ⚠️ AND THERE IS NO THIRD GROUP, WHICH IS A DECISION AND NOT AN OMISSION. Both of the ones that used to be here
@@ -506,6 +524,55 @@ int main(int argc, char **argv)
           "  with the system-sounds row named in both languages", "");
   }
 
+  printf("\n3b. the user's own name is the FLYOUT's label; the PAGE keeps the monitor's own name\n");
+  //
+  // ⚠️⚠️ THE USER'S RULE (2026-09-23), AND IT REVERSES AN EARLIER ONE: "媒体控制「亮度」部分，填入自定义设备名字后，它
+  // 左边应还是显示设备原名，自定义名字只作用于「快速面板」." The alias used to travel to BOTH surfaces, on the argument
+  // that a name only one of them showed would have to be learned twice -- and what that missed is what the page's
+  // left-hand column is FOR: with "书桌左边" in it, the row no longer said which screen it belonged to.
+  //
+  // ⚠️ BOTH DIRECTIONS ARE CHECKED, because the two surfaces are one function and one boolean (`DisplayName`): a
+  // probe that only looked at the flyout would pass while the page still showed the alias.
+  if (f->setControl("displays[0].alias", "书桌左边") == 1)
+  {
+    static char again[64 * 1024];
+    Check(f->settingsJson(again, (int)sizeof(again)) > 0 && !Has(again, "\"title\":\"书桌左边\""),
+          "the page's row still shows the monitor's own name", "");
+    Check(Has(again, "\"alias\":\"书桌左边\""),
+          "  while the name box still holds what the user typed", "");
+    Check(f->setControl("quick_brightness", "1") == 1, "mapping the brightness group for this check", "");
+    static ApexQuickItem q[32];
+    const int nq = f->quickItems(q, 32);
+    bool aliasInFlyout = false;
+    for (int i = 0; i < nq && i < 32; ++i)
+      if (strcmp(q[i].groupZh, "亮度") == 0 && strcmp(q[i].labelZh, "书桌左边") == 0)
+        aliasInFlyout = true;
+    Check(aliasInFlyout, "  and the FLYOUT labels that row with the user's own name", "");
+    Check(f->setControl("quick_brightness", "0") == 1, "  (un-mapping it again)", "");
+    Check(f->setControl("displays[0].alias", "") == 1, "  (and the name is taken back)", "");
+    Check(f->settingsJson(doc, (int)sizeof(doc)) > 0, "  (the document is re-read, for what follows)", "");
+  }
+  else
+  {
+    printf("  %-66s %s\n", "skipped (this machine reports no monitor to name)", "");
+  }
+
+  // ⚠️ AND THE DOCUMENT CAN BE LEFT BEHIND FOR A PICTURE (see `_diag/panel_preview.js`). A gate can say "the field
+  // is in the document"; only a rendered page can say the row still FITS -- and this row grew a fourth control on
+  // 2026-09-23 ("快捷键录入框跟在「熄屏」开关右边"), which is exactly the kind of change that is judged by looking at
+  // it. An optional argument, so the gate that runs this probe is unaffected.
+  if (argc >= 4 && strncmp(argv[3], "--dump=", 7) == 0)
+  {
+    FILE *dp = fopen(argv[3] + 7, "wb");
+    if (dp)
+    {
+      fwrite(doc, 1, strlen(doc), dp);
+      fclose(dp);
+      printf("\n(the controls document was written to %s -- render it with _diag/panel_preview.js)\n",
+             argv[3] + 7);
+    }
+  }
+
   printf("\n4. what it accepts, and what it REFUSES\n");
   {
     // A LEVEL OUTSIDE 0-100 IS REFUSED, not clamped: the page re-reads the control afterwards (see setControl
@@ -521,9 +588,9 @@ int main(int argc, char **argv)
     Check(f->setControl("nosuch[0].brightness", "50") == 0, "  and a group this feature does not have", "");
     // ⚠️ A COMBINATION WITH NO MODIFIER IS REFUSED, because a global shortcut on a bare letter fires while the
     // user is typing. The page will not record one either -- but a page is not a gatekeeper.
-    Check(f->setControl("offkeys[0].hotkey", "A") == 0, "a shortcut with no modifier is REFUSED");
-    Check(f->setControl("offkeys[0].hotkey", "Ctrl+NoSuchKey") == 0, "  and one with a key it cannot name", "");
-    Check(f->setControl("offkeys[0].hotkey", "Ctrl+Alt+Shift+F9") == 1,
+    Check(f->setControl("displays[0].hotkey", "A") == 0, "a shortcut with no modifier is REFUSED");
+    Check(f->setControl("displays[0].hotkey", "Ctrl+NoSuchKey") == 0, "  and one with a key it cannot name", "");
+    Check(f->setControl("displays[0].hotkey", "Ctrl+Alt+Shift+F9") == 1,
           "but Ctrl+Alt+Shift+F9 is accepted and stored", "");
   }
 
@@ -674,7 +741,7 @@ int main(int argc, char **argv)
     if (GetLastError() != ERROR_HOTKEY_ALREADY_REGISTERED)
       printf("      (Windows said %lu rather than ERROR_HOTKEY_ALREADY_REGISTERED)\n", GetLastError());
 
-    Check(f->setControl("offkeys[0].hotkey", "") == 1, "clearing the shortcut is accepted");
+    Check(f->setControl("displays[0].hotkey", "") == 1, "clearing the shortcut is accepted");
     Settle();
     const BOOL mine = RegisterHotKey(nullptr, 0x7A02, mods, vk);
     Check(mine != FALSE, "  and the combination is free again once it is cleared", "");
@@ -797,7 +864,7 @@ int main(int argc, char **argv)
   printf("\n8. what it writes, and what it deliberately does NOT\n");
   {
     Check(f->setControl("displays[0].brightness", "42") == 1, "a level to remember");
-    Check(f->setControl("offkeys[0].hotkey", "Ctrl+Alt+Shift+F9") == 1, "  and a shortcut to remember");
+    Check(f->setControl("displays[0].hotkey", "Ctrl+Alt+Shift+F9") == 1, "  and a shortcut to remember");
     Check(f->saveSettings() == 1, "it writes its settings into its own folder", "");
     char ini[600] = {0};
     _snprintf(ini, sizeof(ini), "%sMediaControl.ini", dir);
@@ -864,6 +931,162 @@ int main(int argc, char **argv)
         Check(lines == monitors && bars == 4 * monitors,
               "  with exactly <identity>|<device>|<level>|<shortcut>|<name> -- NO on/off state", shape);
       }
+    }
+
+    // ⚠️ THE FILE AS IT STANDS AFTER EACH SAVE BELOW, read fresh each time: both checks after this one are about
+    // what a save did to lines that are not the connected screens' own.
+    static char after[4096];
+
+    // ⚠️⚠️ AN UNPLUGGED SCREEN KEEPS ITS LINE, WHICH IS WHAT THE FILE'S OWN HEADER PROMISES AND WHAT THE USER'S
+    // OWN FILE SHOWED WAS NOT TRUE: "外接显示器换了后，记录就乱了" -- his external screen's line was simply GONE,
+    // because this function wrote only the monitors attached at that moment, so the next save deleted the memory of
+    // anything that had been unplugged.
+    //
+    // The check plants a line for a monitor that is not here, re-reads the file (which is what puts it in the
+    // feature's own table), saves, and looks for it again. A ghost is the only way to test this without unplugging
+    // somebody's screen.
+    {
+      after[0] = 0;
+      FILE *ghost = fopen(ini, "ab");
+      bool planted = false;
+      if (ghost)
+      {
+        planted = fprintf(ghost, "display=GHOST-9999|\\\\.\\DISPLAY9|55|Ctrl+Alt+9|ghost screen\n") > 0;
+        fclose(ghost);
+      }
+      Check(planted, "  (a line for a screen that is not connected is planted)", "");
+      f->reloadSettings();
+      Check(f->saveSettings() == 1, "and a save with a screen missing", "");
+      FILE *fp2 = fopen(ini, "rb");
+      if (fp2)
+      {
+        const size_t n = fread(after, 1, sizeof(after) - 1, fp2);
+        fclose(fp2);
+        after[n] = 0;
+      }
+      Check(Has(after, "GHOST-9999") && Has(after, "|Ctrl+Alt+9|ghost screen"),
+            "  a screen that is not attached KEEPS its brightness, shortcut and name", "");
+    }
+
+    // ⚠️⚠️ AND A SCREEN IS NEVER GIVEN ANOTHER SCREEN'S LINE BECAUSE THEY SHARE A SLOT -- the fix for the user's
+    // report, and the reason the search no longer falls through to the device name for a panel that names itself:
+    // "外接显示器换了后，记录就乱了 ... 要以设备的自身的型号为身份". `\\.\DISPLAY1` is a slot (the file's own header says
+    // so), so a line written for the screen that USED to be in slot 1 must not be handed to the one that is there
+    // now -- which is exactly what happens when an external monitor is replaced.
+    //
+    // The slot is taken from the line the feature itself just wrote (so this is the real device name on this
+    // machine), and the identity in the planted line is deliberately NOT the real panel's.
+    {
+      char slot[64] = {0};
+      char ident[96] = {0};
+      for (const char *p = after; *p;)
+      {
+        const char *eol = strchr(p, '\n');
+        const size_t len = eol ? (size_t)(eol - p) : strlen(p);
+        if (len > 8 && strncmp(p, "display=", 8) == 0 && strstr(p, "\\\\.") && p[8] != 'G')
+        {
+          // ... the identity is everything before the first `|`, the slot is the field after it.
+          const char *bar = (const char *)memchr(p, '|', len);
+          if (bar)
+          {
+            size_t k = (size_t)(bar - (p + 8));
+            if (k < sizeof(ident))
+            {
+              memcpy(ident, p + 8, k);
+              ident[k] = 0;
+            }
+            const char *bar2 = (const char *)memchr(bar + 1, '|', len - (size_t)(bar + 1 - p));
+            if (bar2)
+            {
+              size_t n = (size_t)(bar2 - (bar + 1));
+              if (n < sizeof(slot))
+              {
+                memcpy(slot, bar + 1, n);
+                slot[n] = 0;
+              }
+            }
+          }
+          break;
+        }
+        if (!eol)
+          break;
+        p = eol + 1;
+      }
+      if (!slot[0])
+        _snprintf(slot, sizeof(slot), "\\\\.\\DISPLAY1"); // nothing to read: the odds are this is the one
+      FILE *other = fopen(ini, "wb");
+      bool wrote = false;
+      if (other)
+      {
+        fprintf(other, "# a file from a machine whose other screen was in this slot\n");
+        fprintf(other, "display=OTHER-0000|%s|33|Ctrl+Alt+8|the old screen\n", slot);
+        wrote = true;
+        fclose(other);
+      }
+      Check(wrote && ident[0], "  (a line for ANOTHER screen in this slot is planted)", ident);
+      f->reloadSettings();
+      static char doc2[64 * 1024];
+      const int n2 = f->settingsJson(doc2, (int)sizeof(doc2));
+      Check(n2 > 0 && !Has(doc2, "\"brightness\":33") && !Has(doc2, "\"brightness\": 33"),
+            "  and the screen in that slot does NOT inherit it (identity, not the slot)", "");
+      Check(n2 > 0 && !Has(doc2, "the old screen"),
+            "  its name is not borrowed either", "");
+
+      // ⚠️⚠️ AND A LINE WHOSE FIELDS ARE IN THE WRONG ORDER DOES NOT BECOME A SHORTCUT. The file is hand-editable
+      // by design, and the user's own has a line that says `display=BOE-0A8D|BOE-0A8D|0|100|` -- a hand edit with
+      // the fields shifted, which reads back as "the shortcut is 100". Applying it would leave the row showing a
+      // combination that does not exist and the control thread trying to register it. The check plants exactly that
+      // line for the FIRST monitor (identity and slot taken from what the feature itself wrote) and asserts the
+      // page is not told a shortcut.
+      {
+        FILE *bad = fopen(ini, "wb");
+        bool wrote2 = false;
+        if (bad)
+        {
+          fprintf(bad, "display=%s|%s|0|100|shifted\n", ident[0] ? ident : "FAKE-0000", slot);
+          wrote2 = true;
+          fclose(bad);
+        }
+        Check(wrote2 && ident[0], "  (a line with its fields shifted is planted)", ident);
+        f->reloadSettings();
+        static char doc3[64 * 1024];
+        const int n3 = f->settingsJson(doc3, (int)sizeof(doc3));
+        Check(n3 > 0 && !Has(doc3, "\"hotkey\":\"100\""),
+              "  and a shortcut that cannot be parsed is not taken from it", "");
+      }
+
+      // ⚠️⚠️ AND A LINE THAT ENDS WITH `|` IS STILL FIVE FIELDS -- WHICH IS HOW EVERY LINE WITH NO CUSTOM NAME IS
+      // WRITTEN (the name is the last field), AND WHICH USED TO BE READ AS THE PREVIOUS FORMAT. The damage is not
+      // subtle: the identity became the device, the level became 0, and the shortcut became the old level, so a
+      // perfectly good record turned into `BOE-0A8D|BOE-0A8D|0|100|` on the next save -- the user's own file, and
+      // the reason it looked like the records had "gone somewhere".
+      {
+        FILE *trail = fopen(ini, "wb");
+        bool wrote3 = false;
+        if (trail)
+        {
+          // Exactly the shape SaveSettings writes for a monitor with no custom name.
+          fprintf(trail, "display=%s|%s|33|Ctrl+Alt+7|\n", ident[0] ? ident : "FAKE-0000", slot);
+          wrote3 = true;
+          fclose(trail);
+        }
+        Check(wrote3, "  (a line with an EMPTY last field -- an unnamed screen -- is planted)", "");
+        f->reloadSettings();
+        static char doc4[64 * 1024];
+        const int n4 = f->settingsJson(doc4, (int)sizeof(doc4));
+        Check(n4 > 0 && Has(doc4, "\"brightness\":33"),
+              "  and the level on it survives the empty field", "");
+        Check(n4 > 0 && Has(doc4, "\"hotkey\":\"Ctrl+Alt+7\""),
+              "  ... and so does the shortcut beside it", "");
+        Check(n4 > 0 && !Has(doc4, "\"hotkey\":\"33\"") && !Has(doc4, "\"brightness\":0"),
+              "  (neither of them shifted into the other's field)", "");
+      }
+      // ⚠️ AND THE FOLDER IS LEFT THE WAY IT WAS FOUND: the planted line is thrown away, the feature's table is
+      // re-read from nothing, and the file is written again -- so it holds the connected screens' own lines and
+      // nothing else, which is what the checks after this section (and the next run of this probe) expect to see.
+      remove(ini);
+      f->reloadSettings();
+      f->saveSettings();
     }
   }
 

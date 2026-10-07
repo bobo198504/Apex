@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 
 #include "host.h"
+#include "../common/system_theme.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -46,23 +47,21 @@ bool RegString(const char *keyPath, const char *valueName, char *out, int outSiz
 }
 } // namespace
 
-// Is the system using its light theme for apps? AppsUseLightTheme = 1 means light; a missing value or
-// anything else means dark.
+// Is the system using its light theme for apps?
 //
-// DARK IS THE DEFAULT ON PURPOSE, and it is not a coin toss: a dark caption above a dark page is
-// unremarkable, while a bright one flashes every time the panel opens. The same reasoning picks the tray
-// icon.
+// ⚠️ THE ANSWER IS NOT COMPUTED HERE ANY MORE. It moved to common/system_theme.h, because a FEATURE needs it
+// too: the one that restyles other programs' window chrome writes exactly this value into every window it
+// touches, and a feature cannot include this file (host.h refuses to compile without APEX_BUILDING_HOST). The
+// alternative was a second copy of the registry read in that feature, which is the thing this project's rules
+// forbid and have paid for three times.
+//
+// This wrapper stays because it is the name the host's own callers know, and they should not have to care
+// where the twelve lines live. The reasoning that used to be written here -- AppsUseLightTheme = 1 means
+// light, anything else means dark, and dark is the deliberate default because a bright caption flashes when
+// the panel opens -- is kept with the implementation.
 bool SystemIsLightTheme()
 {
-  HKEY k = nullptr;
-  static const char *kPath = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
-  if (RegOpenKeyExA(HKEY_CURRENT_USER, kPath, 0, KEY_READ, &k) != ERROR_SUCCESS)
-    return false;
-  DWORD v = 0, sz = sizeof(v), type = 0;
-  const bool ok =
-      RegQueryValueExA(k, "AppsUseLightTheme", nullptr, &type, (LPBYTE)&v, &sz) == ERROR_SUCCESS;
-  RegCloseKey(k);
-  return ok && v != 0;
+  return apex::common::SystemIsLightTheme();
 }
 
 // The user's preferred UI language as a BCP-47 tag ("zh-CN", "en-US"). This is what resolves `auto`, and

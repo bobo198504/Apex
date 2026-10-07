@@ -57,7 +57,22 @@ g++ -std=c++17 -O2 -shared -o "$FAKE/reaper_smoothwheelscroll_fake.dll" -x c++ -
 extern "C" __declspec(dllexport) int marker(void) { return 1; }
 EOF
 cp "$FAKE/_fake.exe" "$FAKE/reaper.exe"
+LFAKE="$BUILD/_lertaro_fake"
+mkdir -p "$LFAKE"
+g++ -std=c++17 -O2 -mconsole -o "$LFAKE/_marker.exe" "$ROOT/_diag/lertaro_marker_fake.cpp" -luser32 || exit 1
 echo "   ok"
+
+# ⚠️ THE MARKER HAS TO BE ABSENT, OR THIS GATE MEASURES THE USER'S PROGRAM INSTEAD OF ITS FIXTURE. Lertaro holds
+# the same named event, and the note names EVERY engine that is running -- so with a real Lertaro up, "REAPER
+# alone" and "no engines" are both unreachable states, and every assertion below would be about whatever the user
+# happened to have open. Said out loud rather than passing quietly (see the project's rule about a gate that
+# cannot fail).
+if "$LFAKE/_marker.exe" --check >/dev/null 2>&1; then
+  echo
+  echo "SKIPPED: the REAPER note, live -- a real Lertaro is running and holds the engine marker, so the engine"
+  echo "         set this gate asserts on cannot be produced. Nothing was checked."
+  exit 0
+fi
 
 echo
 echo "== a private copy, WITH THE PANEL OPEN and nobody touching it =="
@@ -81,7 +96,7 @@ apex_wait_for 15 PanelUp
 apex_wait_line "$RUN/apex-settings.log" 'page is drawn' 20
 echo "   host and panel are up; the panel is left alone from here"
 
-base=$(apex_count_line "$RUN/apex.log" 'state: the REAPER plugin')
+base=$(apex_count_line "$RUN/apex.log" 'state: the engines are')
 echo "   (the host has announced $base change(s) so far)"
 
 echo
@@ -92,14 +107,14 @@ echo "== 1. start REAPER while the panel is open =="
 #   1. asking for "is not running -- telling the panel" matched the line the host writes at STARTUP ("the first
 #      report"), so the wait returned instantly and the real announcement landed inside section 4's quiet window,
 #      which then failed as "the host is chattering";
-#   2. counting ANY 'state: the REAPER plugin' line made the baseline 0 (the host had not written its first
+#   2. counting ANY 'state: the engines are' line made the baseline 0 (the host had not written its first
 #      report yet) and the wait again returned on the first line to appear.
 # So each step counts ITS OWN sentence and waits for that count to grow (apex_wait_line_gt).
-running_before=$(apex_count_line "$RUN/apex.log" 'is running -- telling the panel')
+running_before=$(apex_count_line "$RUN/apex.log" 'are REAPER -- telling the panel')
 ( cd "$FAKE" && cmd //c start "" "$FAKE/reaper.exe" >/dev/null 2>&1 )
 # The host polls about once a second; wait for the line it writes when it notices, rather than for two polls.
-apex_wait_line_gt "$RUN/apex.log" 'is running -- telling the panel' "$running_before" 15
-if grep -q 'state: the REAPER plugin is running -- telling the panel' "$RUN/apex.log"; then
+apex_wait_line_gt "$RUN/apex.log" 'are REAPER -- telling the panel' "$running_before" 15
+if grep -q 'state: the engines are REAPER -- telling the panel' "$RUN/apex.log"; then
   echo "   ok  the host noticed and told the panel, with nobody touching the UI"
 else
   echo "   FAIL: nothing was announced after REAPER started. Recent host lines:"
@@ -121,10 +136,10 @@ else
 fi
 
 echo "== 3. close REAPER: the note must go away by itself =="
-stopping_before=$(apex_count_line "$RUN/apex.log" 'is not running -- telling the panel')
+stopping_before=$(apex_count_line "$RUN/apex.log" 'are none -- telling the panel')
 for p in $(PidsIn '_reaper_fake'); do taskkill //F //PID "$p" >/dev/null 2>&1; done
-apex_wait_line_gt "$RUN/apex.log" 'is not running -- telling the panel' "$stopping_before" 15
-if grep -q 'state: the REAPER plugin is not running -- telling the panel' "$RUN/apex.log"; then
+apex_wait_line_gt "$RUN/apex.log" 'are none -- telling the panel' "$stopping_before" 15
+if grep -q 'state: the engines are none -- telling the panel' "$RUN/apex.log"; then
   echo "   ok  and it noticed the plugin going away"
 else
   echo "   FAIL: nothing was announced after REAPER stopped"
@@ -133,12 +148,12 @@ fi
 
 echo
 echo "== 4. the host is not chattering (a steady state must be silent) =="
-before=$(apex_count_line "$RUN/apex.log" 'state: the REAPER plugin')
+before=$(apex_count_line "$RUN/apex.log" 'state: the engines are')
 # ⚠️ THIS SLEEP STAYS A SLEEP, AND IT IS THE ONE KIND THAT MUST: it is not waiting for something to happen, it
 # is MEASURING that nothing happens. A condition cannot express "no announcements in this window" -- the window
 # is the measurement. (Same reason the endtoend gate's retry pause stays a sleep: it lets the pointer settle.)
 sleep 5
-after=$(apex_count_line "$RUN/apex.log" 'state: the REAPER plugin')
+after=$(apex_count_line "$RUN/apex.log" 'state: the engines are')
 if [ "$before" = "$after" ]; then
   echo "   ok  no announcements in 5 s of no change ($before total)"
 else

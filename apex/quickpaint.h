@@ -145,6 +145,13 @@ inline Gdiplus::Color LitInk(const Gdiplus::Color &fill, int alpha)
 
 inline const char *LabelOf(const Item &it, bool zh) { return zh ? it.labelZh : it.labelEn; }
 
+// The short words beside a row's two switches (abi.h: `switchLabel*` / `toggleLabel*`, ABI 19 -> 20). The same
+// shape as LabelOf and for the same reason it exists: the layout reserves the column and the painter fills it, and
+// a second `zh ? ... : ...` written here instead would be the place the two come to disagree about which string
+// this row is showing.
+inline const char *SwitchTagOf(const Item &it, bool zh) { return zh ? it.switchLabelZh : it.switchLabelEn; }
+inline const char *ToggleTagOf(const Item &it, bool zh) { return zh ? it.toggleLabelZh : it.toggleLabelEn; }
+
 inline void DrawTextIn(Gdiplus::Graphics &gfx, const char *utf8, const Rect &rc, const Gdiplus::Font &font,
                        const Gdiplus::Color &color, int align, bool ellipsis)
 {
@@ -545,6 +552,16 @@ inline void PaintPanel(Gdiplus::Graphics &gfx, const PaintCtx &ctx, double alpha
         else
           DrawTextIn(gfx, label, ly.labels[i], itemFont, dim ? Col(p.sub, rowA) : Col(p.fg, rowA), 0, true);
       }
+      // ⚠️ THE WORDS BESIDE THE TWO SWITCHES (ABI 19 -> 20), and they belong to the SWITCHES rather than to the
+      // row: the row's own name is the program, and it says nothing about which of the two switches does what
+      // ("注明哪个是防睡，哪个是防熄"). Drawn right-aligned inside their columns, hard against the switch each one
+      // names. Only a TOGGLE row has two switches to tell apart -- a fader's companion is a button and its own
+      // control carries a numeric read-out, so both name themselves -- and the columns are empty (width 0) on any
+      // row whose feature sent no words, which is every other feature.
+      if (ly.switchTags[i].w > 0)
+        DrawTextIn(gfx, SwitchTagOf(it, ctx.zh), ly.switchTags[i], smallFont, Col(p.sub, rowA), 1, true);
+      if (ly.toggleTags[i].w > 0)
+        DrawTextIn(gfx, ToggleTagOf(it, ctx.zh), ly.toggleTags[i], smallFont, Col(p.sub, rowA), 1, true);
       switch (it.kind)
       {
       case RowKind::kFeatureSwitch: DrawSwitch(gfx, ly.control[i], it.on, a, p); break;

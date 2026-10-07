@@ -267,9 +267,8 @@ struct Display
   int level = 100;        // 0..100, what the slider says
   int appliedLevel = -1;  // what the protocol was last told (so an unchanged value costs nothing)
   // ⚠️ WHAT THE USER CALLS IT (the user's own request: "显示器或音量的应用名，可以自定义名字，显示到快速面板").
-  // Empty means "no opinion", and then the device's own name is used. It travels to BOTH surfaces -- the page's
-  // row and the flyout's label -- because a name that only appears in one of them is a name the user has to
-  // re-learn in the other.
+  // Empty means "no opinion", and then the device's own name is used. ⚠️⚠️ IT IS THE FLYOUT'S NAME ONLY -- see the
+  // rule and the user's words on `DisplayName` below.
   char alias[64] = {0};
   // ⚠️⚠️ THERE WAS A SWITCH HERE, AND IT WAS TAKEN OUT AGAIN -- WORTH REMEMBERING, BECAUSE THE REASON IS THE
   // SAME ONE THAT PUT IT IN. A screen Apex can only dim by changing the signal (the gamma fallback) shares one
@@ -428,15 +427,27 @@ bool g_blackClassReady = false;
 // BRIGHTNESS -- three protocols behind one call
 // ---------------------------------------------------------------------------------------------
 
-// ⚠️ THE NAME A ROW IS SHOWN UNDER: the user's own name for it when they gave one, and the thing's own name
-// otherwise. One function, because three surfaces draw it (the page's rows, the flyout's labels, the log) and a
-// rule that differs between them is a rule the user has to learn twice.
-void DisplayLabel(const Display &d, char *out, int outSize)
+// ⚠️⚠️ A MONITOR HAS TWO NAMES, AND EACH SURFACE GETS ITS OWN (the user's rule, 2026-09-23): "媒体控制「亮度」
+// 部分，填入自定义设备名字后，它左边应还是显示设备原名，自定义名字只作用于「快速面板」." So the page always shows the
+// name the MONITOR gives itself -- `d.name`, "SDC4190 2880x1800" -- and the user's own word for that screen is what
+// the FLYOUT draws.
+//
+// ⚠️ THIS REVERSES AN EARLIER DECISION, AND THE REASON IS WORTH KEEPING: the alias used to travel to both surfaces,
+// on the argument that "a name that only appears in one of them is a name the user has to re-learn in the other".
+// What that missed is what the page's left-hand column is FOR: once "书桌左边" replaced "SDC4190 2880x1800", the row
+// no longer said which screen it belonged to -- the settings page stopped being able to tell the user what it was
+// configuring. A name is a convenience in the flyout, where there is no room for a model number; it is a loss on
+// the page, where the model number is the identity.
+//
+// ⚠️ ONE BOOLEAN RATHER THAN TWO FUNCTIONS, so the rule is written once: every call site says WHICH SURFACE it is
+// drawing, and that is the only thing the two answers may differ by.
+void DisplayName(const Display &d, bool forFlyout, char *out, int outSize)
 {
-  _snprintf(out, outSize, "%s", d.alias[0] ? d.alias : d.name);
+  _snprintf(out, outSize, "%s", (forFlyout && d.alias[0]) ? d.alias : d.name);
 }
 
-// The same for an application. ⚠️ AND THE SYSTEM-SOUNDS ROW IS THE ONE WHOSE DEFAULT NAME IS THIS FEATURE'S OWN
+// The same for an application, and the same rule: the page shows the program's own name ("chrome.exe"), the flyout
+// shows the user's word for it. ⚠️ AND THE SYSTEM-SOUNDS ROW IS THE ONE WHOSE DEFAULT NAME IS THIS FEATURE'S OWN
 // WORDS RATHER THAN A PROGRAM'S, so it comes in both languages -- the user found the inconsistency: the settings
 // page said "系统声音" while the flyout said "System sounds", because the flyout was handed the English string
 // for both languages.
@@ -551,9 +562,9 @@ bool WmiFindInstance(const wchar_t *className, const char *edid, const wchar_t *
 // name matching is built on, and the per-monitor settings lookup (both are defined further down).
 void ApplyStored(Display &d);
 
-void SessionLabel(const Session &s, bool zh, char *out, int outSize)
+void SessionName(const Session &s, bool forFlyout, bool zh, char *out, int outSize)
 {
-  if (s.alias[0])
+  if (forFlyout && s.alias[0])
     _snprintf(out, outSize, "%s", s.alias);
   else if (s.system)
     _snprintf(out, outSize, "%s", zh ? kSystemSoundsZh : kSystemSoundsEn);
@@ -1578,6 +1589,38 @@ void EdidFromDeviceId(const char *deviceId, char *out, int outSize)
   out[n] = 0;
 }
 
+// ⚠️⚠️ THE EDID NAME IN THE SAME SHAPE THE PANEL'S OWN ANSWER COMES IN -- AND THIS IS NOT COSMETIC.
+//
+// The identity has TWO authors: `WmiMonitorID` (manufacturer + product, which this feature writes as `SDC-4190`)
+// and, when the panel will not name itself, the EDID name out of the device path (`SDC4190`, no dash). Those are
+// the SAME PANEL spelled two ways, and an identity is a FILE KEY: if the answer changes shape from one run to the
+// next -- WMI refused today and allowed yesterday, a driver update, a slow boot -- every stored line stops
+// matching and the user's brightness, name and shortcut are silently gone for every screen at once.
+//
+// An EDID name is `<3-letter manufacturer><4-character product>` by construction, so the mapping is exact:
+// "SDC4190" -> "SDC-4190", "HKC0000" -> "HKC-0000", "BOE0A8D" -> "BOE-0A8D". Anything that does not have that
+// shape (a virtual display, a name that is not an EDID at all) is left exactly as it is: inventing a dash in the
+// middle of an unknown string would be a second wrong answer rather than a fix.
+void CanonicalEdidIdentity(const char *edid, char *out, int outSize)
+{
+  if (!out || outSize <= 0)
+    return;
+  out[0] = 0;
+  if (!edid || !edid[0])
+    return;
+  const size_t len = strlen(edid);
+  bool shape = (len == 7);
+  for (size_t i = 0; shape && i < 3; ++i)
+    if (!((edid[i] >= 'A' && edid[i] <= 'Z') || (edid[i] >= 'a' && edid[i] <= 'z')))
+      shape = false;
+  if (!shape)
+  {
+    _snprintf(out, outSize, "%s", edid);
+    return;
+  }
+  _snprintf(out, outSize, "%.3s-%s", edid, edid + 3);
+}
+
 struct ScanItem
 {
   HMONITOR hmon = nullptr;
@@ -1608,12 +1651,49 @@ BOOL CALLBACK ScanProc(HMONITOR hMon, HDC, LPRECT, LPARAM user)
   it.rc = ex.rcMonitor;
   it.primary = (ex.dwFlags & MONITORINFOF_PRIMARY) != 0;
   _snprintf(it.device, sizeof(it.device), "%s", ex.szDevice);
-  // The monitor's own device entry, which is where the EDID name lives.
-  DISPLAY_DEVICEA mon;
-  memset(&mon, 0, sizeof(mon));
-  mon.cb = sizeof(mon);
-  if (EnumDisplayDevicesA(ex.szDevice, 0, &mon, 0))
-    EdidFromDeviceId(mon.DeviceID, it.edid, (int)sizeof(it.edid));
+  // ⚠️⚠️ THE MONITOR'S OWN DEVICE ENTRY, AND **NOT SIMPLY INDEX 0** -- THAT IS THE BUG THE USER HIT WHEN THEY
+  // SWAPPED THE EXTERNAL SCREEN: "外接显示器换了后，记录就乱了".
+  //
+  // Windows keeps a LIST of every monitor it has ever seen on an adapter view, and index 0 is not guaranteed to be
+  // the one that is attached now: after a swap, the entry that is still listed first can be the panel that just
+  // went away. Reading it means this feature believes a screen is a different model than it is -- and since the
+  // EDID name is what the identity is built from, the wrong identity is then used BOTH to look settings up and to
+  // SAVE them, so one wrong read can move a record onto another screen for good. The user's own log has the
+  // fingerprint of exactly that: `\\.\DISPLAY1: new monitor, 2880x1800 at 0,0 (edid GSM5C4E)` -- the geometry of
+  // the laptop's own panel with the external screen's EDID beside it.
+  //
+  // So every entry is walked and the one Windows marks as ATTACHED is the answer; the first entry is kept only as
+  // the fallback for a machine where none of them carries the flag.
+  {
+    DISPLAY_DEVICEA mon;
+    bool taken = false;
+    for (DWORD k = 0; k < 8; ++k)
+    {
+      memset(&mon, 0, sizeof(mon));
+      mon.cb = sizeof(mon);
+      if (!EnumDisplayDevicesA(ex.szDevice, k, &mon, 0))
+        break;
+      if (!taken)
+      {
+        EdidFromDeviceId(mon.DeviceID, it.edid, (int)sizeof(it.edid));
+        taken = true; // what the old code used unconditionally
+      }
+      if ((mon.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0 && mon.DeviceID[0])
+      {
+        char active[32] = {0};
+        EdidFromDeviceId(mon.DeviceID, active, (int)sizeof(active));
+        if (active[0])
+        {
+          if (strcmp(active, it.edid) != 0 && it.edid[0])
+            LogEvent("display %s: the monitor Windows lists first is %s but the one attached now is %s -- using "
+                     "the attached one",
+                     ex.szDevice, it.edid, active);
+          _snprintf(it.edid, sizeof(it.edid), "%s", active);
+        }
+        break;
+      }
+    }
+  }
   ++ctx->count;
   return TRUE;
 }
@@ -1639,7 +1719,9 @@ void ProbeDisplay(Display &d)
     LogEvent("display %s (%s): the monitor identifies itself as %s", d.device, d.name, d.identity);
   else
   {
-    _snprintf(d.identity, sizeof(d.identity), "%s", d.edid);
+    // ⚠️ THE SAME PANEL MUST GET THE SAME IDENTITY WHETHER OR NOT WMI ANSWERED (see CanonicalEdidIdentity): the
+    // two paths must not spell one monitor two ways, or a boot where WMI is refused loses every stored line.
+    CanonicalEdidIdentity(d.edid, d.identity, (int)sizeof(d.identity));
     LogEvent("display %s (%s): the panel would not name itself -- falling back to its EDID name (%s)",
              d.device, d.name, d.identity[0] ? d.identity : "unknown");
   }
@@ -2280,7 +2362,7 @@ void SessionProcessName(DWORD pid, char *out, int outSize)
   CloseHandle(h);
 }
 
-// (The two system-sounds strings are declared with SessionLabel, above: three surfaces draw that row's name.)
+// (The two system-sounds strings are declared with SessionName, above: three surfaces draw that row's name.)
 
 // ⚠️ THERE IS NO `force` PARAMETER ANY MORE (ABI 17 -> 18). It existed for one caller -- the volume group's
 // "refresh" button, which asked for a fresh enumeration regardless of the throttle -- and that button is gone:
@@ -2541,20 +2623,31 @@ void LoadSettings()
           // hours wrote one there (a per-screen "may Apex dim this" switch that the user then had taken out -- see
           // the note in the Display struct). A file with it must keep working, and the next save simply does not
           // write it: the only field that ever lived there said "yes" for every screen anyway.
+          // ⚠️⚠️ SPLIT ON '|' **COUNTING EMPTY FIELDS**, AND THAT ONE WORD IS A BUG THIS FILE HAD FOR ITS WHOLE
+          // LIFE: the loop used to stop when the remainder was empty (`while (p && *p)`), so a line whose LAST
+          // field is empty -- i.e. EVERY line this feature writes for a monitor the user has not renamed, because
+          // the name is the last field -- produced FOUR fields instead of five and was read back as the OLD
+          // FORMAT: device = the identity, level = 0, hotkey = the level, name = the hotkey. The record was
+          // destroyed on the next start, and the damaged version was saved back out, which is what "外接显示器换了后，
+          // 记录就乱了" looked like on screen. The trailing empty field is a FIELD.
           char f[6][96] = {{0}};
           int nf = 0;
-          const char *p = val;
-          while (nf < 6 && p && *p)
           {
-            const char *bar = strchr(p, '|');
-            const size_t len = bar ? (size_t)(bar - p) : strlen(p);
-            if (len < sizeof(f[0]))
+            const char *p = val;
+            for (;;)
             {
-              memcpy(f[nf], p, len);
-              f[nf][len] = 0;
+              const char *bar = strchr(p, '|');
+              const size_t len = bar ? (size_t)(bar - p) : strlen(p);
+              if (nf < 6 && len < sizeof(f[0]))
+              {
+                memcpy(f[nf], p, len);
+                f[nf][len] = 0;
+              }
+              ++nf;
+              if (!bar)
+                break;
+              p = bar + 1;
             }
-            ++nf;
-            p = bar ? bar + 1 : nullptr;
           }
           StoredDisplay sd;
           if (nf >= 5 && strncmp(f[0], "\\\\", 2) != 0)
@@ -2618,6 +2711,8 @@ void LoadSettings()
   g_quickVolume = qv;
   // ⚠️ AND EVERY MONITOR THAT IS ALREADY KNOWN TAKES ITS OWN SETTINGS AGAIN -- but only if it has not already
   // taken them (see ApplyStored): a re-read of the file is when the file is allowed to speak, and that is here.
+  // ⚠️ A MONITOR THAT HAS NOT BEEN PROBED YET IS REFUSED BY `ApplyStored` ITSELF (it does not know its own name
+  // until it has been asked) -- one rule, in the function that owns it, rather than a condition here as well.
   for (int i = 0; i < g_dispCount; ++i)
   {
     g_disp[i].storedApplied = false;
@@ -2641,28 +2736,77 @@ void ApplyStored(Display &d)
 {
   if (d.storedApplied)
     return;
+  // ⚠️⚠️ AND A SCREEN THAT HAS NOT BEEN ASKED WHO IT IS YET GETS NOTHING -- WHICH IS THE LAST PIECE OF THE USER'S
+  // "外接显示器换了后，记录就乱了". The settings file is read at START-UP, before the first probe, and a panel's own
+  // name only exists AFTER that probe (it comes from WMI). So the file used to be consulted about a screen whose
+  // identity was still empty -- an empty key means the SLOT is the only thing left to match on, and a screen that
+  // had just been plugged into a slot another screen used to occupy took that screen's line. `ProbeDisplay`
+  // applies the file again a moment later, with the identity in hand, but `storedApplied` was already true by
+  // then: the borrowed line had won. (The user's own log has the order in it: "... taking the settings stored for
+  // \\.\DISPLAY1 ... this panel does not name itself" printed BEFORE "... identifies itself as SDC-4190".)
+  //
+  // ⚠️ IT DOES NOT SET `storedApplied`, SO THE PROBE APPLIES THE FILE THE MOMENT THE NAME IS KNOWN. This is a
+  // "not yet", not a "no".
+  if (!d.probed && !d.identity[0])
+    return;
   d.storedApplied = true;
   const StoredDisplay *best = nullptr;
-  for (int i = 0; i < g_storedCount; ++i)
+  bool byDevice = false;
+  // ⚠️⚠️ A PANEL THAT NAMES ITSELF IS ONLY EVER MATCHED BY ITS OWN NAME, AND THIS IS THE USER'S OWN REPORT:
+  // "外接显示器换了后，记录就乱了 ... 要以设备的自身的型号为身份".
+  //
+  // What used to happen: when no stored line carried this panel's identity, the search fell through to the GDI
+  // DEVICE NAME -- and `\\.\DISPLAY1` is a SLOT, which is exactly what the file's own header says it must not be
+  // used as a key. So a screen that had just been plugged into a slot another screen used to occupy inherited
+  // that screen's brightness, shortcut and name; and because the page then saves what is on it, the borrowed
+  // record was written back under the NEW panel's identity. One swap was enough to move a record permanently.
+  //
+  // The fallback is still here for the one case it was written for: a panel that will not say what it is (no WMI
+  // answer AND no EDID name), where the slot is the only thing left to key on. It never runs for a panel that
+  // knows its own name, and it says so in the log when it does run.
+  if (d.identity[0])
   {
-    if (d.identity[0] && g_stored[i].identity[0] && strcmp(d.identity, g_stored[i].identity) == 0)
-    {
-      best = &g_stored[i];
-      break;
-    }
-  }
-  if (!best)
     for (int i = 0; i < g_storedCount; ++i)
-      if (g_stored[i].device[0] && strcmp(d.device, g_stored[i].device) == 0)
+      if (g_stored[i].identity[0] && strcmp(d.identity, g_stored[i].identity) == 0)
       {
         best = &g_stored[i];
         break;
       }
+  }
+  else
+  {
+    // ⚠️⚠️ AND THE SLOT IS ONLY A KEY FOR A LINE THAT HAS NO KEY OF ITS OWN. A line carrying an identity was
+    // written for a panel that named itself, so handing it to a panel that cannot name itself -- merely because
+    // they are in the same slot -- is the same mistake in the other direction. (This is the rule the file's own
+    // header has always implied: the GDI name is the fallback FOR A PANEL THAT WILL NOT SAY WHAT IT IS, and a line
+    // that has a panel's own name in it is not that.)
+    for (int i = 0; i < g_storedCount; ++i)
+      if (!g_stored[i].identity[0] && g_stored[i].device[0] && strcmp(d.device, g_stored[i].device) == 0)
+      {
+        best = &g_stored[i];
+        byDevice = true;
+        break;
+      }
+  }
   if (!best)
     return;
+  LogEvent("display %s (%s): taking the settings stored for %s (%d%%, name \"%s\")%s", d.device, d.name,
+           byDevice ? best->device : best->identity, best->level, best->alias,
+           byDevice ? " -- this panel does not name itself, so the line is matched by its slot" : "");
   d.level = best->level;
   d.appliedLevel = -1; // it has to be written out again: the file's value is the truth now
-  _snprintf(d.hotkey, sizeof(d.hotkey), "%s", best->hotkey);
+  // ⚠️ AND A SHORTCUT THIS FEATURE CANNOT REGISTER IS NOT TAKEN. This file is hand-editable (its own header says
+  // so), and a line whose fields are in the wrong order puts a number where a combination belongs -- the user's
+  // own file has exactly one of those (`display=BOE-0A8D|BOE-0A8D|0|100|`, an edit made by hand). Applying it
+  // would leave the row showing "100" as a shortcut and the control thread trying to register a key that does not
+  // exist. An unparseable combination is therefore ignored, and the log names the line it came from.
+  unsigned mods = 0, vk = 0;
+  if (!best->hotkey[0] || ParseHotkey(best->hotkey, &mods, &vk))
+    _snprintf(d.hotkey, sizeof(d.hotkey), "%s", best->hotkey);
+  else
+    LogEvent("display %s: the stored shortcut \"%s\" is not a combination this feature can register -- it is "
+             "ignored (see the file's own header for the field order)",
+             d.device, best->hotkey);
   _snprintf(d.alias, sizeof(d.alias), "%s", best->alias);
 }
 
@@ -2697,6 +2841,34 @@ bool SaveSettings()
   for (int i = 0; i < g_dispCount; ++i)
     fprintf(f, "display=%s|%s|%d|%s|%s\n", g_disp[i].identity[0] ? g_disp[i].identity : g_disp[i].device,
             g_disp[i].device, g_disp[i].level, g_disp[i].hotkey, g_disp[i].alias);
+  // ⚠️⚠️ AND THE MONITORS THAT ARE NOT CONNECTED RIGHT NOW KEEP THEIR LINES -- WHICH IS WHAT THE HEADER ABOVE HAS
+  // ALWAYS PROMISED ("A monitor that is not connected right now keeps its line, so unplugging a dock does not
+  // throw the brightness away") AND WHAT THIS FUNCTION DID NOT DO. It wrote only the screens that were attached
+  // at that moment, so THE NEXT SAVE DELETED the record of anything that had been unplugged -- and the user's own
+  // file is the proof: their external screen's line is gone entirely, brightness, name and shortcut with it. A
+  // file that is rewritten from "what is here now" cannot be the memory of what was here before.
+  //
+  // ⚠️ "NOT CLAIMED" IS THE TEST, AND IT IS THE SAME MATCH ApplyStored USES -- by identity when this panel named
+  // itself, by slot only when it did not. A line that a connected screen has taken is written from that screen
+  // (with whatever the user has since changed); a line nobody took is carried over untouched.
+  for (int i = 0; i < g_storedCount; ++i)
+  {
+    const StoredDisplay &s = g_stored[i];
+    if (!s.device[0] && !s.identity[0])
+      continue;
+    bool claimed = false;
+    for (int k = 0; k < g_dispCount && !claimed; ++k)
+    {
+      const Display &d = g_disp[k];
+      if (d.identity[0])
+        claimed = (s.identity[0] && strcmp(d.identity, s.identity) == 0);
+      else
+        claimed = (!s.identity[0] && s.device[0] && strcmp(d.device, s.device) == 0);
+    }
+    if (!claimed)
+      fprintf(f, "display=%s|%s|%d|%s|%s\n", s.identity[0] ? s.identity : s.device, s.device, s.level, s.hotkey,
+              s.alias);
+  }
   LeaveCriticalSection(&g_lock);
   for (int i = 0; i < g_sessCount; ++i)
     if (g_sess[i].alias[0])
@@ -2885,7 +3057,9 @@ int SettingsJson(char *out, int outSize)
   AppendJsonString(out, outSize, off, "Brightness");
   // ... and this group's own switch for the quick panel, on this group's own heading (see AddGroupQuickSwitch).
   AddGroupQuickSwitch(out, outSize, off, "quick_brightness", qb);
-  AppendText(out, outSize, off, ",\"rowToggle\":[\"off\"],\"fields\":[");
+  // ⚠️ NO `rowToggle` HERE ANY MORE -- the screen-off switch is an ordinary field of the row so that the shortcut
+  // box can follow it. See the note on the hotkey field below.
+  AppendText(out, outSize, off, ",\"fields\":[");
   // ⚠️ THE NAME FIELD COMES FIRST AND CARRIES NO LABEL, WHICH IS THE USER'S OWN ARRANGEMENT: "把它放在每个设备的
   // 「亮度」「音量」位置就很合适，那个「名字」提示的也可以去掉" -- it sits where a label would, so the row reads
   // "SDC4190 2880x1800 | <your name> | fader 100% | screen off" instead of growing a sixth column. The page skips
@@ -2900,17 +3074,50 @@ int SettingsJson(char *out, int outSize)
   AddRangeField(out, outSize, off, "brightness", "", "", "%", kHueBrightness);
   AppendText(out, outSize, off, ",");
   AddBoolField(out, outSize, off, "off", "熄屏", "Screen off");
-  AppendText(out, outSize, off, "],\"items\":[");
+  AppendText(out, outSize, off, ",");
+  // ---- 2. THE SCREEN-OFF SHORTCUT, ON THE SAME LINE AS THE SWITCH IT STANDS FOR (user's rule, 2026-09-23) ----
+  //
+  // The user's words: "「熄屏快捷键」合并到「亮度」面板，快捷键录入框跟在「熄屏」开关右边." So the group that used to be
+  // a second card of its own ("熄屏快捷键", one row per monitor, aligned line for line with this one) is GONE, and its
+  // one control is now the LAST FIELD OF THIS ROW, immediately after the screen-off switch that it duplicates in
+  // another form. The two are one subject seen twice -- a momentary switch and a key you can press from somewhere
+  // else -- so they belong on one line, and the page is one card shorter.
+  //
+  // ⚠️⚠️ AND THAT IS WHY `off` IS NO LONGER A `rowToggle`. A rowToggle field is drawn at the RIGHT-HAND END of the
+  // row, after every ordinary field (see `rowToggle` in apex/abi.h) -- so with `off` still in that list the box
+  // would have come out to the LEFT of the switch it has to follow. The switch is an ordinary field of the row now,
+  // which also costs nothing: a rows list has every field live, so it was one click either way.
+  //
+  // ⚠️ THE BOX CARRIES NO LABEL, exactly as it did in the group it came from (the user's "每个设备后面有个「快捷键」
+  // 的文字去掉"): the row already says what it is, the box is where a combination goes, and there is one per row.
+  AppendText(out, outSize, off, "{\"id\":\"hotkey\",\"type\":\"hotkey\",\"labelZh\":");
+  // ⚠️ AND THE HINT IS SHORT ENOUGH TO BE READ IN A BOX SIZED FOR A SHORTCUT. It used to be "点击后按下快捷键
+  // （留空 = 不用）", which needs a box twice as wide as any combination does -- and the box is only as wide as the
+  // longest thing it will hold (the user's "够装快捷键字就好，中间可以留空"), so a long hint would simply be cut
+  // off. What it must still say is the one thing that is not obvious: you click it, and then you press the keys.
+  // (Clearing it is Del or Backspace -- the user asked for that -- and an empty box is visible as empty.)
+  AppendJsonString(out, outSize, off, "");
+  AppendText(out, outSize, off, ",\"labelEn\":");
+  AppendJsonString(out, outSize, off, "");
+  AppendText(out, outSize, off, ",\"placeholderZh\":");
+  AppendJsonString(out, outSize, off, "点击后按键");
+  AppendText(out, outSize, off, ",\"placeholderEn\":");
+  AppendJsonString(out, outSize, off, "click, then press");
+  AppendText(out, outSize, off, "}],\"items\":[");
   EnterCriticalSection(&g_lock);
   for (int i = 0; i < g_dispCount; ++i)
   {
+    // ⚠️ THE PAGE'S NAME FOR THIS SCREEN IS THE MONITOR'S OWN (`forFlyout` = false): the user's own name for it is
+    // the FLYOUT's label and nothing else. See `DisplayName`.
     char label[96] = {0};
-    DisplayLabel(g_disp[i], label, (int)sizeof(label));
+    DisplayName(g_disp[i], false, label, (int)sizeof(label));
     AppendText(out, outSize, off, "%s{\"title\":", i ? "," : "");
     AppendJsonString(out, outSize, off, label);
     AppendText(out, outSize, off, ",\"locked\":true,\"values\":{\"brightness\":%d,\"off\":%d,\"alias\":",
                g_disp[i].level, g_disp[i].off ? 1 : 0);
     AppendJsonString(out, outSize, off, g_disp[i].alias);
+    AppendText(out, outSize, off, ",\"hotkey\":");
+    AppendJsonString(out, outSize, off, g_disp[i].hotkey);
     AppendText(out, outSize, off, "}}");
   }
   LeaveCriticalSection(&g_lock);
@@ -2928,44 +3135,20 @@ int SettingsJson(char *out, int outSize)
   // one line here because the group's ABSENCE is the decision: a control that has to be explained, whose default
   // was already "on", is worth less than the behaviour it guards.)
 
-  // ---- 2. THE SCREEN-OFF SHORTCUTS, one row per monitor ----
+  // ---- (THERE WAS A "熄屏快捷键" GROUP HERE, AND IT IS NOW A FIELD OF THE ROW ABOVE) ----
   //
-  // A group of its own rather than a third field in the row above: a fader, a shortcut box and a switch on one
-  // line is three different readings of "this monitor", and the fader would be the one that paid for it. The
-  // rows are the monitors again, so the two groups line up line for line.
-  AppendText(out, outSize, off, ",{\"id\":\"offkeys\",\"type\":\"group\",\"layout\":\"rows\",\"noAdd\":true,\"labelZh\":");
-  AppendJsonString(out, outSize, off, "熄屏快捷键");
-  AppendText(out, outSize, off, ",\"labelEn\":");
-  AppendJsonString(out, outSize, off, "Screen-off shortcuts");
-  AppendText(out, outSize, off, ",\"fields\":[{\"id\":\"hotkey\",\"type\":\"hotkey\",\"labelZh\":");
-  // ⚠️ THE SHORTCUT BOX CARRIES NO LABEL OF ITS OWN, WHICH IS THE SAME ARRANGEMENT AS THE NAME BOX AND THE FADER
-  // IN THE GROUP ABOVE: the user's "每个设备后面有个「快捷键」的文字去掉" -- the row already says what it is (the
-  // device is at its left, the box is where a shortcut goes and there is one control per row), and the two
-  // characters were spending width that the middle of the row does not need to spend.
-  AppendJsonString(out, outSize, off, "");
-  AppendText(out, outSize, off, ",\"labelEn\":");
-  AppendJsonString(out, outSize, off, "");
-  AppendText(out, outSize, off, ",\"placeholderZh\":");
-  // ⚠️ AND THE HINT IS SHORT ENOUGH TO BE READ IN A BOX SIZED FOR A SHORTCUT. It used to be "点击后按下快捷键
-  // （留空 = 不用）", which needs a box twice as wide as any combination does -- and the box is now as wide as the
-  // longest thing it will hold (the user's "够装快捷键字就好，中间可以留空"), so a long hint would simply be cut
-  // off. What it must still say is the one thing that is not obvious: you click it, and then you press the keys.
-  // (Clearing it is Del or Backspace -- the user asked for that -- and an empty box is visible as empty.)
-  AppendJsonString(out, outSize, off, "点击后按键");
-  AppendText(out, outSize, off, ",\"placeholderEn\":");
-  AppendJsonString(out, outSize, off, "click, then press");
-  AppendText(out, outSize, off, "}],\"items\":[");
-  EnterCriticalSection(&g_lock);
-  for (int i = 0; i < g_dispCount; ++i)
-  {
-    AppendText(out, outSize, off, "%s{\"title\":", i ? "," : "");
-    AppendJsonString(out, outSize, off, g_disp[i].name);
-    AppendText(out, outSize, off, ",\"locked\":true,\"values\":{\"hotkey\":");
-    AppendJsonString(out, outSize, off, g_disp[i].hotkey);
-    AppendText(out, outSize, off, "}}");
-  }
-  LeaveCriticalSection(&g_lock);
-  AppendText(out, outSize, off, "]}");
+  // One card per monitor for the shortcut alone: "a fader, a shortcut box and a switch on one line is three
+  // different readings of 'this monitor', and the fader would be the one that paid for it". That was the reasoning,
+  // and the user has since decided the other way: "「熄屏快捷键」合并到「亮度」面板，快捷键录入框跟在「熄屏」开关右边."
+  // The two controls say the same thing in two forms -- press a key, or flip a switch -- so they read as one
+  // subject, and a page with one card per monitor instead of two is also one card shorter.
+  //
+  // ⚠️ THE GROUP ID `offkeys` IS GONE WITH IT, and that is a real change to the CONTROL PATHS the page sends
+  // (`displays[1].hotkey` rather than `offkeys[1].hotkey`). Nothing else moved: the shortcut is still stored per
+  // monitor in the settings file, still registered by `SyncHotkeys` on the control thread, and still validated by
+  // `ParseHotkey` -- so `offkeys[1].hotkey` is now simply a path that names nothing, and the page re-reads the
+  // control it really has (see setControl in apex/abi.h).
+
   // (THE TWO TOP-LEVEL MAP SWITCHES USED TO BE EMITTED HERE -- "快速面板：亮度" and "快速面板：音量", a stack of
   // their own at the bottom of the page. They are now one `quick` object inside each of the two groups they
   // describe, which is where the user asked for them: "位置移到亮度和音量各自小标题的右侧，居右". A group above
@@ -3022,7 +3205,9 @@ int SettingsJson(char *out, int outSize)
     else
     {
       char label[96] = {0};
-      SessionLabel(s, true, label, (int)sizeof(label));
+      // ⚠️ THE PAGE'S NAME FOR THIS APPLICATION IS THE PROGRAM'S OWN (`forFlyout` = false) -- the user's word for
+      // it is the flyout's label and nothing else. See `SessionName`.
+      SessionName(s, false, true, label, (int)sizeof(label));
       AppendText(out, outSize, off, "\"title\":");
       AppendJsonString(out, outSize, off, label);
     }
@@ -3175,7 +3360,25 @@ int ApplyControl(const char *path, const char *value)
         ok = true;
       }
     }
+    else if (inRange && strcmp(field, "hotkey") == 0)
+    {
+      // ⚠️ VALIDATED HERE, NOT ON THE PAGE. A combination this feature cannot register is REFUSED (the page
+      // re-reads the control and puts back what is really stored); a combination with no modifier is refused too,
+      // because a global shortcut on a bare letter fires while the user is typing.
+      unsigned mods = 0, vk = 0;
+      if (value[0] && !ParseHotkey(value, &mods, &vk))
+        ok = false;
+      else
+      {
+        _snprintf(g_disp[index].hotkey, sizeof(g_disp[index].hotkey), "%s", value);
+        ok = true;
+      }
+    }
     LeaveCriticalSection(&g_lock);
+    // ⚠️ THE CONTROL THREAD REGISTERS AND UNREGISTERS THE SHORTCUT (it owns the message queue a hotkey is
+    // delivered on), so a NEW COMBINATION has to wake it exactly as a brightness change does -- which is why this
+    // branch writes the field here and lets the same `SetEvent` below carry it, rather than registering anything
+    // on this thread.
     if (ok && g_wake)
       SetEvent(g_wake); // the control thread does the talking to Windows (see the note on the thread)
     return ok ? 1 : 0;
@@ -3184,26 +3387,10 @@ int ApplyControl(const char *path, const char *value)
   // (There was a `softdim` branch here -- `softdim[0].on`, addressed through a derived list of the gamma-fallback
   // screens. Both the group and the branch are gone; see the note in the Display struct.)
 
-  // ---- the screen-off shortcuts ----
-  if (SplitIndexed(path, "offkeys", &index, &field))
-  {
-    if (strcmp(field, "hotkey") != 0)
-      return 0;
-    // ⚠️ VALIDATED HERE, NOT ON THE PAGE. A combination this feature cannot register is REFUSED (the page
-    // re-reads the control and puts back what is really stored); a combination with no modifier is refused too,
-    // because a global shortcut on a bare letter fires while the user is typing.
-    unsigned mods = 0, vk = 0;
-    if (value[0] && !ParseHotkey(value, &mods, &vk))
-      return 0;
-    EnterCriticalSection(&g_lock);
-    const bool inRange = (index >= 0 && index < g_dispCount);
-    if (inRange)
-      _snprintf(g_disp[index].hotkey, sizeof(g_disp[index].hotkey), "%s", value);
-    LeaveCriticalSection(&g_lock);
-    if (inRange && g_wake)
-      SetEvent(g_wake); // register/unregister on the thread that owns the message queue
-    return inRange ? 1 : 0;
-  }
+  // (And an `offkeys` branch here -- the screen-off shortcut as a group of its own, `offkeys[1].hotkey`. The group
+  // is gone and the shortcut is a field of the monitor's own row, so the path is `displays[1].hotkey` and the
+  // branch above is where it is applied. Nothing was left behind on purpose: a second spelling of the same control
+  // is a second thing to keep in step.)
 
   // ---- the applications' volume ----
   if (SplitIndexed(path, "sessions", &index, &field))
@@ -3355,7 +3542,7 @@ int QuickItems(ApexQuickItem *out, int max)
         char id[64] = {0};
         char label[96] = {0};
         _snprintf(id, sizeof(id), "displays[%d].brightness", i);
-        DisplayLabel(g_disp[i], label, (int)sizeof(label)); // the user's own name, if they gave one
+        DisplayName(g_disp[i], true, label, (int)sizeof(label)); // the user's own name for it, if they gave one
         QuickSlider(&out[n], id, label, label, kBrightGroupZh, kBrightGroupEn, (double)g_disp[i].level,
                     kHueBrightness);
         // ... and that monitor's own screen-off control at the right of the same row (see QuickScreenOff).
@@ -3372,8 +3559,8 @@ int QuickItems(ApexQuickItem *out, int max)
         // system-sounds row's name is this feature's OWN word, so it has to follow the reader -- which the panel
         // picks, because the feature does not know which language the flyout is in. (This call used to pass the
         // same English string for both.)
-        SessionLabel(g_sess[i], true, zh, (int)sizeof(zh));
-        SessionLabel(g_sess[i], false, en, (int)sizeof(en));
+        SessionName(g_sess[i], true, true, zh, (int)sizeof(zh));
+        SessionName(g_sess[i], true, false, en, (int)sizeof(en));
         QuickSlider(&out[n], id, zh, en, kVolumeGroupZh, kVolumeGroupEn,
                     (double)SessionPercent(g_sess[i].volume), kHueVolume);
         QuickMute(&out[n], i, g_sess[i].mute); // ... and the mute button at the right of that same row

@@ -174,7 +174,13 @@ int main(void)
     HostConfig c;
     Check(ParseHostConfig("# a comment\nnothing=1\nquickown=maybe\nquickorder=\n", c),
           "a file with an unknown key and a mangled value still parses", "");
-    Check(c.quickOwn && c.quickOrderN == 0, "  with the defaults untouched", "");
+    // ⚠️ "THE DEFAULTS UNTOUCHED" IS SPELT AS "STILL EQUAL TO A FRESH HostConfig", NOT AS `true`. The defaults
+    // themselves changed on 2026-10-07 (both quick-panel halves are off on a fresh install), and a check that
+    // hard-coded the old value would have failed for the right reason and then been "fixed" by weakening it --
+    // which is how a check stops being about the thing it was written for.
+    const HostConfig defaults;
+    Check(c.quickOwn == defaults.quickOwn && c.quickCompact == defaults.quickCompact && c.quickOrderN == 0,
+          "  with the defaults untouched", "");
   }
 
   printf("\n");

@@ -89,6 +89,40 @@
 //         one: the user asked for it (they had asked whether it was possible), the request is about a ROW rather
 //         than about a feature, and a feature that has no companion sends an empty string and gets exactly the
 //         row it used to get.
+// 21 -> 22: `ApexHost::activeEngines` hands back `ApexEngine` (a kind PLUS the PROGRAM'S OWN NAME) instead of bare
+//         `APEX_ENGINE_*` values -- one day after 20 -> 21, and for a reason the user gave in one line: "包括以后可能
+//         会增加的 APP". With kinds alone, adding an engine meant editing the HOST (for its probe) AND EVERY FEATURE
+//         (for a kind -> name map), and a feature nobody remembered to update would drop the new engine in silence --
+//         the failure mode being "the note is missing" with nothing anywhere saying why. Now the host's own table is
+//         the only place a program is named, and a feature writes its sentence around the names it is handed.
+//
+// 20 -> 21: `ApexHost::reaperPluginRunning` was REPLACED by `activeEngines` -- WHICH EXTERNAL SMOOTHING ENGINES ARE
+//         RUNNING, EARLIEST-STARTED FIRST. The old call answered one program's yes/no; the user wanted the same
+//         sentence for every program that brings its own smoothing, and there are two now: REAPER, through this
+//         project's plugin, and Lertaro, which ports the same model and announces itself with a named marker while
+//         it is smoothing ("另一个APP：Lertaro也因为特殊原因单独做了平滑滚动，有给了个显式标记"). The note the user
+//         asked for is built from that set -- "REAPER、Lertaro专用引擎已运行", and the one that started FIRST is
+//         named first -- so the ABI carries the SET and the ORDER, and the FEATURE writes the sentence. The call
+//         is a hint either way: no decision may depend on it (see the field itself).
+//
+// 19 -> 20: `ApexQuickItem` gained `switchLabelZh`/`switchLabelEn` and `toggleLabelZh`/`toggleLabelEn` -- THE WORDS
+//         BESIDE A ROW'S TWO SWITCHES. KeepAwake's flyout row is one program with two switches, drawn identically,
+//         so nothing on the panel said which one was "keep the machine awake" and which was "keep the screen on";
+//         the user asked for labels by name: "保持唤醒两组开关给个文字标签，注明哪个是防睡，哪个是防熄". Four struct
+//         fields, hence a version of its own, and a feature that sends none gets exactly the row it used to get --
+//         the panel reserves no column for a label nobody has (see the fields themselves).
+//
+// 18 -> 19: `ApexWheelEvent` gained `extraInfo` -- THE MESSAGE'S OWN EXTRA-INFO WORD, taken straight off the hook
+//         (MSLLHOOKSTRUCT.dwExtraInfo). A struct field, hence a version of its own. IT IS HOW A FEATURE TELLS A
+//         TOUCHPAD FROM A WHEEL: Windows tags touch/pen input with the signature 0xFF515700 in that word, which
+//         is the one signal the OS states outright, and the delta pattern is only the fallback (the rule is
+//         common/device.h, moved there from the plugin project at the user's own instruction: "那个过滤，在
+//         SmoothWheelScroll for reaper 这个项目里有实现过，直接搬过来就可以"). Until now the app's ONLY input
+//         filter was the injected flag, so a touchpad's wheel was smoothed exactly like a notched mouse's.
+//         WHY A FACT AND NOT A VERDICT: the host hands over what only the hook can read, and the feature decides
+//         -- "do not smooth a touchpad" is a statement about SMOOTHING, the same argument that moved the exclude
+//         list out of decision.h and into the feature. A feature that ignores this field behaves as it did.
+//
 // 17 -> 18: `group` gained `live` -- THIS GROUP'S ROWS ARE A PICTURE OF SOMETHING OUTSIDE THE PAGE, so the panel
 //         keeps asking for the document while such a group is on screen. A KEY a page acts on, like `noAdd`,
 //         `waiting` and `quick` before it, and the reason it is a version of its own is the same in every case: a
@@ -122,7 +156,7 @@
 // The version is bumped rather than a field simply appended, because the host requires an EXACT match -- see
 // the loader: a DLL built against an older layout would otherwise be read past its own end. Refusing it with a
 // log line is the whole point of carrying a version at all.
-#define APEX_ABI_VERSION 18u
+#define APEX_ABI_VERSION 22u
 
 #ifdef __cplusplus
 extern "C" {
@@ -135,6 +169,12 @@ typedef struct ApexWheelEvent
   int x, y;       // screen coordinates
   unsigned key;   // 1 = shift, 2 = ctrl, 4 = alt
   int injected;   // the OS said this was synthesised (see the host: normally ignored)
+  // THE MESSAGE'S EXTRA-INFO WORD, exactly as the hook read it (MSLLHOOKSTRUCT.dwExtraInfo). It is carried
+  // because it is the only place the OS says WHICH DEVICE sent the wheel: touch and pen input is tagged with
+  // the signature 0xFF515700 (see common/device.h, which is the rule that reads it). The host does not
+  // interpret it and no decision may depend on it -- a feature that ignores this field behaves as it did
+  // before the field existed.
+  unsigned long long extraInfo;
 } ApexWheelEvent;
 
 // How the program under the cursor relates to this project's own handler. `kUnknown` is NOT "absent":
@@ -146,6 +186,25 @@ enum
   APEX_HANDLER_PRESENT = 1, // a dedicated handler is loaded there; leave it alone
   APEX_HANDLER_ABSENT = 2   // determined to have none; the feature may act
 };
+
+// WHICH EXTERNAL ENGINE, for ApexHost::activeEngines. A bitmap would answer "who is running", but the ORDER
+// carries information too -- the user's rule is "谁先运行谁显式在前面" -- so these travel as a LIST, earliest first.
+enum
+{
+  APEX_ENGINE_REAPER = 1, // this project's plugin, loaded inside a running reaper.exe
+  APEX_ENGINE_LERTARO = 2 // Lertaro's own smoothing, announced by its named marker (see host_win.cpp)
+};
+
+// ONE RUNNING ENGINE, as ApexHost::activeEngines reports it.
+typedef struct ApexEngine
+{
+  int kind; // APEX_ENGINE_*
+  // ⚠️ THE PROGRAM'S OWN NAME, AND IT IS NOT A TRANSLATION: "REAPER" and "Lertaro" are product names, spelled the
+  // same in every language, and the panel never shows them on their own -- the SENTENCE around them belongs to the
+  // feature. That split is the point: a feature that had to map `kind` to a name would have to be edited every
+  // time a program is added, and a feature that was NOT edited would drop the new engine in silence.
+  char name[32];
+} ApexEngine;
 
 typedef struct ApexTarget
 {
@@ -191,28 +250,42 @@ typedef struct ApexHost
   // rate. A feature may therefore call this from onWheel.
   void (*activity)(void);
 
-  // IS THIS PROJECT'S REAPER PLUGIN RUNNING ON THIS MACHINE? 1 = yes (confirmed), 0 = no.
+  // WHICH EXTERNAL SMOOTHING ENGINES ARE RUNNING ON THIS MACHINE, AND IN THE ORDER THEY STARTED.
   //
-  // WHY A FEATURE WANTS TO KNOW: the REAPER plugin and the SmoothWheel feature do the SAME job in the same
-  // program, and only one of them may be in charge -- the plugin does it from inside REAPER and does it
-  // better. Apex already hands REAPER over (see decision.h), but that is invisible: the user sees smoothing
-  // that they cannot account for, or no smoothing where they expected it. So the feature says so, in its own
-  // settings page, next to the list of programs it leaves alone.
+  // ⚠️ THIS REPLACED `reaperPluginRunning` (ABI 20 -> 21), WHICH ASKED ABOUT REAPER ALONE. What the user wanted is
+  // the same sentence for every program that brings its own smoothing, and there are two: REAPER through this
+  // project's plugin, and Lertaro -- which ports the same model and publishes a marker of its own while it is
+  // smoothing. So the ABI carries the SET, and the feature writes the sentence in its own words.
   //
-  // ⚠️ IT IS ABOUT THE MACHINE, NOT ABOUT THE CURSOR. The panel shows this while the user is in the panel,
-  // i.e. exactly when REAPER is NOT the program under the pointer -- so an answer derived from the current
-  // target would be false nearly every time it was read.
+  // WHY A FEATURE WANTS TO KNOW: two implementations of smoothing inside one program is one too many -- the
+  // external one does it from inside the program it belongs to and does it better. Apex already hands those
+  // programs over (see decision.h), but that is invisible: the user sees smoothing they cannot account for, or
+  // none where they expected it. So the feature says which engines it is leaving room for, on its own settings
+  // page, next to the list of programs it leaves alone.
   //
-  // ⚠️ AND IT IS A HINT, NOT A DECISION. It is not part of the wheel rule, no decision may depend on it, and
-  // a feature must not use it to decide whether to take a wheel -- the decision path has its own, per-target
-  // answer (ApexTarget::handlerState) which is the one that is allowed to be believed.
+  // ⚠️ IT IS ABOUT THE MACHINE, NOT ABOUT THE CURSOR. The panel shows this while the user is IN the panel --
+  // exactly when none of those programs is under the pointer -- so an answer derived from the current target
+  // would be false nearly every time it was read.
   //
-  // ⚠️ NOT FREE: it enumerates processes and reads a module list, so it is a settings-page call, NOT something
-  // to call from onWheel or tick.
+  // ⚠️ AND IT IS A HINT, NOT A DECISION. It is not part of the wheel rule, no decision may depend on it, and a
+  // feature must not use it to decide whether to take a wheel -- the decision path has its own, per-target answer
+  // (ApexTarget::handlerState) which is the one allowed to be believed.
   //
-  // Returns 0 when it cannot tell (no access, a machine with no REAPER): a note that says "running" is a
+  // `out` receives one ApexEngine per running engine, EARLIEST-STARTED FIRST, and the return value is how many
+  // were written. 0 means "nothing is running, or it could not be confirmed": a note that says "running" is a
   // claim, and this program does not make claims it cannot support.
-  int (*reaperPluginRunning)(void);
+  //
+  // ⚠️ THE NAME COMES WITH IT, AND THAT IS WHAT MAKES ADDING A PROGRAM A ONE-PLACE CHANGE. The host has one table
+  // of engines (a row per program, with its probe); a feature writes the sentence around whatever names it is
+  // handed and never maps a `kind` to a word of its own, so a program added tomorrow appears without touching any
+  // feature -- and cannot be dropped in silence by one that was not updated.
+  //
+  // ⚠️ AN ENGINE THAT IS CONFIRMED BUT WHOSE START TIME COULD NOT BE READ GOES LAST, NOT OUT. Losing the order is
+  // worth much less than losing the fact -- the note exists to explain smoothing the user cannot account for.
+  //
+  // ⚠️ NOT FREE THE FIRST TIME (it may enumerate processes and read a module list), cheap after that -- but it is
+  // still a settings-page call, NOT something to call from onWheel or tick.
+  int (*activeEngines)(ApexEngine *out, int max);
 
   // IS THE USER KEEPING THIS FEATURE SWITCHED ON? `id` is the feature's own id; 1 = yes, 0 = switched off.
   //
@@ -362,6 +435,29 @@ typedef struct ApexQuickItem
   // (see APEX_QUICK_ICON_*), and the panel draws the icon it keeps for that thing -- in both themes, at every
   // scale. An unknown value is drawn as APEX_QUICK_ICON_PLAIN rather than guessed at.
   int toggleIcon; // APEX_QUICK_ICON_*
+
+  // ⚠️ THE WORD BESIDE EACH OF A ROW'S TWO SWITCHES (ABI 19 -> 20). A switch row can carry two switches that are
+  // drawn identically -- KeepAwake asks one program "keep the machine awake" and "keep the screen on" -- and until
+  // now nothing on the panel said which was which. The user's request: "保持唤醒两组开关给个文字标签，注明哪个是
+  // 防睡，哪个是防熄".
+  //
+  // ⚠️ THE PANEL CANNOT INVENT THESE WORDS, which is why they are fields at all: the panel owns every drawing
+  // (see the note above), but "防睡" is a statement about THIS feature's own control and about nothing else. A
+  // feature that sends nothing gets exactly the row it used to get -- an empty label is not drawn, and the column
+  // it would need is not reserved either.
+  //
+  // ⚠️ THEY ARE SHORT BY CONSTRUCTION. The panel draws them in its small font inside a FIXED column (the layout is
+  // pure arithmetic with no font in it -- see MeasureModel in quickpanel.h -- so the width cannot follow the
+  // words). A long sentence here is therefore not "a longer label", it is a truncated one: two characters of
+  // Chinese, or about six latin characters.
+  //
+  // `switchLabel*` describes the row's OWN switch (the one whose value is `value`); `toggleLabel*` describes the
+  // companion (`toggleId`). Both are drawn on a TOGGLE row only: a fader or a knob has a numeric read-out beside
+  // it, which names itself.
+  char switchLabelZh[24];
+  char switchLabelEn[24];
+  char toggleLabelZh[24];
+  char toggleLabelEn[24];
 } ApexQuickItem;
 
   // What a companion switch (`toggleId`) is, for the purpose of choosing its icon. THREE, AND THEY ARE THE ONLY

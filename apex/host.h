@@ -9,6 +9,11 @@
 #error "host.h is the HOST's -- a feature includes only abi.h (see the note at the top of abi.h)"
 #endif
 
+// ⚠️ THE CONTRACT'S OWN TYPES CROSS THIS BOUNDARY (ApexEngine, below). host.h is the HOST's interface to its
+// platform layer, and one of the things it carries is the ABI's answer about external engines -- so including
+// abi.h here is the honest dependency rather than a second, private copy of that struct.
+#include "abi.h"
+
 // ---------------------------------------------------------------------------
 // THE HOST'S OWN VERSION, in one place.
 //
@@ -17,7 +22,7 @@
 // the number for Apex itself, which the panel puts beside the slogan in the sidebar ("Apex主程序版本号1.0 ... 居右").
 // One definition, because the snapshot and anything else that reports it must not be able to disagree.
 // ---------------------------------------------------------------------------
-#define APEX_HOST_VERSION "1.3"
+#define APEX_HOST_VERSION "1.4"
 
 // ---------------------------------------------------------------------------
 // THE HOST'S OWN INTERFACE: everything apex.exe needs from host_win.cpp, plus the places where the
@@ -60,13 +65,20 @@ bool TargetUnderCursor(int x, int y, char *exeOut, int exeSize, unsigned long *p
 // and both mean "do not act".
 int ExternalHandlerState(const char *exeName, unsigned long pid, char *detailOut, int detailSize);
 
-// Is this project's REAPER plugin running ANYWHERE on this machine? A MACHINE-wide question, unlike the one
-// above (which is about the program under the cursor) -- see ApexHost::reaperPluginRunning for why both exist
-// and why this one must not be used to decide anything.
+// WHICH EXTERNAL SMOOTHING ENGINES ARE RUNNING ANYWHERE ON THIS MACHINE, EARLIEST-STARTED FIRST. A MACHINE-wide
+// question, unlike the one above (which is about the program under the cursor) -- see ApexHost::activeEngines for
+// why both exist and why this one must not be used to decide anything.
 //
-// Expensive (enumerates processes and reads a module list), so it is for a settings page, not a hot path.
-// false when it cannot tell.
-int ReaperPluginIsRunning();
+// Writes one ApexEngine per running engine into `out`, EARLIEST-STARTED FIRST, and returns how many; 0 when
+// nothing is running or it could not be confirmed. An engine that is running but whose start time cannot be read
+// is reported LAST rather than dropped.
+//
+// ⚠️ ADDING A PROGRAM IS A ROW IN ONE TABLE IN host_win.cpp -- nothing else in the program names an engine (see
+// ApexEngine in abi.h for why the name travels with the answer).
+//
+// Expensive the first time (it enumerates processes and reads a module list) and cheap after that, so it is for a
+// settings page, not a hot path.
+int ActiveEngines(ApexEngine *out, int max);
 
 // ---- injection ----
 void InjectQueuePush(int delta);

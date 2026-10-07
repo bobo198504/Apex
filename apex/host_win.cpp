@@ -18,6 +18,7 @@
 
 #include "abi.h"
 #include "host.h"
+#include "engines.h" // the programs that bring their own smoothing -- ONE table, two uses (see its header)
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -101,6 +102,11 @@ LRESULT CALLBACK LowLevelMouseProc(int code, WPARAM wParam, LPARAM lParam)
       if (GetKeyState(VK_MENU) & 0x8000) k |= 4u;
       ev.key = k;
       ev.injected = synthetic;
+      // THE MESSAGE'S EXTRA-INFO WORD, passed through untouched. It is the one place the OS says which DEVICE
+      // sent this wheel -- touch and pen input carries the signature 0xFF515700 -- and the host deliberately
+      // does not read it: the classifier is common/device.h, and the feature that cares calls it. See the field
+      // note in abi.h (ABI 18 -> 19) and docs/rules/wheel.md.
+      ev.extraInfo = (unsigned long long)ms->dwExtraInfo;
       if (g_sink && g_sink(ev, g_sinkUser))
         return 1; // SWALLOW: the host is driving this wheel, so the original must not also arrive
     }
@@ -161,10 +167,18 @@ void BareExeName(const char *full, char *out, int outSize)
 }
 } // namespace
 
-// Is THIS project's REAPER plugin loaded into that process? THE ONE PLACE THAT ANSWERS IT -- see
-// ExternalHandlerState below and ReaperPluginIsRunning at the bottom, which are two QUESTIONS with one
-// answer between them, and a second copy of the module scan is exactly how the two would come to disagree
-// (one saying "loaded" while the panel says it is not).
+// IS THIS PROJECT'S REAPER PLUGIN LOADED INTO THAT PROCESS? It has ONE caller now -- the engine probe that answers
+// "is REAPER's own smoothing running", which the settings note is built from (see ReaperProbe at the bottom).
+//
+// ⚠️ THE WHEEL RULE USED TO ASK THIS TOO, AND DELIBERATELY NO LONGER DOES. It used the answer to decide whether to
+// hand REAPER over, so a REAPER with the plugin switched off was smoothed by Apex -- and would stop being smoothed
+// the moment the user turned the plugin on. The user's rule is the wider one ("这些有独立引擎的，不管它们有没有打开，
+// 都是在排除名单内的，不接管"), so that question is now answered by a name in common/engines.h and needs no scan at
+// all (see ExternalHandlerState below).
+//
+// Returns +1 loaded, 0 not loaded, -1 could not tell. The three-way answer still matters HERE: reading another
+// process's module list needs rights this program does not request, so a REAPER running elevated refuses -- and for
+// a NOTE, "refused" must not be read as "no plugin" (a claim this program cannot support).
 //
 // Returns +1 loaded, 0 not loaded, -1 could not tell. The three-way answer is the whole point: reading
 // another process's module list needs rights this program does not request, so a REAPER running elevated
@@ -199,74 +213,69 @@ static int ScanForPluginModule(unsigned long pid)
   return found;
 }
 
-// Is the program's own copy of this project's handler loaded there? Only REAPER has one today: the
-// REAPER plugin does the job from inside the process and does it better, so the host must hand REAPER
-// over when it can PROVE the plugin is there.
+// DOES SOMEBODY ELSE ALREADY OWN THE WHEEL IN THIS PROGRAM?
 //
-// The three-way outcome comes from ScanForPluginModule: loaded -> PRESENT; not loaded -> ABSENT; could not
-// read -> UNKNOWN, which every caller treats as "someone else has it".
+// ⚠️⚠️ A PROGRAM THAT BRINGS ITS OWN SMOOTHING IS ALWAYS LEFT ALONE -- WHETHER OR NOT ITS ENGINE IS SWITCHED ON.
+// The user's rule (2026-10-07): "这些有独立引擎的，不管它们有没有打开，都是在排除名单内的，不接管".
+//
+// The list is common/engines.h, and it is the SAME table the settings note is built from: a program that has its own
+// smoothing is a program Apex must not drive, and one list is what keeps the sentence and the behaviour from
+// disagreeing. What was here before was narrower -- REAPER, and only when the plugin was actually LOADED by a module
+// scan -- which had two costs the user's rule removes: the answer changed while the user worked (turn the plugin on
+// and Apex suddenly stops smoothing REAPER), and a REAPER with no plugin was smoothed by Apex although it is a
+// program that plainly has its own engine.
+//
+// ⚠️ IT IS STILL A THREE-WAY ANSWER, AND "UNKNOWN" STILL MEANS "SOMEBODY ELSE HAS IT": with no name to match on
+// (the cursor resolved to nothing, or the process could not be read) the wheel is PASSED rather than taken --
+// guessing the other way leaves two handlers driving one view (see decision.h).
 int ExternalHandlerState(const char *exeName, unsigned long pid, char *detailOut, int detailSize)
 {
   if (detailOut && detailSize > 0)
     detailOut[0] = 0;
-  if (!exeName || !pid)
+  if (!exeName || !exeName[0] || !pid)
     return APEX_HANDLER_UNKNOWN;
 
-  if (_stricmp(exeName, "reaper.exe") != 0)
+  if (app::ProgramBringsOwnEngine(exeName))
   {
     if (detailOut && detailSize > 0)
-      _snprintf(detailOut, detailSize, "no handler is defined for this program");
-    return APEX_HANDLER_ABSENT;
-  }
-
-  const int found = ScanForPluginModule(pid);
-  if (found < 0)
-  {
-    if (detailOut && detailSize > 0)
-      _snprintf(detailOut, detailSize,
-                "cannot read the module list (error %lu) -- treated as 'the plugin is there'",
-                GetLastError());
-    return APEX_HANDLER_UNKNOWN;
-  }
-  if (found)
-  {
-    if (detailOut && detailSize > 0)
-      _snprintf(detailOut, detailSize, "the REAPER plugin is loaded in this process");
+      _snprintf(detailOut, detailSize, "this program brings its own smoothing engine -- always left alone");
     return APEX_HANDLER_PRESENT;
   }
   if (detailOut && detailSize > 0)
-    _snprintf(detailOut, detailSize, "REAPER is running without the plugin");
+    _snprintf(detailOut, detailSize, "no handler is defined for this program");
   return APEX_HANDLER_ABSENT;
 }
 
-// IS THE REAPER PLUGIN RUNNING ON THIS MACHINE, anywhere? Asked by the feature so its settings page can tell
-// the user which of the two smoothing implementations is in charge -- see ApexHost::reaperPluginRunning.
+// ---------------------------------------------------------------------------
+// WHICH EXTERNAL SMOOTHING ENGINES ARE RUNNING ON THIS MACHINE, AND IN THE ORDER THEY STARTED.
 //
-// ⚠️ IT IS A DIFFERENT QUESTION FROM THE ONE ABOVE, and that is why it is a separate function rather than a
-// reuse: ExternalHandlerState asks about the program UNDER THE CURSOR (does it have a handler there?), while
-// this asks about the MACHINE (is the plugin running at all?), because the panel shows the answer on a page
-// that is not about any particular program.
+// Two programs bring their own smoothing today, and Apex hands both of them over (see decision.h) -- invisibly,
+// which is exactly why the wheel feature says so on its own page:
 //
-// ⚠️ AND IT DOES NOT USE THE CURSOR'S TARGET. Reusing the cached target would answer a different question --
-// "is the thing under the pointer REAPER-with-the-plugin" -- which is false whenever REAPER is in the
-// background, and this note is for the user while they are in the panel, i.e. exactly then.
-// ⚠️ IT IS ASKED REPEATEDLY (the panel polls it so the note can appear without the user re-opening a page),
-// SO IT HAS TO BE CHEAP -- and walking every process cost 3.59 ms on this machine (252 processes, measured).
-// Called every two seconds that is 0.18% of a core for one line of grey text, which is the wrong trade.
+//   * REAPER, through THIS project's plugin. Probed as it always was: the window class first (0.5 us), with the
+//     process walk kept as an authoritative backstop every kReaperFullWalkMs.
+//   * LERTARO, which ports the same model and publishes a MARKER while it is smoothing: the named event
+//     `Local\Lertaro.SmoothScroll.Active`, session-scoped, present exactly while the behaviour is enabled (see
+//     Lertaro's App/Helpers/Visuals/SmoothWheelScrollBehavior.cs, and its CHANGELOG: "新增显式标记：命名事件
+//     Local\Lertaro.SmoothScroll.Active，平滑滚动启用期间存在").
+//     ⚠️ THE MARKER IS THE PROBE, NOT THE PROCESS. A Lertaro with smooth scrolling switched off does not
+//     publish the event, and must not be reported: the note explains smoothing the user cannot account for, and
+//     a switched-off Lertaro causes none.
 //
-// THE CHEAP ROUTE IS REAPER'S OWN WINDOW. REAPER registers its main window with the class "REAPERwnd", and
-// asking the window manager for it costs 0.5 MICROSECONDS -- measured, seven thousand times less. The class
-// name is not a guess: the sibling plugin project identifies REAPER's window by exactly this class
-// (src/smooth_wheel_scroll.cpp, ClassIsChrome), and the string is present in the installed reaper.exe.
+// ⚠️ IT IS A DIFFERENT QUESTION FROM ExternalHandlerState ABOVE, which asks about the program UNDER THE CURSOR.
+// This one asks about the MACHINE, because the note is read while the user is IN the panel -- i.e. exactly when
+// neither program is under the pointer.
 //
-// From that window comes the pid (free), and then ONE process's module list is scanned instead of all of
-// them. So the common case -- REAPER not running -- is a window lookup and nothing else.
+// ⚠️ IT IS ASKED REPEATEDLY (the panel polls it so the note can appear without the user re-opening a page), SO IT
+// HAS TO BE CHEAP: walking every process cost 3.59 ms on this machine (252 processes, measured). The window
+// lookup and the marker open are both microseconds, and the walks happen only when the SET changes -- see
+// ActiveEngines, which also explains where the ORDER comes from.
 //
-// ⚠️ AND THE PROCESS WALK IS KEPT, AS A BACKSTOP, ON A SLOW CLOCK. The cheap route trusts a window class name,
-// which a future REAPER could rename; if that happened the note would simply never appear, and nothing would
-// say why. So every kFullWalkMs the slow, authoritative walk runs anyway, and the two are compared -- a
-// disagreement is the signal that the fast route has gone stale, and it is reported rather than swallowed.
-// (The walk is only made when it is due, so the cost is 3.59 ms per HALF MINUTE: 0.012% of a core.)
+// ⚠️ AND THE "UNKNOWN" DIRECTION IS THE OPPOSITE OF THE SAFETY QUESTION'S. ExternalHandlerState treats "could not
+// read" as "somebody else is there", because guessing the other way leaves two handlers moving one view. Here it
+// is "not confirmed", because a note that says "running" is a CLAIM, and this program does not make claims it
+// cannot support.
+// ---------------------------------------------------------------------------
 static const DWORD kReaperFullWalkMs = 30000;
 static DWORD g_lastReaperFullWalk = 0;
 // ⚠️ THE FIRST CALL ALWAYS TAKES THE SLOW ROUTE. Without this, the due-time comparison starts out satisfied
@@ -276,11 +285,81 @@ static DWORD g_lastReaperFullWalk = 0;
 // independent of that.
 static bool g_reaperWalkedOnce = false;
 
-// The authoritative answer: walk every process, find reaper.exe, scan its modules.
-static int ReaperPluginByProcessWalk(int *sawReaperOut)
+// LERTARO'S MARKER, spelled once. Session-scoped ("Local\") on Lertaro's side on purpose, so neither program
+// needs a privilege to create or to look for it.
+static const char *kLertaroMarker = "Local\\Lertaro.SmoothScroll.Active";
+
+// IS THE MARKER THERE? Opening the event is the whole probe: it exists exactly while Lertaro has smooth scrolling
+// enabled. A missing open is "not running" (the ordinary case), never an error worth reporting.
+static bool LertaroMarkerPresent()
+{
+  HANDLE ev = OpenEventA(SYNCHRONIZE, FALSE, kLertaroMarker);
+  if (!ev)
+    return false;
+  CloseHandle(ev);
+  return true;
+}
+
+// WHEN DID THAT PROCESS START? Read only to ORDER the engines -- the user's rule is "谁先运行谁显式在前面" -- so
+// an answer that cannot be read comes back as 0 ("unknown"), which sorts LAST rather than dropping a running
+// engine: which one is named first is worth much less than saying that it is running at all.
+static unsigned long long ProcessStartMs(unsigned long pid)
+{
+  if (!pid)
+    return 0;
+  HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+  if (!h)
+    return 0;
+  FILETIME create, exitT, kernel, user;
+  unsigned long long ms = 0;
+  if (GetProcessTimes(h, &create, &exitT, &kernel, &user))
+  {
+    ULARGE_INTEGER u;
+    u.LowPart = create.dwLowDateTime;
+    u.HighPart = create.dwHighDateTime;
+    // 100-ns ticks since 1601 -> milliseconds since 1970. The epoch shift is the standard constant; only the
+    // DIFFERENCE between two of these is ever used, so the unit matters and the epoch does not.
+    ms = (u.QuadPart - 116444736000000000ull) / 10000ull;
+  }
+  CloseHandle(h);
+  return ms;
+}
+
+// WHICH PROCESS IS LERTARO'S APP? Used ONLY to order it -- never to decide whether it is running, which the marker
+// has already answered. ⚠️ THE NAME IS THE APP'S, NOT THE SERVICE'S: this machine also runs Lertaro.Service.exe,
+// which is up for as long as the machine is, so a "lertaro*" match would order the engine by the SERVICE's start
+// time -- a near-constant that would put Lertaro first for ever.
+static unsigned long LertaroAppPid()
+{
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snap == INVALID_HANDLE_VALUE)
+    return 0;
+  unsigned long pid = 0;
+  PROCESSENTRY32W pe;
+  pe.dwSize = sizeof(pe);
+  if (Process32FirstW(snap, &pe))
+  {
+    do
+    {
+      if (_wcsicmp(pe.szExeFile, L"Lertaro.App.exe") == 0)
+      {
+        pid = pe.th32ProcessID;
+        break;
+      }
+    } while (Process32NextW(snap, &pe));
+  }
+  CloseHandle(snap);
+  return pid;
+}
+
+// The authoritative answer: walk every process, find reaper.exe, scan its modules. The pid comes back with it
+// because it is what the start time -- and therefore the ORDER the engines are reported in -- is read from.
+static int ReaperPluginByProcessWalk(int *sawReaperOut, unsigned long *pidOut)
 {
   if (sawReaperOut)
     *sawReaperOut = 0;
+  if (pidOut)
+    *pidOut = 0;
   HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
   if (snap == INVALID_HANDLE_VALUE)
     return 0;
@@ -305,6 +384,8 @@ static int ReaperPluginByProcessWalk(int *sawReaperOut)
       if (found == 1)
       {
         running = 1;
+        if (pidOut)
+          *pidOut = pe.th32ProcessID;
         break;
       }
       (void)found;
@@ -314,14 +395,16 @@ static int ReaperPluginByProcessWalk(int *sawReaperOut)
   return running;
 }
 
-int ReaperPluginIsRunning()
+// REAPER: is the plugin loaded anywhere, and in which process? Both routes exactly as they were -- the cheap one
+// first (see the note at the top of this block), the authoritative walk when it is due -- with the pid carried
+// out because it is what the order is read from.
+static int ReaperProbe(unsigned long *pidOut)
 {
-  // NOTE: no logging here -- this file has no logger (LogLine lives in main.cpp, which is the CALLER). The
-  // caller logs the answer; see the wrapper in main.cpp, which is also where the comment explaining why it is
-  // worth a log line lives.
+  if (pidOut)
+    *pidOut = 0;
   const DWORD now = GetTickCount();
 
-  // ---- the fast route: REAPER's window (see the note above) ----
+  // ---- the fast route: REAPER's window ----
   HWND w = FindWindowA("REAPERwnd", nullptr);
   if (w)
   {
@@ -330,7 +413,11 @@ int ReaperPluginIsRunning()
     if (pid)
     {
       if (ScanForPluginModule(pid) == 1)
+      {
+        if (pidOut)
+          *pidOut = pid;
         return 1;
+      }
       // REAPER is up but the plugin was not found in it (or its modules could not be read). Fall through to
       // the walk, which is due-ordered -- so a REAPER with no plugin costs one walk per half minute, and a
       // REAPER that cannot be read is still checked properly rather than assumed absent.
@@ -344,13 +431,123 @@ int ReaperPluginIsRunning()
   g_reaperWalkedOnce = true;
 
   int sawReaper = 0;
-  const int byWalk = ReaperPluginByProcessWalk(&sawReaper);
+  unsigned long pid = 0;
+  const int byWalk = ReaperPluginByProcessWalk(&sawReaper, &pid);
   // ⚠️ THE TWO ROUTES DISAGREEING IS ITSELF WORTH KNOWING -- it means the window class this leans on is no
   // longer how REAPER identifies itself, and the note would have gone quiet. There is no logger here, so the
   // disagreement is reported through the only channel this file has: the answer itself is the walk's (the
   // authoritative one), and the caller's log line will show a result the fast route did not give.
   (void)sawReaper;
+  if (byWalk && pidOut)
+    *pidOut = pid;
   return byWalk;
+}
+
+// ---- the engines: the TABLE is in common/engines.h; this file knows HOW TO PROBE ONE ------------------------
+//
+// ⚠️ WHY THE SPLIT. The table is the FACT -- "this program has its own smoothing" -- and TWO things need it: the
+// wheel rule (such a program is always left alone, see ExternalHandlerState) and this note. So it lives where it
+// can be compiled and checked without Windows. What stays here is the OS work: one probe per program, which cannot
+// be data, and the order the answer is reported in.
+//
+// ⚠️ ADDING A PROGRAM: a row in common/engines.h, a probe here, and a case in EngineProbeByKind. No feature is
+// touched at all (see ApexEngine in abi.h).
+//
+// A PROBE ANSWERS TWO THINGS AT ONCE: is it running, and which process should the ORDER be read from. A program
+// whose marker is there but whose process cannot be identified reports pid 0, which sorts LAST rather than
+// dropping it (see ProcessStartMs).
+//
+// LERTARO: the named event it publishes while its smoothing is on, plus its App process for the order -- NOT the
+// service, which is up for as long as the machine is (see LertaroAppPid).
+static bool LertaroProbe(unsigned long *pidOut)
+{
+  if (pidOut)
+    *pidOut = 0;
+  if (!LertaroMarkerPresent())
+    return false;
+  if (pidOut)
+    *pidOut = LertaroAppPid();
+  return true;
+}
+
+static bool EngineProbeByKind(int kind, unsigned long *pidOut)
+{
+  if (pidOut)
+    *pidOut = 0;
+  switch (kind)
+  {
+  case APEX_ENGINE_REAPER:
+    return ReaperProbe(pidOut) != 0;
+  case APEX_ENGINE_LERTARO:
+    return LertaroProbe(pidOut);
+  default:
+    return false; // an engine this build has no probe for: never claim it is running
+  }
+}
+
+// ---- the ABI's answer: the engine set, in start order -------------------------------------------
+int ActiveEngines(ApexEngine *out, int max)
+{
+  // NOTE: no logging here -- this file has no logger (LogLine lives in main.cpp, which is the CALLER). There is
+  // exactly one caller, the ABI wrapper, and it logs what this returned.
+  //
+  // ⚠️ EVERY PROBE RUNS ON EVERY CALL, AND THE SET IS WHAT DECIDES WHEN THE ORDER IS RECOMPUTED. Ordering needs
+  // each engine's PROCESS START TIME, and finding Lertaro's process means walking the process table (3.59 ms
+  // here) -- which the panel's two-second poll would then pay for a sentence that almost never changes. The SET is
+  // exactly what changes the sentence, so it is also what makes recomputing the order worth doing.
+  int mask = 0;
+  for (int i = 0; i < app::kKnownEngineCount; ++i)
+    if (EngineProbeByKind(app::kKnownEngines[i].kind, nullptr))
+      mask |= 1 << i;
+
+  static int lastMask = -1;
+  static ApexEngine ordered[app::kKnownEngineCount];
+  static int orderedCount = 0;
+
+  if (mask != lastMask)
+  {
+    ApexEngine list[app::kKnownEngineCount];
+    unsigned long long starts[app::kKnownEngineCount];
+    int n = 0;
+    for (int i = 0; i < app::kKnownEngineCount; ++i)
+    {
+      if (!(mask & (1 << i)))
+        continue;
+      unsigned long pid = 0;
+      EngineProbeByKind(app::kKnownEngines[i].kind, &pid); // second call, only when the set changed -- see above
+      list[n].kind = app::kKnownEngines[i].kind;
+      _snprintf(list[n].name, (int)sizeof(list[n].name), "%s", app::kKnownEngines[i].name);
+      starts[n] = ProcessStartMs(pid);
+      ++n;
+    }
+    // EARLIEST FIRST -- the user's rule is "谁先运行谁显式在前面" -- and an unknown start goes LAST. A handful of
+    // engines is the whole population, so an insertion sort is all this needs to be.
+    for (int i = 1; i < n; ++i)
+      for (int j = i; j > 0; --j)
+      {
+        const bool swap = (starts[j - 1] && starts[j]) ? (starts[j] < starts[j - 1])
+                                                       : (starts[j - 1] == 0 && starts[j] != 0);
+        if (!swap)
+          break;
+        const ApexEngine k = list[j - 1];
+        list[j - 1] = list[j];
+        list[j] = k;
+        const unsigned long long t = starts[j - 1];
+        starts[j - 1] = starts[j];
+        starts[j] = t;
+      }
+    orderedCount = n;
+    for (int i = 0; i < n; ++i)
+      ordered[i] = list[i];
+    lastMask = mask;
+  }
+
+  if (!out || max <= 0)
+    return orderedCount;
+  const int n = (orderedCount < max) ? orderedCount : max;
+  for (int i = 0; i < n; ++i)
+    out[i] = ordered[i];
+  return n;
 }
 
 bool TargetUnderCursor(int x, int y, char *exeOut, int exeSize, unsigned long *pidOut, void **rootOut)

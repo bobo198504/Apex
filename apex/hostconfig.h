@@ -116,13 +116,17 @@ struct HostConfig
   //                   so this half works with no feature implementing anything at all.
   //   quickOwn     -- the controls the FEATURES asked for, each in a block of its own (`quickItems` in abi.h).
   //
-  // ⚠️ BOTH DEFAULT TO ON, AND THAT IS A DECISION ABOUT THE FIRST CLICK. A user who clicks the tray icon has
-  // already asked for the panel; answering with an empty box would be the program being coy about something it
-  // knows. Turning both off is allowed, and the panel then says in words where the switches are rather than
-  // showing nothing (see RowKind::kNote in quickpanel.h) -- "nothing happened" and "there is nothing to show"
-  // must not look the same.
-  bool quickCompact = true;
-  bool quickOwn = true;
+  // ⚠️⚠️ BOTH DEFAULT TO OFF, AND THAT REVERSED AN EARLIER DECISION ON THE USER'S INSTRUCTION (2026-10-07):
+  // "所有插件的开关默认值改成关，还有快速面板默认值也是关，就是用户全新用上时，什么功能也不开，让用户按需打开。已经有
+  // 配置过的用户不影响。" So a fresh install shows nothing in the flyout until the user maps something, and the
+  // panel says in words where the switches are rather than showing an empty box (see RowKind::kNote in
+  // quickpanel.h) -- "nothing happened" and "there is nothing to show" must not look the same.
+  //
+  // ⚠️ AN EXISTING USER IS UNAFFECTED, AND NOT BY LUCK: FormatHostConfig ALWAYS writes both keys, so any apex.ini
+  // that exists carries the values that user chose (or the defaults of the version that wrote it). A default only
+  // ever reaches a machine that has no file yet -- the same rule the feature `off` list follows (see main.cpp).
+  bool quickCompact = false;
+  bool quickOwn = false;
 
   // ---- THE ORDER THE FEATURES' OWN CONTROLS APPEAR IN, IN THE FLYOUT -----------------------------
   //
@@ -572,8 +576,8 @@ inline void FormatHostConfig(const HostConfig &c, char *out, int outSize)
                    "# theme  : auto (follow the system) | light | dark\n"
                    "# off    : a feature id to leave loaded but inactive; repeat the line for more\n"
                    "# autostart : 1 to start with Windows (default 0)\n"
-                   "# quickcompact : 1 to show every feature's on/off switch in the quick panel (default 1)\n"
-                   "# quickown     : 1 to show the controls the features asked for there (default 1)\n"
+                   "# quickcompact : 1 to show every feature's on/off switch in the quick panel (default 0)\n"
+                   "# quickown     : 1 to show the controls the features asked for there (default 0)\n"
                    "# quickorder   : a feature id, in the order its controls should appear in the quick panel;\n"
                    "#                repeat the line for more. Anything not named comes after, in load order.\n"
                    "lang=%s\n"

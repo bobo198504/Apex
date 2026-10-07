@@ -86,7 +86,7 @@ static Model SampleModel()
     bool on;
   };
   const Row rows[] = {
-      {"SmoothWheel", "\xe6\xbb\x91\xe5\x8a\xa8\xe6\xbb\x9a\xe8\xbd\xae", "Smooth Wheel Scroll", true},
+      {"SmoothWheel", "\xe4\xb8\x9d\xe6\xbb\x91\xe6\xbb\x9a\xe5\x8a\xa8", "Silky Scroll", true},
       {"AutoIME", "\xe8\x87\xaa\xe5\x8a\xa8\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", "Auto IME", true},
       {"KeepAwake", "\xe4\xbf\x9d\xe6\x8c\x81\xe5\x94\xa4\xe9\x86\x92", "Keep Awake", true},
   };
@@ -224,6 +224,13 @@ static Model SampleModel()
       CopyStr(it->toggleId, kIdLen, path);
       it->toggleOn = kas[i].display;
       it->icon = CompanionIcon::kDisplay;
+      // ⚠️ AND THE TWO WORDS (ABI 19 -> 20), the same ones KeepAwake sends. Without them this preview cannot show
+      // the column this change added -- and this picture is the only instrument for "what does it look like", so a
+      // label that did not fit or landed in the wrong place would be invisible until the user saw it on screen.
+      CopyStr(it->switchLabelZh, kLabelLen, "\xe9\x98\xb2\xe7\x9d\xa1"); // 防睡
+      CopyStr(it->switchLabelEn, kLabelLen, "Awake");
+      CopyStr(it->toggleLabelZh, kLabelLen, "\xe9\x98\xb2\xe7\x86\x84"); // 防熄
+      CopyStr(it->toggleLabelEn, kLabelLen, "Display");
     }
   }
   return m;
