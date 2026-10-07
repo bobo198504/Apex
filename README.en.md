@@ -59,9 +59,8 @@ and both the note and the step-aside follow from it.
 To switch a feature off, open its page and turn its own switch off.
 There is no master switch — **each feature owns its own**.
 
-> ⚠️ **On a fresh install every feature starts switched off**; turn on what you want. Starting with everything on
-> means a new user has their wheel taken over and their input method changed before they know what did it.
-> An existing settings file is left exactly as it is.
+> ⚠️ **On a fresh install every feature starts switched off**; turn on what you want. An existing settings file
+> is left exactly as it is.
 
 ## The quick panel
 
