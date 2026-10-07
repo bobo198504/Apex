@@ -32,7 +32,7 @@ switched on**:
 | Project | What it is |
 |---|---|
 | **[SmoothWheelScroll](https://github.com/bobo198504/SmoothWheelScroll)** | The smooth-scrolling plugin for REAPER, and where this project's smoothing model comes from (`shared/` is a copy of its `src/`) |
-| **[Lertaro](https://github.com/Lertaro/Lertaro)** | A standalone Windows tool that ports the same smoothing model |
+| **[Lertaro](https://github.com/bobo198504/Lertaro)** | A standalone Windows tool (**the fork**) that ports the same smoothing model |
 
 On the **Silky Scroll** page the grey line beside *Exclude* names the engines running right now (for example
 `REAPER、Lertaro专用引擎已运行`, earliest-started first).
@@ -43,9 +43,6 @@ On the **Silky Scroll** page the grey line beside *Exclude* names the engines ru
 2. **Click** the tray icon → the **quick panel** (it opens above the icon, holding each feature's switches, sliders and buttons)
 3. **Double-click** it, or right-click → **Settings**, to open the settings panel
 4. To keep one program out of **one feature's** way, add its name to that **feature page's "Exclude"** (`*` and `?` work)
-
-There is no master switch — **each feature owns its own**.
-⚠️ **On a fresh install every feature starts switched off**; turn on what you want. An existing settings file is left exactly as it is.
 
 ## Portable
 
@@ -60,17 +57,6 @@ Plugins\<feature>\    each feature, with its own settings
 
 "Start with Windows" is off by default (it is the only thing written outside this folder). Opening the settings
 panel creates a `WebView2\` cache directory — this machine's own, don't pass it on.
-
-## Settings
-
-Bilingual, follows the system's light/dark setting, and **a change takes effect immediately** (no restart).
-**General** sits at the top of the left-hand list; the features follow.
-
-- **General**: language, appearance, start with Windows, and the two halves of the quick panel
-- **A feature's page**: one switch (that feature's own enable); a slider **returns to its default on a double-click**, and the wheel changes its value while the pointer rests on it
-- **"Exclude"**: a list on a feature's page — a program listed there is left completely alone by *that* feature. It belongs to the feature
-
-What changed in each release is in **[CHANGELOG.md](CHANGELOG.md)**.
 
 ## Building
 
@@ -88,7 +74,8 @@ REAPER SDK, no CMake; the WebView2 SDK is included (`third_party/`).
 
 ## Development
 
-Structure and rules are in **[AGENTS.md](AGENTS.md)** (per-topic chapters in `docs/rules/`).
+Structure and rules are in **[AGENTS.md](AGENTS.md)** (per-topic chapters in `docs/rules/`); what changed in each
+release is in **[CHANGELOG.md](CHANGELOG.md)**.
 
 - **A feature is one folder** (`features\<id>\`) implementing the C interface in `apex/abi.h`; the UI is not written per feature
 - **Settings and the hook are two processes**: a stuck panel cannot stall scrolling
