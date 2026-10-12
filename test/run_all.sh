@@ -99,6 +99,7 @@ run_gate check_apex_palette    # the panel's colours, one palette per appearance
 run_gate check_apex_quickpanel # the flyout: its geometry, its values, its colours, and what the features put in it
 run_gate check_apex_panel      # the panel's SCRIPT against a DOM stub: every control type still renders
 run_gate check_apex_deploy     # a deploy replaces the program, never the user's data, and drops retired features
+run_gate check_apex_package    # the portable zip ships the public program -- and NO private feature (see the header)
 run_gate check_apex_modular    # the boundaries, the process rules, the toolchain, and the input-safety rule
 run_gate check_apex_docs       # AGENTS.md is still short enough to be read whole (see the gate's header)
 run_gate check_model_sync      # shared/ vs the plugin's src/ -- the one thing that must not drift
