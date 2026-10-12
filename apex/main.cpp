@@ -1298,11 +1298,23 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     // label crosses initialization"), so the whole block is scoped -- which is also the right shape for a `static`
     // that belongs to this case alone.
     {
-      static DWORD lastTrayMsg = 0;
-      const DWORD now = GetTickCount();
-      LogLine("tray msg: 0x%04X (%lu ms since the last one)", (unsigned)LOWORD(lp),
-              (unsigned long)(lastTrayMsg ? now - lastTrayMsg : 0));
-      lastTrayMsg = now;
+      // ⚠️⚠️ ONLY THE MESSAGES THAT DECIDE SOMETHING ARE LOGGED. The first version logged every message this window
+      // received, and the host's own timers (0x0400, 0x0406, 0x0407 -- see the APEXWM_* ids) arrive constantly, so
+      // the tray lines were buried in noise: reading the sequence that caused the "flash" meant scrolling past a
+      // dozen timer ticks between each relevant line. **A diagnostic that is hard to read is a diagnostic that gets
+      // misread**, and this one exists precisely for a case where reading the order is the whole question.
+      //
+      // The three that matter are the three that reach a decision below: the left release, the right release, and the
+      // context-menu message that must NOT toggle.
+      const WORD m = LOWORD(lp);
+      if (m == WM_LBUTTONUP || m == WM_RBUTTONUP || m == WM_CONTEXTMENU || m == WM_LBUTTONDBLCLK)
+      {
+        static DWORD lastTrayMsg = 0;
+        const DWORD now = GetTickCount();
+        LogLine("tray msg: 0x%04X (%lu ms since the last tray message)", (unsigned)m,
+                (unsigned long)(lastTrayMsg ? now - lastTrayMsg : 0));
+        lastTrayMsg = now;
+      }
     }
 
     if (LOWORD(lp) == WM_LBUTTONDBLCLK)
@@ -1317,13 +1329,40 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     // from this side: pressing the right button while the flyout IS open sends the press to the FLYOUT (it has the
     // foreground), so the release that reaches the tray is a fresh gesture rather than the tail of the one that
     // opened it. The left button is handled on the press, like every other button a user clicks.
-    if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU || LOWORD(lp) == WM_LBUTTONUP)
+    //
+    // ⚠️⚠️ AND `WM_CONTEXTMENU` IS ANSWERED WITH NOTHING AT ALL -- IT IS NOT A THIRD WAY TO TOGGLE. This was a real
+    // regression, found by the user: "右键点托盘，快速面板闪一下就没了". The log it produced is unambiguous:
+    //
+    //     tray msg: 0x0204   WM_RBUTTONDOWN
+    //     tray msg: 0x0205   WM_RBUTTONUP   -> quickpanel: shown
+    //     tray msg: 0x007B   WM_CONTEXTMENU -> quickpanel: hiding -- "the tray was clicked again"
+    //
+    // So ONE right click arrived as TWO messages, both of which toggled, and the panel opened and closed within a
+    // few milliseconds -- which is exactly the "flash" the user saw.
+    //
+    // ⚠️ WHY IT IS THERE AT ALL: `WM_CONTEXTMENU` was in this condition because the tray used to show a MENU, and a
+    // menu is opened in answer to that message (it is the shell's way of saying "the user asked for the context
+    // menu"). The menu was deleted on 2026-10-12 -- the user moved its four commands into the flyout -- and this
+    // message was left in the condition with nothing left to mean. **A handler kept past the thing it was for becomes
+    // a second, invisible click.**
+    //
+    // ⚠️ IT IS DELIBERATELY *NOT* FORWARDED TO THE TOGGLE. Handling it the same way would double-toggle every right
+    // click even on systems that send only one of the two, and the release is the message that carries the user's
+    // intent (it is the one the shell documents for tray activation).
+    if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_LBUTTONUP)
     {
       // ⚠️ AND A SECOND CLICK CLOSES IT, WHICH IS WHAT A TRAY ICON IS EXPECTED TO DO. Without this the button
       // would open the panel and then be unable to put it away -- toggling is the whole behaviour of a tray
       // button, and QuickPanelToggle is where the "did the user just dismiss it by clicking away" guard lives
       // (see kDismissGuardMs), so this is one call rather than a state machine here.
       host::QuickPanelToggle();
+      return 0;
+    }
+    // ⚠️ THE CONTEXT MENU MESSAGE IS CONSUMED AND IGNORED, and it must return 0 rather than fall through: letting it
+    // reach `DefWindowProc` would have the shell try to show a menu that no longer exists.
+    if (LOWORD(lp) == WM_CONTEXTMENU)
+    {
+      LogLine("tray msg: WM_CONTEXTMENU ignored -- the menu is gone, and 0x0205 already toggled the panel");
       return 0;
     }
     return 0;

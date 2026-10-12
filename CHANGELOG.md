@@ -5,6 +5,23 @@
 `*` 和 `+` 会变成同一种圆点，符号的区分就没了）。只写"改了什么"。
 -->
 
+## 1.5.1
+
+## 更新内容
+
+```
++ 版本号：主程序 1.5.1
+# 修复右键点托盘时快速面板闪一下就消失（同一次右键会发出两条消息，两条都在切换面板）
+```
+
+## What's changed
+
+```
++ Version: the host is 1.5.1 (the number beside the slogan in the sidebar)
+# Fixed the quick panel flashing and disappearing on a tray right-click (one right click arrives as two messages,
+#  and both of them toggled it)
+```
+
 ## 1.5.0
 
 ## 更新内容

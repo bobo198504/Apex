@@ -149,6 +149,58 @@ if grep -qE "$DWM_RE" "$FRAME"; then
 fi
 echo "   ok  the panel paints itself and asks the window manager for nothing"
 echo
+
+# -----------------------------------------------------------------------------------------------------------
+# THE TRAY SENDS ONE RIGHT CLICK AS MORE THAN ONE MESSAGE, AND ONLY ONE OF THEM MAY TOGGLE.
+#
+# ⚠️⚠️ THIS GATE EXISTS BECAUSE THE PANEL FLASHED AND VANISHED ON A RIGHT CLICK. The user's report: "右键点托盘，
+# 快速面板闪一下就没了". The log said exactly why:
+#
+#     tray msg: 0x0204   WM_RBUTTONDOWN
+#     tray msg: 0x0205   WM_RBUTTONUP   -> quickpanel: shown
+#     tray msg: 0x007B   WM_CONTEXTMENU -> quickpanel: hiding -- "the tray was clicked again"
+#
+# One gesture, two messages, both toggling -- so the panel appeared and went away in a few milliseconds.
+#
+# ⚠️ AND NOTHING COULD HAVE SEEN IT: no gate starts a real tray, and the arithmetic, the colours and the pixels were
+# all correct. `WM_CONTEXTMENU` was in the toggle condition because the tray USED to show a menu, and the menu was
+# deleted (its four commands moved into the flyout) while the message stayed behind -- **it outlived the thing it was
+# for, and what was left was a second, invisible click.** Source is the only place this question can be asked.
+TRAY="$ROOT/apex/main.cpp"
+
+# The condition that calls the toggle, as it reads in the source.
+TOGGLE_RE='if[[:space:]]*\([[:space:]]*LOWORD\(lp\)[[:space:]]*==[[:space:]]*WM_RBUTTONUP'
+
+# Self-test first: the scan must find a condition of this shape when there is one, and must not be fooled by prose.
+SELFTEST=$(mktemp)
+printf '    if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_LBUTTONUP)\n' > "$SELFTEST"
+tray_hit=$(grep -cE "$TOGGLE_RE" "$SELFTEST")
+printf '// WM_RBUTTONUP is discussed here but no condition tests it\n' > "$SELFTEST"
+tray_miss=$(grep -cE "$TOGGLE_RE" "$SELFTEST")
+rm -f "$SELFTEST"
+if [ "$tray_hit" != "1" ] || [ "$tray_miss" != "0" ]; then
+  echo "   FAIL: this scan cannot tell a real condition from the same name in prose (code=$tray_hit prose=$tray_miss)"
+  exit 1
+fi
+echo "   ok  the tray scan finds a real condition, and ignores the same name in a comment"
+
+# ⚠️ IT IS ASKED OF THE ACTUAL CONDITION LINE, NOT OF THE WHOLE FILE: `WM_CONTEXTMENU` appears in this file several
+# times (including in the comment that explains why it is ignored), so grepping the file for the name would pass or
+# fail for reasons that have nothing to do with the toggle. This reads the ONE line that decides.
+toggle_line=$(grep -E "$TOGGLE_RE" "$TRAY" | head -1)
+if [ -z "$toggle_line" ]; then
+  echo "   FAIL: the tray's toggle condition was not found in apex/main.cpp -- this check cannot judge it"
+  exit 1
+fi
+if printf '%s' "$toggle_line" | grep -q 'WM_CONTEXTMENU'; then
+  echo "   FAIL: WM_CONTEXTMENU is back in the tray's toggle condition:"
+  echo "         $toggle_line"
+  echo "         The shell sends it in ADDITION to WM_RBUTTONUP for a single right click, so the panel opens and"
+  echo "         closes again immediately -- the 'flash' the user reported. The menu it was written for is gone."
+  exit 1
+fi
+echo "   ok  a right click toggles once: WM_CONTEXTMENU is not a second toggle"
+echo
 echo "OK: the quick panel is placed by arithmetic, filled by the features that were MAPPED, drawn as separate"
-echo "    panes over a real desktop, and painted by nobody else"
+echo "    panes over a real desktop, painted by nobody else, and toggled once per click"
 exit 0

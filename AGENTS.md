@@ -282,6 +282,48 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | `MediaControl` | 媒体控制 / Media Control | C++ | 完成（每屏亮度与熄屏、每个应用的音量） |
 | `VolumeLock` | 音量保护 / Volume Guard | C++ | 完成（一张设备列表，每台各自一个音量；拖推子立刻生效，其它设备不动） |
 
+### 三·一、★★ 版本号：**改动哪个组件，就同步更新哪个组件的版本号**（**每次都适用**）
+
+> 用户原话（2026-10-12）：**「主程序和插件每次在更新，那个版本号要同步更新」**、**「按改的幅度迭代」**。
+
+⚠️⚠️ **规矩是"改了就动号"，不是"发版才动号"。** 一次改动如果动了某个功能的源码，那个功能的版本号就要跟着走；
+只动宿主就走宿主的。**版本号变了就代表那个东西真的变了**——否则用户看到号变了却找不到区别，号就失去意义了。
+
+**主程序**（一个号，两处显示）：
+
+| 什么 | 在哪 |
+|---|---|
+| 版本号本身 | `apex/host.h` 的 `APEX_HOST_VERSION` —— ⚠️ **唯一定义处** |
+| 设置面板侧栏显示 | 走快照（`settings_host.cpp`），**没有第二个号** |
+| 便携包文件名 | 由 `apex/package.sh` **读同一个宏**生成，不许手写 |
+
+**五个功能各自的号**（⚠️ 声明形式**不统一**，这是现状，改的时候按各自那一行来）：
+
+| 功能 | 声明 | 位置 |
+|---|---|---|
+| SmoothWheel | `"1.7.1",`（`ApexFeature` 初始化里的裸字面量） | `features/SmoothWheel/feature_smoothwheel.cpp` |
+| AutoIME | `version: c"1.2.1".as_ptr(),` | `features/AutoIME/src/lib.rs` |
+| KeepAwake | `const char *kVersion = "2.0.0";` | `features/KeepAwake/feature_keepawake.cpp` |
+| MediaControl | `const char *kVersion = "1.1.0";` | `features/MediaControl/feature_mediacontrol.cpp` |
+| VolumeLock | **没有字段**，只有一句注释 `// VERSION: 1.0.0` | `features/VolumeLock/feature_volumelock.cpp` |
+
+⚠️ **`VolumeLock` 那一行是已知缺陷**：它没有真正的版本字段，所以面板上那个位置是**空的**。
+将来动这个功能时要顺手补一个字段（照 KeepAwake 的写法），而不是继续改注释。
+
+**按幅度定号**（用户指定的口径）：
+
+| 幅度 | 怎么走 | 例子 |
+|---|---|---|
+| 修 bug、只动一个内部行为 | 末位 +1 | `1.5.0` → **`1.5.1`**（右键闪一下） |
+| 加功能、加控件、加设置项 | 中位 +1，末位归零 | `1.4.0` → `1.5.0`（页脚四命令） |
+| 破坏兼容、换契约、大改版 | 首位 +1 | —— |
+
+⚠️ **功能独立于主程序**：只改了 SmoothWheel，就只动 SmoothWheel 的号，**主程序的号不动**（反之亦然）。
+⚠️ **一次改动同时动了宿主和某个功能，两边都要动**——这正是用户要求"同步更新"的那一条。
+
+⚠️ **确认方式**：`grep -rn 'APEX_HOST_VERSION\|kVersion\s*=\|version: c' apex/ features/` 一次列全，
+不要凭记忆——上面的表就是**这么查出来的**，而它纠正了一个想当然：我原以为五个功能写法一致，实际有**三种写法 + 一个没有**。
+
 - **ABI 版本 = 23**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
   `features/AutoIME/src/abi.rs` —— **升版必须同时改两处**（漏了那边不是"退化"，是那个功能**直接加载失败**）。
   宿主要求版本**精确相等**；改契约就要升版，"只是加一个位"也要升。
