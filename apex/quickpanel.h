@@ -110,6 +110,84 @@ enum class CompanionIcon
   kDisplay = 2 // a monitor; struck through when it is on (the screen is off)
 };
 
+// ---- THE FOOTER: THE HOST'S OWN BUTTONS --------------------------------------------------------
+//
+// ⚠️⚠️ THESE ARE NOT FEATURE CONTROLS, AND KEEPING THEM OUT OF `Model::items` IS THE WHOLE DESIGN. Everything in
+// `items` came from a feature through `quickItems`, is owned by that feature, and disappears when the user
+// unmaps it. The four below are the HOST's -- they open the settings, the folder, the log, and quit -- and they
+// are present whatever the features do.
+//
+// WHY THEY EXIST AT ALL (the user, 2026-10-12): "把原来的右键菜单三个功能和退出，直接做到快速面板下方4个按钮...
+// 然后不管左键还是右键单击都是这个菜单。这样就算快速面板没有打开任何插件开关，它也有东西显示". Two things are being
+// fixed at once, and the second is the one that matters:
+//
+//   * the tray's right-click menu is GONE -- both buttons do the same thing, so there is no longer a menu to
+//     draw, and no longer a menu the SHELL draws (which is what made "make the menu follow the theme" a problem
+//     with an undocumented uxtheme call behind it -- see the note where that call used to be in main.cpp);
+//   * and the flyout is never EMPTY. Both halves of the panel can be switched off in the settings, and a click
+//     that produces a blank rectangle is indistinguishable from a broken program. The footer is always there.
+enum class FooterAction
+{
+  kNone = -1,
+  kSettings = 0,
+  kOpenDir = 1,
+  kShowLog = 2,
+  kQuit = 3
+};
+
+// ⚠️ FOUR, AND THE COUNT IS PART OF THE CONTRACT WITH THE PAINTER: `Layout::footer` is one array of this size, the
+// painter walks it in order, and the words come from the host in the same order (see FooterLabel in main.cpp).
+// A fifth button is one entry here plus one word per language -- there is no per-button code anywhere.
+static const int kFooterButtons = 4;
+
+// ⚠️ THE GLYPH EACH BUTTON SHOWS, AND IT IS A SEPARATE QUESTION FROM WHAT IT DOES. `FooterAction` is the command;
+// this is the picture. They happen to line up one-to-one today, and they are still two enumerations, because the
+// painter must be able to draw a button without knowing what a "settings" IS -- exactly the split `RowKind` and
+// `Item::id` already make for a feature's controls (the panel draws a switch, the FEATURE decides what it toggles).
+//
+// The shapes are the ones this panel already speaks (see DrawRowButton in quickpaint.h, where `kMute` and
+// `kDisplay` are drawn on the same 24-unit box): the user asked for the footer's pictures to be that kind of thing
+// -- "做成4个功能对应的图标，像关显示器，静音这样".
+enum class FooterIcon
+{
+  kGear = 0,   // settings: a cog
+  kFolder = 1, // the Apex folder
+  kLog = 2,    // the log: a page with lines
+  kPower = 3   // quit: the power mark
+};
+
+inline FooterAction FooterActionAt(int i)
+{
+  return (i >= 0 && i < kFooterButtons) ? (FooterAction)i : FooterAction::kNone;
+}
+
+
+// ⚠️ HOW MUCH OF ITS SLOT A FOOTER GLYPH FILLS, IN PERCENT. The user's report -- "图标可以再精致些，太大了" -- is about
+// the PICTURE, and the fix is not to shrink the hit target (which would make four small things harder to click on the
+// way out of a flyout) but to draw the same icons smaller inside the box they are already in. 72% leaves a margin
+// that reads as deliberate line art rather than as a pictogram jammed against its own edges.
+//
+// ⚠️ IT IS A PERCENTAGE RATHER THAN A PIXEL SIZE so it survives the scale factor: the painter works in units of
+// `slot.Width` (see the 24-unit box below), and a second, absolute glyph size would have to be scaled by hand in the
+// one place that is not supposed to know about DPI (see the note at the top of this file).
+static const int kFooterGlyph = 72;
+
+// The picture for a button. ⚠️ ONE PLACE DECIDES, like every other mapping in this project: the painter asks this
+// rather than switching on the action itself, so adding a fifth button is one entry here plus one word in
+// `FooterAction` -- and no branch anywhere in the drawing code.
+inline FooterIcon FooterIconAt(int i)
+{
+  switch (FooterActionAt(i))
+  {
+  case FooterAction::kSettings: return FooterIcon::kGear;
+  case FooterAction::kOpenDir: return FooterIcon::kFolder;
+  case FooterAction::kShowLog: return FooterIcon::kLog;
+  case FooterAction::kQuit: return FooterIcon::kPower;
+  default: return FooterIcon::kGear;
+  }
+}
+
+
 struct Item
 {
   RowKind kind = RowKind::kToggle;
@@ -274,7 +352,18 @@ struct Metrics
   // beside it do not fit in 320 -- the arithmetic gives a ~90 px track, which is NARROWER than the 120 it had.
   // So the panel grows once, by 64, and the extra width goes where the user asked for it: the fader.
   int width = 384;      // the panel's outer width
-  int pad = 14;         // between the panel's edge and the content
+  // ⚠️ 14 -> 4, AND IT IS THE "EMPTY STRIP UNDER THE PANEL" THE USER KEPT SEEING. This is the TRANSPARENT margin
+  // between the panel's own edge and the glass of its first/last pane, and the window has no margin at all now (see
+  // ShadowReachFor), so it was the last thing the eye could read as "the panel is floating too high":
+  //
+  //   "那就是下面有一块27像素左右的空白，检查一下" -- measured, that strip is 10 px of the footer pane's own padding
+  //   (which every pane has, and which is right) PLUS this 14 px; and the same 14 is on the top and both sides.
+  //
+  // ⚠️ THE USER CHOSE TO TIGHTEN ALL FOUR SIDES rather than only the bottom ("四周都收紧"), which is the choice that
+  // keeps the panel SYMMETRIC: an asymmetric panel -- a thin bottom and a thick top -- is a different look, and not
+  // one they asked for. At 4 the panes still have visible air around them and the panel stops looking like it has an
+  // empty border baked into it.
+  int pad = 4;          // between the panel's edge and the content
   // ⚠️ THE AIR BETWEEN TWO PANES, AND THE USER HAS NOW MOVED IT TWICE. It was 16 after they asked for the blocks
   // to float on their own ("现在看上去是大面板装着小面板，大面板和小面板中间的间隙太大了"), and it is **3** now:
   // "快速面板各分组间距拉小，留三个像素就够".
@@ -330,6 +419,23 @@ struct Metrics
   int tagGap = 6;       // between a switch's word and the switch itself
 
   int switchColMin = 128; // a grid cell narrower than this is not worth two columns
+
+  // ---- the footer (see FooterAction) ----
+  //
+  // ⚠️⚠️ IT IS A PANE LIKE EVERY OTHER, SO IT IS SEPARATED FROM THE ONE ABOVE BY THE SAME GAP. The user's report:
+  // "这个面板的间距离上面的不要太远，保持一样的间距". There WAS a `footerTop = 10` here against a `sectionGap` of 3, and
+  // that 7 px difference is exactly the kind of thing that reads as "the last block is not really part of this
+  // stack" without anyone being able to say why. ⚠️ THE FIELD IS GONE RATHER THAN SET TO THE SAME NUMBER: two fields
+  // that must always hold the same value are one rule written twice, and the second one drifts (see `sectionGap`,
+  // which the user has now moved twice).
+  //
+  // ⚠️ AND THE SLOT IS BIGGER THAN THE GLYPH ON PURPOSE. The user's other report: "图标可以再精致些，太大了". The slot IS
+  // the hit target -- a finger-sized box, so the four are easy to hit -- while the glyph is drawn at `kFooterGlyph`
+  // of it (see PaintPanel), which is what makes it read as fine line art rather than as a pictogram filling its own
+  // square. A bigger target and a smaller picture are not in conflict; they are two different jobs.
+  int footerH = 22;     // the slot's height (the hit target -- NOT the glyph's size)
+  int footerW = 26;     // ... and its width (a little wider than tall, so the glyph is not cramped)
+  int footerGap = 4;    // between two slots
 };
 
 // ⚠️ HOW BIG A ROW'S COMPANION IS, WHICH DEPENDS ON WHAT IT IS DRAWN AS (the user's correction: "是要用一样的滑动
@@ -396,11 +502,36 @@ inline int Scaled(int base, int scalePercent)
   return (int)(base * scalePercent / 100.0 + 0.5);
 }
 
+// ⚠️⚠️ HOW FAR A PANE'S SHADOW REACHES, GIVEN THE GAP BETWEEN PANES -- AND IT IS ZERO WHEN THE PANES ARE CLOSE.
+//
+// It lives HERE, rather than in the painter, because TWO PLACES HAVE TO AGREE ABOUT IT AND THEY ARE IN DIFFERENT FILES:
+// the painter decides how far to draw the shadow (quickpaint.h), and the WINDOW decides how much margin to leave
+// around the content for it (quickpanel_win.cpp). When those two disagree the margin is reserved and NEVER PAINTED,
+// which is exactly what the user found: "整个面板下面有块空白的地方" and then "还是有的，大概25像素，可以直接整体往下移23个
+// 像素".
+//
+// At the current `sectionGap` of 3 the answer is 0 -- the shadow may not reach the middle of a 3 px seam, so it is not
+// drawn at all, so the window must not keep 12 px of room for it. The user measured the leftover (14 px of the panel's
+// own bottom margin plus 12 px of unpainted window margin = 26) and proposed moving the panel down by about that much,
+// which is exactly what removing this margin achieves.
+//
+// ⚠️ ONE FUNCTION, BOTH CALLERS. If the gap is ever widened again, the shadow comes back AND the room for it comes
+// back, together -- which is this project's test for "one rule, one implementation": ask "if I change it, will
+// something else fail to follow?", and here the answer was yes until this existed.
+inline int ShadowReachFor(int sectionGap, int scalePercent)
+{
+  const int halfGap = Scaled(sectionGap, scalePercent) / 2;
+  int reach = Scaled(6, scalePercent); // what a pane's own shadow wants, if there is room for it
+  if (reach > halfGap - 1)
+    reach = halfGap - 1;
+  return reach > 0 ? reach : 0;
+}
+
 inline Metrics DefaultMetrics(int scalePercent)
 {
   Metrics m;
   m.width = Scaled(384, scalePercent);
-  m.pad = Scaled(14, scalePercent);
+  m.pad = Scaled(4, scalePercent);
   m.sectionGap = Scaled(3, scalePercent);
   m.sectionPad = Scaled(10, scalePercent);
   m.sectionHead = Scaled(22, scalePercent);
@@ -455,6 +586,24 @@ struct Layout
   // the click target of a fader is the fader, and nothing else on the line.
   Rect faderHit[kMaxItems];
   Rect extraHit[kMaxItems];
+
+  // ---- THE FOOTER (see FooterAction) ------------------------------------------------------------------
+  //
+  // ⚠️ IT IS A PANE OF ITS OWN, EXACTLY LIKE THE FEATURES' BLOCKS -- that is the whole point, and it took three
+  // attempts to get there. The user's reports, in order: "面板颜色要统一" (a full-width rule and a word per button was
+  // a second visual language), then "把它当成一个'插件开关'面板就可以了" (so each button got the pane's surface), and
+  // finally the one that names the mistake: **"还是不对，是要整体的面板，不是只有按钮的底色"**.
+  //
+  // ⚠️⚠️ THE DIFFERENCE IS WHAT THE SURFACE BELONGS TO. Giving each button the pane's MATERIAL still leaves four small
+  // rectangles with a gap between each pair, and the gaps are the panel showing through -- so the eye reads four
+  // things, not one. The footer is ONE THING: one pane, the full content width, with four icons inside it. `footer[]`
+  // is therefore the ICON SLOTS inside that pane, not the buttons -- and `footerPane` is the pane itself, drawn with
+  // the same `DrawGlassPane` call the feature blocks use.
+  Rect footerPane;                        // the footer's own block: full content width, one row tall
+  Rect footer[kFooterButtons];            // the four icon slots INSIDE it, right-aligned (no box of their own)
+  Rect footerStrip;                       // the four slots plus their gaps -- kept so a hit between two of them
+                                          // can be told from a hit on one (they are 4 px apart, and a miss there
+                                          // must do nothing rather than open the neighbour)
 };
 
 // TURN THE MODEL INTO RECTANGLES. Returns the panel's height (0 for an empty model, in which case the caller
@@ -470,9 +619,16 @@ inline int MeasureModel(const Model &m, const Metrics &mx, Layout *out)
     return 0;
   *out = Layout();
   out->width = mx.width;
-  if (m.itemCount <= 0 || m.sectionCount <= 0)
-    return 0;
 
+  // ⚠️⚠️ AN EMPTY MODEL IS NO LONGER "SHOW NOTHING" -- IT IS A PANEL WITH ONLY ITS FOOTER.
+  //
+  // This used to return 0 here, and the caller drew nothing at all, on the reasoning that "a flyout with a border
+  // and no content is worse than no flyout". That reasoning held while the panel was ONLY the features' controls,
+  // because an empty one really was a mistake. It does not hold now: the user's request is that the tray's own
+  // commands live in this panel ("把原来的右键菜单三个功能和退出，直接做到快速面板下方4个按钮"), which makes the
+  // footer a thing to show even when both halves of the panel are switched off in the settings -- and their
+  // reason is the same one this project keeps re-learning: "这样就算快速面板没有打开任何插件开关，它也有东西显示".
+  // A click that produces nothing looks like a broken program; a click that produces four working buttons does not.
   const int contentX = mx.pad;
   const int contentW = mx.width - 2 * mx.pad;
   if (contentW <= 0)
@@ -744,7 +900,63 @@ inline int MeasureModel(const Model &m, const Metrics &mx, Layout *out)
     y = out->boxes[s].Bottom();
   }
 
-  out->height = y + mx.pad;
+  // ---- THE FOOTER PANE, LAID OUT LAST AND ALWAYS (see FooterAction) ------------------------------
+  //
+  // ⚠️⚠️ ONE PANE, THE FULL CONTENT WIDTH, WITH FOUR ICONS INSIDE IT -- and NOT four small panes in a row, which is
+  // what the previous version drew. The user named the difference in as many words: "是要整体的面板，不是只有按钮的
+  // 底色". Four small panes leave three gaps for the panel to show through, so the eye counts four objects; one pane
+  // with four icons in it is ONE object, which is the whole reason a footer reads as a footer.
+  //
+  // ⚠️ IT IS LAID OUT WITH THE SAME `sectionPad` AROUND ITS INSIDE AS EVERY OTHER BLOCK, because it IS every other
+  // block as far as the eye is concerned -- and its height is therefore `2*sectionPad + footerH`, the same arithmetic
+  // a one-row feature pane uses (see `single` in the section loop above).
+  //
+  // ⚠️ AND THE SAME `sectionGap` ABOVE IT, for the same reason one level out: it is the next block in the stack, so
+  // the distance to the block before it is the distance between blocks (the user: "间距离上面的不要太远，保持一样的间距").
+  if (m.itemCount > 0)
+    y += mx.sectionGap; // exactly as the section loop does between two panes; the pane's own bottom already has its padding
+  {
+    out->footerPane = Rect{contentX, y, contentW, 2 * mx.sectionPad + mx.footerH};
+
+    // The four slots, right-aligned inside that pane, so the pane's left half is empty and the icons read as one
+    // group at the end of the row (the user's "一个小按钮，居右就可以").
+    const int gaps = (kFooterButtons - 1) * mx.footerGap;
+    const int total = kFooterButtons * mx.footerW + gaps;
+    const int innerRight = out->footerPane.Right() - mx.sectionPad;
+    // Flush right, and never off the pane's left edge: on a panel too narrow to hold them (which this
+    // arithmetic-only layout cannot rule out at an extreme scale) they start inside the left edge rather than at a
+    // negative x.
+    int fx = innerRight - total;
+    const int innerLeft = out->footerPane.x + mx.sectionPad;
+    if (fx < innerLeft)
+      fx = innerLeft;
+    out->footerStrip = Rect{fx, y + mx.sectionPad, total, mx.footerH};
+    for (int b = 0; b < kFooterButtons; ++b)
+    {
+      out->footer[b] = Rect{fx, y + mx.sectionPad, mx.footerW, mx.footerH};
+      fx += mx.footerW + mx.footerGap;
+    }
+  }
+  y = out->footerPane.Bottom();
+
+  // ⚠️⚠️ THE PANEL'S BOTTOM MARGIN IS `pad`, AND IT HAS TO BE COMPUTED RATHER THAN ADDED.
+  //
+  // Every block's height already carries `sectionPad` INSIDE its bottom edge (see `boxes[s].h = ry - boxY +
+  // sectionPad` above), so the last block's glass ends `sectionPad` above `y`. Adding a full `pad` below that gives
+  // the panel `sectionPad + pad` = 24 px under its content while the TOP margin is `pad` = 14 -- i.e. the panel was
+  // always 10 px taller at the bottom than at the top.
+  //
+  // ⚠️ THAT WAS INVISIBLE UNTIL THE FOOTER EXISTED, and that is why the user is asking now: "整个面板下面有块空白的
+  // 地方，是不是这次加上去的". The arithmetic is NOT new -- a panel ending in a feature block had exactly the same
+  // 24 px -- but a lone pane at the very bottom, with nothing under it, is what makes an empty strip draw the eye.
+  //
+  // ⚠️ SO THE ANSWER TO "是不是这次加上去的" IS "no, but you are right that it is wrong". The margin below the last
+  // block is set to `pad` measured FROM THE BLOCK'S GLASS, which is what the top margin is measured from too. One
+  // rule, the same at both ends.
+  //
+  // The footer pane is always the last thing, so the glass ends at its own bottom edge -- and the panel's bottom
+  // margin is measured from THERE, exactly as the top margin is measured from the first block's top edge.
+  out->height = out->footerPane.Bottom() + mx.pad;
   return out->height;
 }
 
@@ -782,21 +994,44 @@ enum class HitKind
   kToggle,   // a switch: the row's own target
   kExtra,    // the companion switch (abi.h: `toggleId`)
   kSlider,   // the fader's own rectangle: an absolute jump, and the start of a drag
-  kKnob      // the dial: the start of a relative drag
+  kKnob,     // the dial: the start of a relative drag
+  // ⚠️ A FOOTER BUTTON (see FooterAction), AND IT IS A KIND OF ITS OWN RATHER THAN "kNone WITH AN INDEX". The
+  // footer is not a feature control: nothing about it goes to a feature, and the caller's answer to it is to run
+  // a HOST command and put the panel away -- which is a different branch from every other kind here. Reporting it
+  // as kNone would make a click on "Settings" do exactly nothing, quietly, which is the failure this enum exists
+  // to make impossible.
+  kFooter
 };
 
 struct Hit
 {
   HitKind kind = HitKind::kNone;
   int index = -1;
+  // Which footer button, for kFooter. Separate from `index` because `index` means "the item" everywhere else, and
+  // a footer button is not an item -- overloading it would make every existing `m.items[h.index]` one bad branch
+  // away from reading past the array.
+  FooterAction footer = FooterAction::kNone;
 };
 
 inline Hit ClickAt(const Model &m, const Layout &ly, int x, int y)
 {
   Hit h;
+
+  // THE FOOTER FIRST: it is outside the rows entirely, so there is no ambiguity to resolve -- and it has to be
+  // answered even when there are no rows at all (the user's "就算...没有打开任何插件开关，它也有东西显示").
+  for (int b = 0; b < kFooterButtons; ++b)
+  {
+    if (ly.footer[b].Holds(x, y))
+    {
+      h.kind = HitKind::kFooter;
+      h.footer = FooterActionAt(b);
+      return h;
+    }
+  }
+
   const int i = HitTest(m, ly, x, y);
   if (i < 0)
-    return h; // a gap, a block's title, the panel's padding: nothing at all
+    return h; // a gap, a block's title, the footer's gap, the panel's padding: nothing at all
   h.index = i;
   const Item &it = m.items[i];
 

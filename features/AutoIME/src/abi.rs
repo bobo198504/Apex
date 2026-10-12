@@ -204,7 +204,12 @@ pub struct ApexFeature {
 /// so forgetting this line does not degrade anything, it makes AutoIME fail to load with a line in the log.
 /// (That is exactly what happened once, and the end-to-end wheel gate went red because of it: one feature
 /// missing changes what the host decides about a wheel.)
-pub const APEX_ABI_VERSION: c_uint = 22;
+/// ⚠️ 22 -> 23: `select` gained the OPTIONAL `applyZh`/`applyEn` keys (a confirm button beside a dropdown).
+/// ⚠️⚠️ THAT IS A CHANGE TO A *KEY* THIS CRATE DOES NOT USE, AND THE NUMBER STILL HAS TO MOVE. The host
+/// requires an exact match, so a stale constant here does not "degrade" anything -- it makes AutoIME fail to
+/// load, with one line in the log. (That is exactly what happened once, and the end-to-end wheel gate went red
+/// because of it: one feature missing changes what the host decides about a wheel.)
+pub const APEX_ABI_VERSION: c_uint = 23;
 
 pub const APEX_FEATURE_ENABLED: c_uint = 1;
 

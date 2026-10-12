@@ -5,8 +5,8 @@
 
 ## 零、这个项目是什么
 
-**Apex 是一个功能集（PowerToys 那种形态），不是单一工具。** 现在有四个功能：SmoothWheel（丝滑滚动）、
-AutoIME（自动输入法）、KeepAwake（保持唤醒）、MediaControl（媒体控制）——清单与现状见 §三，
+**Apex 是一个功能集（PowerToys 那种形态），不是单一工具。** 现在有五个功能：SmoothWheel（丝滑滚动）、
+AutoIME（自动输入法）、KeepAwake（保持唤醒）、MediaControl（媒体控制）、VolumeLock（音量保护）——清单与现状见 §三，
 细节见 `docs/rules/features.md`。
 
 ```
@@ -31,6 +31,24 @@ AutoIME（自动输入法）、KeepAwake（保持唤醒）、MediaControl（媒�
 **本地工作不必请示**：改代码、跑门、构建、改文档、改 `versions/` 快照。
 
 **这个项目现在还没有仓库**（拆出来时用户未要求建仓）。若将来要建，先问。
+
+### ★★ 零之二·一、`VolumeLock` 功能**不进仓、不开源**（**每次都适用**）
+
+> 用户原话（2026-10-08）：「**这个插件备注下，只限我自己使用，不开源，后续更新不更新到仓里。**」
+
+⚠️ **范围只有这一个功能**：Apex 宿主和另外四个功能（SmoothWheel / AutoIME / KeepAwake / MediaControl）
+**照旧进仓**。
+
+⚠️ **它靠机器保证，不靠"记得"**：`.gitignore` 里列着 `/features/VolumeLock/` 及它的探针与门。
+这个仓**有远端**（`github.com/bobo198504/Apex`），一次 `git add -A` 就会把它推上去，
+而**推上去之后从历史里删掉是另一回事**。
+
+| 要做的事 | 怎么做 |
+|---|---|
+| 改这个功能 | **随意**，它是本项目的一部分，照常开发、构建、跑门、部署 |
+| 往仓里加东西 | ⚠️ **不要 `git add` 这个文件夹**；它在 `git status` 里应当是 `??` |
+| 看到它变成**已跟踪** | **立刻停下查明** —— 说明 `.gitignore` 被绕过（`git add -f`、图形客户端） |
+| 它为什么特殊 | 见 `features/VolumeLock/NOT_FOR_RELEASE.md`（⚠️ **不是"不够好"**，是为单一硬件写的、带明确取舍） |
 
 ## 零之二·五、★ 权限边界：**项目目录内全权，项目之外一步都不能越**（**每次都适用**）
 
@@ -81,6 +99,7 @@ AutoIME（自动输入法）、KeepAwake（保持唤醒）、MediaControl（媒�
 | `decision.h`、`host_win.cpp`、`common/release.h`、`shared/`、滚轮行为 | `docs/rules/wheel.md` |
 | 加一个功能、`apex/abi.h`、某个功能的设置页或名单 | `docs/rules/features.md` |
 | 显示器亮度 / 每屏熄屏 / 每个应用的音量（`features/MediaControl/`、`_diag/media_probe.cpp`） | `docs/rules/features.md`（§3.13）＋ `docs/rules/quickpanel.md`（分组名） |
+| 设备音量保护 / `features/VolumeLock/`、`_diag/up2_probe.cpp`、`_diag/endpoint_identity_probe.cpp` | `docs/rules/features.md`（§3.15） |
 | `apex/build.sh`、`test/run_all.sh`、构建与门的耗时 | `docs/rules/build-loop.md` |
 | 加或改一扇门 / 一个探针 | `docs/rules/gates.md` |
 | REAPER 提示、"宿主改的事实、面板要自己跟上" | `docs/rules/cases.md` |
@@ -146,6 +165,7 @@ D:\Projects\Code\Apex\
   third_party\webview2\  WebView2 SDK（头 + x64 导入库；不用 NuGet）
   test\                门（run_all.sh 跑全部）
   _diag\               探针与实测记录
+    trayrect_probe.cpp ★ 这台机器的 Shell_NotifyIcon 能不能用（诊断用，不是门；见 gates.md 的「已知的环境性红」）
   docs\rules\          ★ AGENTS.md 的分册（按主题；动到哪个区域读哪一册，见上面的索引）
   build\apex\          ★ 产物：可整个文件夹拷走的便携程序
 ```
@@ -231,8 +251,8 @@ bash apex/deploy.sh                  # 只部署（门已经单独跑过时）
 | 改一个 `.cpp` 之后构建 | 4.1 s |
 | 改 AutoIME（Rust）之后构建 | 5.7 s |
 | 改 `panel.html` 之后构建 | 3.3 s |
-| **跑一遍构建层的全部门** | **约 50 s**（**19 扇**；大的几扇：modular 14.2 / deploy 7.3 / keepawake 5.3 / ime 4.1 / quickpanel 3.8 / mediacontrol 3.0 / **chart 2.8**。⚠️ 这个 50 是 48 加上 2026-09-23 新增那扇 `check_apex_hostconfig` 自己量到的 2.7 s —— **不是**一次重新量的整轮：那一轮赶在机器很忙的时候，逐扇相加到了 234 s，比安静时慢四倍，所以旧数不动、新数单独加。⚠️ 本来还有一扇 `check_feature_unifiedui`（2026-10-06 当天加、当天随功能一起撤掉），所以这个总数仍然只配一个「约」） |
-| **构建层 + 装配层一次跑完** | **约 155 s**（十扇装配门；九扇时是 140 s，`check_apex_flyout` 是 2026-09-22 加的。⚠️ 这条是从 PowerShell 量的整轮 169 s 减掉约 1 秒 Git-bash 启动推出来的，**不是 bash 内的读数**——要精确值就跑 `test/timing.sh`） |
+| **跑一遍构建层的全部门** | **约 52 s**（**22 扇**；大的几扇：modular 14.2 / deploy 7.3 / keepawake 5.3 / ime 4.1 / quickpanel 3.8 / mediacontrol 3.0 / **chart 2.8**。⚠️ 这个数是逐扇相加来的，**不是**一次重新量的整轮：那几轮赶在机器很忙的时候，逐扇相加到了 234 s，比安静时慢四倍，所以旧数不动、新数单独加。⚠️ 有两扇是加了又撤的：`check_feature_unifiedui`（2026-10-06 当天加、当天随功能撤）和 `check_apex_menutheme`（2026-10-12 当天加、当天随"托盘菜单被撤掉"一起删），所以这个总数只配一个「约」） |
+| **构建层 + 装配层一次跑完** | **约 155 s**（十扇装配门；`check_apex_flyout` 是 2026-09-22 加的。⚠️ 从 PowerShell 量的整轮 169 s 减掉约 1 秒 Git-bash 启动推出来的，**不是** bash 内的读数——要精确值跑 `test/timing.sh`。⚠️⚠️ **2026-10-12：装配层有 4 扇（icons / endtoend / persist / flyout）在"由工具进程树启动私有拷贝"时全红，而同一条 exe、同一个目录、改用 `Start-Process` 手动启动就全绿**——根因是这条会话里 `Shell_NotifyIcon` 对工具派生的进程返回 **error 5**，托盘图标加不上。**这不是代码缺陷**：用户那份部署的 Apex 日志里 `tray icon added` 正常。详见 `docs/rules/gates.md` 的「已知的环境性红」） |
 | `cargo` 空跑一次 | 61 ms —— **它从来不是"构建慢"的原因** |
 
 ⚠️ **量这些数要在 bash 里量**（`test/timing.sh` 就是）：从 PowerShell 直接 `bash xxx.sh`，**每次都要多付约 1 秒的
@@ -260,8 +280,9 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | `AutoIME` | 自动输入法 / Auto IME | **Rust**（cdylib） | 完成 |
 | `KeepAwake` | 保持唤醒 / Keep Awake | C++ | 完成 |
 | `MediaControl` | 媒体控制 / Media Control | C++ | 完成（每屏亮度与熄屏、每个应用的音量） |
+| `VolumeLock` | 音量保护 / Volume Guard | C++ | 完成（一张设备列表，每台各自一个音量；拖推子立刻生效，其它设备不动） |
 
-- **ABI 版本 = 22**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
+- **ABI 版本 = 23**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
   `features/AutoIME/src/abi.rs` —— **升版必须同时改两处**（漏了那边不是"退化"，是那个功能**直接加载失败**）。
   宿主要求版本**精确相等**；改契约就要升版，"只是加一个位"也要升。
   （11 → 12 是 `quickItems`：功能可以往**快速面板**里放几个自己的控件；

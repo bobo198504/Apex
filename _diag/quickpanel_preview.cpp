@@ -325,7 +325,10 @@ static bool Render(const char *outDir, bool light, bool zh, const char *name)
     printf("FAIL: the sample model measured nothing\n");
     return false;
   }
-  const int shadow = 12;
+  // ⚠️ THE MARGIN THE WINDOW REALLY HAS, ASKED FOR RATHER THAN ASSUMED -- it is the shadow's own reach, so it is
+  // ZERO at the current 3 px gap. Hard-coding 12 here (which this did) meant the preview drew a 12 px empty border
+  // that the real window no longer has: the picture would show the blank strip the user reported AFTER it was fixed.
+  const int shadow = ShadowReachFor(mx.sectionGap, 100);
   const int w = mx.width + 2 * shadow;
   const int h = contentH + 2 * shadow;
   const int before = g_failed;
@@ -353,6 +356,9 @@ static bool Render(const char *outDir, bool light, bool zh, const char *name)
     ctx.hover = -1;
     ctx.shadow = shadow;
     ctx.sectionGap = mx.sectionGap; // the seam the shadow must not reach into (see PaintPanel)
+    // ⚠️ NO FOOTER WORDS ANY MORE. The four buttons are ICONS now (the user: "4个按钮不要简单的就搬了个文字。做成4个
+    // 功能对应的图标"), so the preview passes nothing and the painter draws the glyphs -- the same ones the real panel
+    // draws, because it is the same function. The labels still exist in the host for the tooltip/accessibility path.
     PaintPanel(g, ctx, 1.0);
     g.Flush(Gdiplus::FlushIntentionSync);
   }

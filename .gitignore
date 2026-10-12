@@ -12,3 +12,28 @@ Thumbs.db
 desktop.ini
 *.swp
 *~
+
+# ── ★ VolumeLock（音量保护）：只给作者自己用，不开源，不进仓 ──────────────
+#
+# 用户的要求（2026-10-08）：「这个插件备注下，只限我自己使用，不开源，后续更新不更新到仓里。」
+#
+# ⚠️⚠️ 忽略的是**功能本体**（源码、门、探针），不是整个项目 —— Apex 宿主和另外四个功能
+#     （SmoothWheel / AutoIME / KeepAwake / MediaControl）照旧进仓。
+#
+# ⚠️ 为什么用忽略而不是"记得别提交"：这个仓有远端（github.com/bobo198504/Apex），
+#    一次 `git add -A` 就会把整个文件夹推上去，而推上去之后**从历史里删掉是另一回事**。
+#    规则要由机器执行，不能由人记住。
+#
+# ⚠️ 但也不要以为忽略就够了：`git add -f` 和某些图形客户端会绕过它。所以这一条
+#    和 features/VolumeLock/NOT_FOR_RELEASE.md 里的说明是**配套的两道**，见那份文件。
+/features/VolumeLock/
+/_diag/feature_volumelock_probe.cpp
+/_diag/name_width_probe.cpp
+/_diag/up2_probe.cpp
+/_diag/endpoint_identity_probe.cpp
+/test/check_feature_volumelock.sh
+
+# PLATANE 交付物：是给厂商看的方案，不是本项目的源码，同样不进仓。
+#
+# ⚠️ 它和上面那条不是一回事，分开写是因为理由不同：上面是"不外发"，这份是"不是本项目的东西"。
+/PLATANE_Vol_Lock/

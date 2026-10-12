@@ -322,7 +322,9 @@ UINT g_panelDropMsg = 0;         // "the menu closed without asking" -- the warm
 #define APEXWM_ACTIVITY_TIMER 1  // the host window's low-rate timer id
 #define APEXWM_SAVE_TIMER 2      // writes the settings shortly after an edit settles (see SettingsTouch)
 #define APEXWM_STATE_TIMER 3     // watches the facts that can change while the panel is open (see NotifyStateChanges)
-#define APEXWM_TRAY_CLICK_TIMER 4 // tells a single tray click from the first half of a double click (see WndProc)
+// ⚠️ 4 IS RETIRED (it was APEXWM_TRAY_CLICK_TIMER), on the same terms this file retires IPC numbers: a timer id is a
+// number on a wire that no longer exists, and reusing it for something else is how "the flyout opened twice" becomes
+// a mystery. The timer went away with the double click -- see the note where the ids used to be defined.
 #define APEXWM_FLYOUT_TIMER 5     // TEST-ONLY: shows the quick panel once at start-up (see FlyoutSelfTest)
 
 // ---------------------------------------------------------------------------
@@ -712,10 +714,11 @@ void Tick(void *)
 // their argument in the process's ANSI codepage -- on a non-Chinese Windows that turns 滑动滚轮 into
 // mojibake. The W variants take UTF-16, so every string goes through one conversion (U8) at the point of
 // use and nothing downstream has to know about codepages. (The plugin's notes record the same trap.)
-#define IDM_SETTINGS 40102
-#define IDM_OPEN_DIR 40103
-#define IDM_SHOW_LOG 40104
-#define IDM_QUIT 40105
+// ⚠️ THE `IDM_*` COMMAND IDS ARE GONE WITH THE MENU. There is no `CreatePopupMenu` in this file any more: the tray's
+// four commands are the flyout's footer buttons, and they travel as a `FooterAction` rather than as a menu id (see
+// `QuickPanelCommand` below). The `APEXWM_TRAY_CLICK_TIMER` is gone too, and for the same reason -- it existed only
+// to tell a single click from the first half of a double click, and there is no longer a second meaning to tell it
+// from.
 #define APEXWM_TRAY (WM_APP + 1)
 
 // "TaskbarCreated" is broadcast by the shell when Explorer starts or restarts. It has no fixed message
@@ -761,6 +764,10 @@ const wchar_t *U8(const char *utf8)
 struct TrayText
 {
   const char *tip, *settings, *openDir, *showLog, *quit;
+  // ⚠️ THE THREE APPEARANCE WORDS ARE GONE WITH THE SUBMENU. The appearance is still a setting the user changes --
+  // on the General page, where it always was -- but the tray no longer offers it, because the tray no longer has a
+  // menu (see the note where the four commands live). The quick panel needed no words for it either: it is painted
+  // by this program from quickpalette.h, so it follows `ThemeResolvesLight` with no menu and no uxtheme call.
   // Appended to the tooltip while a feature is holding something on the user's behalf (see
   // APEX_FEATURE_USER_VISIBLE). Short on purpose: the tooltip is one line and the mark already says
   // "something"; this says WHAT. TWO LINES, because the mark has two working colours and a colour on its own
@@ -999,8 +1006,25 @@ void TrayAdd(HWND h)
             iconId == IDI_APEX_DARK ? "dark" : "light", iconId, GetLastError());
   _snwprintf(g_tray.szTip, sizeof(g_tray.szTip) / sizeof(g_tray.szTip[0]), L"Apex -- %ls", U8(t.tip));
   g_trayUp = Shell_NotifyIconW(NIM_ADD, &g_tray) != 0;
+  // ⚠️⚠️ AND THE VERSION IS ASKED FOR, BECAUSE WITHOUT IT THERE IS NO DOUBLE CLICK TO HANDLE. Under the ORIGINAL
+  // protocol the shell sends each half of a double click as its own `WM_LBUTTONUP` and never sends
+  // `WM_LBUTTONDBLCLK` -- so the flyout would open on the first half and the second half would arrive looking exactly
+  // like a separate single click, i.e. "click the tray twice" and "double click the tray" would be indistinguishable
+  // (which is precisely why an earlier version needed a timer to guess). `NOTIFYICON_VERSION_4` makes the shell send
+  // the real event, and it is also what makes the coordinates in `lParam` usable.
+  //
+  // ⚠️ IT IS A SEPARATE CALL FROM `NIM_ADD`, not a field of it -- and it is sent after the icon exists, which is the
+  // documented order. A refusal is logged rather than ignored: the symptom of a missing version is "double click does
+  // nothing", and that is exactly the kind of thing that would otherwise be looked for in the wrong place.
   if (g_trayUp)
+  {
+    g_tray.uVersion = NOTIFYICON_VERSION_4;
+    if (!Shell_NotifyIconW(NIM_SETVERSION, &g_tray))
+      LogLine("tray: the shell REFUSED NOTIFYICON_VERSION_4 (error %lu) -- a double click will arrive as two single "
+              "clicks and will not open the settings",
+              (unsigned long)GetLastError());
     TrayUpdate(); // the same path every other refresh uses, so the log line appears here too
+  }
 }
 
 void TrayRemove()
@@ -1188,74 +1212,6 @@ void OpenSettings()
   }
 }
 
-void TrayMenu(HWND h)
-{
-  // BUILT FRESH ON EVERY OPEN, and that is what makes the language change work: the menu is destroyed when
-  // it closes (below), so the next right-click rebuilds it from whatever the language resolves to NOW.
-  // Caching it would mean a language change that only takes effect after a restart.
-  //
-  // ⚠️ THERE IS NO "Enabled / Paused" ITEM. It was the first line of this menu and it is gone at the user's
-  // request: a global switch duplicates what a feature's own page already says, and having two of them means
-  // "why is nothing happening" has two answers. Enabling is a feature's business -- turn the feature off.
-  const TrayText &t = TrayStrings();
-
-  HMENU m = CreatePopupMenu();
-  AppendMenuW(m, MF_STRING, IDM_SETTINGS, U8(t.settings));
-  AppendMenuW(m, MF_STRING, IDM_OPEN_DIR, U8(t.openDir));
-  AppendMenuW(m, MF_STRING, IDM_SHOW_LOG, U8(t.showLog));
-  AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(m, MF_STRING, IDM_QUIT, U8(t.quit));
-
-  // ⚠️ THE WARM-UP GOES HERE, BEFORE THE MENU APPEARS, and this line is the whole timing argument: whatever the
-  // user does next -- reading the items, moving the mouse to one, clicking -- happens while the panel's browser
-  // is starting behind a hidden window. It costs this process one CreateProcess (~30-50 ms, and the menu is
-  // modal from here anyway) and it is skipped when a panel already exists.
-  PrewarmPanel();
-
-  POINT pt;
-  GetCursorPos(&pt);
-  SetForegroundWindow(h);
-  // THE MENU HAS NO ANSI/UNICODE VARIANT, and that is not an oversight in the headers: a Win32 menu stores
-  // its items as UTF-16 internally (there is no CreateMenuA/W either), so AppendMenuW above put real Unicode
-  // in and TrackPopupMenu renders it. Confirmed against the exports of user32.dll -- it exposes
-  // `TrackPopupMenu` with no suffix at all, and no `TrackPopupMenuA`.
-  const UINT cmd = (UINT)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, nullptr);
-  DestroyMenu(m);
-
-  // ANYTHING BUT SETTINGS MEANS THE WARM-UP WAS NOT WANTED -- including `cmd == 0`, which is the menu being
-  // dismissed (a click outside it, or Escape). Same rule as everywhere else in this file: what is not needed
-  // does not stay running.
-  if (cmd != IDM_SETTINGS)
-    DropWarmPanel();
-
-  switch (cmd)
-  {
-  case IDM_SETTINGS:
-    OpenSettings();
-    break;
-  case IDM_OPEN_DIR:
-  {
-    char dir[512] = {0};
-    if (ApexModuleDir(dir, (int)sizeof(dir)))
-      ShellExecuteA(nullptr, "open", dir, nullptr, nullptr, SW_SHOWNORMAL);
-    break;
-  }
-  case IDM_SHOW_LOG:
-  {
-    char dir[512] = {0};
-    if (ApexModuleDir(dir, (int)sizeof(dir)))
-    {
-      char p[560] = {0};
-      if (JoinPath(dir, "apex.log", p, (int)sizeof(p)))
-        ShellExecuteA(nullptr, "open", p, nullptr, nullptr, SW_SHOWNORMAL);
-    }
-    break;
-  }
-  case IDM_QUIT:
-    DestroyWindow(h);
-    break;
-  }
-}
 
 LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -1293,13 +1249,6 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
       WatchFeatures();
       return 0;
     }
-    // THE SINGLE TRAY CLICK, once the double-click timeout has passed without a second one (see APEXWM_TRAY).
-    if (wp == APEXWM_TRAY_CLICK_TIMER)
-    {
-      KillTimer(h, APEXWM_TRAY_CLICK_TIMER);
-      host::QuickPanelToggle();
-      return 0;
-    }
     // TEST-ONLY (APEX_QUICKPANEL_ONCE): one show, then one hide, then nothing. See QuickPanelSelfTest.
     if (wp == APEXWM_FLYOUT_TIMER)
     {
@@ -1322,30 +1271,60 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     break;
 
   case APEXWM_TRAY:
-    if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU)
-      TrayMenu(h);
-    // ⚠️ ONE PRESS, TWO MEANINGS, SO THE PRESS ONLY ARMS A TIMER. A single click opens the quick panel and a
-    // double click opens the settings -- the same button on the same icon -- and neither can be answered on the
-    // press, because until the double-click timeout has passed there is no way to know which one it was. So the
-    // press starts a one-shot timer; the second click kills it, and the timer fires only for a genuine single
-    // click. The cost is that a single click waits one double-click timeout (the user's own setting) before the
-    // panel appears, which is the trade the user chose over "the panel appears and then the settings window
-    // opens on top of it".
-    else if (LOWORD(lp) == WM_LBUTTONDOWN)
+    // ⚠️⚠️ A SINGLE CLICK OPENS THE FLYOUT; A DOUBLE CLICK OPENS THE SETTINGS. The user asked for the second one
+    // back after it was removed: "原来双击托盘可以直接打开设置的动作没了，这个要补回去".
+    //
+    // ⚠️ AND THE WAY IT WAS REMOVED IS THE REASON IT IS CHEAP TO PUT BACK. The old version needed a TIMER -- a single
+    // click had to be held back for one `GetDoubleClickTime()` because "panel or settings?" could not be answered
+    // until the timeout had passed. That wait is gone and does NOT come back here, because the two gestures are no
+    // longer alternatives to be guessed at: Windows tells us which one happened.
+    //
+    // ⚠️ WHAT MAKES THAT TRUE IS `NOTIFYICON_VERSION_4` (see TrayAdd). Under the older protocol the shell delivers a
+    // double click as TWO `WM_LBUTTONUP`s and no `WM_LBUTTONDBLCLK` at all, so the panel would open and there would be
+    // no second event to tell us it had been a double -- which is exactly the situation the timer used to paper over.
+    //
+    // ⚠️ SO THE FIRST CLICK'S PANEL IS PUT AWAY BEFORE THE SETTINGS OPEN, and that is the honest handling of a gesture
+    // that has already been half-acted-on: the user's last act was a double click, and what they should be looking at
+    // is the settings window, not a flyout left over from the first half of it. `QuickPanelHide` rather than Toggle --
+    // the panel is up, and this is not a second press of the same button.
+    //
+    // ⚠️⚠️ AND THE SEQUENCE IS LOGGED, BECAUSE IT WAS ASSUMED RATHER THAN CHECKED. What the shell actually delivers --
+    // whether the first half of a double click arrives as `WM_LBUTTONUP` (opening the panel, which this then has to
+    // close) or is swallowed once the version is set -- is not something the documentation states plainly, and getting
+    // it wrong is invisible except as "the settings opened and a panel flashed". One log line per tray message makes
+    // the real order readable from the log after a single double click.
+    //
+    // ⚠️ THE BRACES ARE NOT COSMETIC. A declaration between `case` labels is a compile error in C++ ("jump to case
+    // label crosses initialization"), so the whole block is scoped -- which is also the right shape for a `static`
+    // that belongs to this case alone.
     {
-      UINT ms = GetDoubleClickTime();
-      if (!ms)
-        ms = 400; // a zero would make SetTimer fail, and the click would then do nothing at all
-      SetTimer(h, APEXWM_TRAY_CLICK_TIMER, ms, nullptr);
+      static DWORD lastTrayMsg = 0;
+      const DWORD now = GetTickCount();
+      LogLine("tray msg: 0x%04X (%lu ms since the last one)", (unsigned)LOWORD(lp),
+              (unsigned long)(lastTrayMsg ? now - lastTrayMsg : 0));
+      lastTrayMsg = now;
     }
-    else if (LOWORD(lp) == WM_LBUTTONDBLCLK)
+
+    if (LOWORD(lp) == WM_LBUTTONDBLCLK)
     {
-      KillTimer(h, APEXWM_TRAY_CLICK_TIMER);
-      // The flyout must not sit under the settings window. It is almost always already gone (the first click of
-      // the double click landed outside it, so it lost the foreground) -- this is for the case where it was
-      // opened by a click that never reached the tray.
-      host::QuickPanelHide("the user asked for the settings");
+      host::QuickPanelHide("the user double clicked the tray -- settings, not the flyout");
+      LogLine("tray: double click -> settings");
       OpenSettings();
+      return 0;
+    }
+    // ⚠️ THE RIGHT BUTTON IS ANSWERED ON `WM_RBUTTONUP`, NOT DOWN, AND THAT IS THE ONE ASYMMETRY. It is what the
+    // shell's own tray icons do (a context menu opens on release), and it is also what makes "hide it again" work
+    // from this side: pressing the right button while the flyout IS open sends the press to the FLYOUT (it has the
+    // foreground), so the release that reaches the tray is a fresh gesture rather than the tail of the one that
+    // opened it. The left button is handled on the press, like every other button a user clicks.
+    if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU || LOWORD(lp) == WM_LBUTTONUP)
+    {
+      // ⚠️ AND A SECOND CLICK CLOSES IT, WHICH IS WHAT A TRAY ICON IS EXPECTED TO DO. Without this the button
+      // would open the panel and then be unable to put it away -- toggling is the whole behaviour of a tray
+      // button, and QuickPanelToggle is where the "did the user just dismiss it by clicking away" guard lives
+      // (see kDismissGuardMs), so this is one call rather than a state machine here.
+      host::QuickPanelToggle();
+      return 0;
     }
     return 0;
 
@@ -1556,6 +1535,15 @@ void TrayRefreshFromSettings()
   TrayUpdate();
   if (g_wnd)
     ApplyWindowIcon(g_wnd);
+  // ⚠️ AND THERE IS NOTHING ELSE TO RE-DRAW, WHICH IS THE PROPERTY WORTH NAMING. This function exists because the
+  // appearance has to reach every surface that carries it, and the surfaces used to be: the mark, the window icon,
+  // the settings page (told separately, see ApplySetHost), and THE SHELL-DRAWN MENU -- which needed an undocumented
+  // uxtheme call of its own, because a menu is the one part of the interface this program does not paint.
+  //
+  // The menu is gone (the tray's commands are the flyout's footer now), so that call went with it. What is left is
+  // entirely ours: the flyout is painted from quickpalette.h and follows the theme the same way the page does. So
+  // this function touches the two marks and stops -- no runtime-resolved ordinals, nothing that can silently stop
+  // working when Windows changes. That is a smaller surface to be wrong about, and it was the user's change.
 }
 
 
@@ -1777,6 +1765,76 @@ void SettingsSaveAll()
 //   which includes failed rows. Adding a feature that fails to load would have shifted every slot and opened
 //   the wrong file. One rule, one implementation -- and the surviving one is the one the panel talks to.
 
+
+// ---- THE FOUR FOOTER COMMANDS (declared in host.h; the reasoning is in the block that used to be here) ----
+
+// ⚠️⚠️ THE RIGHT-CLICK MENU IS GONE, AND THE USER SAID WHY IN ONE SENTENCE: "把原来的右键菜单三个功能和退出，
+// 直接做到快速面板下方4个按钮，类似于 win11 开始菜单下面的右下的按钮。然后不管左键还是右键单击都是这个菜单。"
+// Both buttons now open the flyout, and its footer carries the four commands -- which is also what makes the
+// flyout worth opening on a machine where every feature is switched off (their words: "这样就算快速面板没有打开任何
+// 插件开关，它也有东西显示").
+//
+// ⚠️ AND THE SHELL-DRAWN MENU TAKING `SetPreferredAppMode` WITH IT IS A REAL SIMPLIFICATION, NOT A LOSS. That call
+// existed for exactly one reason -- `TrackPopupMenu` is drawn by the shell, so a pinned appearance could not
+// reach it (see the note that used to be here). With no menu there is nothing for it to colour: the flyout is
+// painted by this program from `quickpalette.h`, and it has always followed the theme. An undocumented call with
+// no remaining effect is exactly the kind of thing this project removed once already (the acrylic accent), so it
+// goes rather than staying "in case".
+//
+// ⚠️ WHAT REPLACED THE MENU IS `host::`, NOT A LOCAL FUNCTION, because the flyout is a different BINARY from this
+// one (apex.exe draws it -- see quickpanel_win.cpp -- but the four commands are this file's: the settings
+// launcher, the folder, the log, the shutdown). Declared in host.h; called from the flyout's click handler.
+const char *QuickPanelCommandLabel(int index)
+{
+  const TrayText &t = TrayStrings();
+  switch ((apex::quick::FooterAction)index)
+  {
+  case apex::quick::FooterAction::kSettings: return t.settings;
+  case apex::quick::FooterAction::kOpenDir: return t.openDir;
+  case apex::quick::FooterAction::kShowLog: return t.showLog;
+  case apex::quick::FooterAction::kQuit: return t.quit;
+  default: return "";
+  }
+}
+void QuickPanelCommand(int index)
+{
+  // Read here rather than in the flyout, and the ORDER of these two lines is the whole point: the user pressed a
+  // button on a panel floating over the tray icon, so the panel is put away BEFORE the thing they asked for opens
+  // (see the call site in quickpanel_win.cpp -- it hides first and then calls this).
+  switch ((apex::quick::FooterAction)index)
+  {
+  case apex::quick::FooterAction::kSettings:
+    LogLine("tray: settings (from the flyout)");
+    OpenSettings();
+    break;
+  case apex::quick::FooterAction::kOpenDir:
+  {
+    char dir[512] = {0};
+    if (ApexModuleDir(dir, (int)sizeof(dir)))
+      ShellExecuteA(nullptr, "open", dir, nullptr, nullptr, SW_SHOWNORMAL);
+    break;
+  }
+  case apex::quick::FooterAction::kShowLog:
+  {
+    char dir[512] = {0};
+    if (ApexModuleDir(dir, (int)sizeof(dir)))
+    {
+      char p[560] = {0};
+      if (JoinPath(dir, "apex.log", p, (int)sizeof(p)))
+        ShellExecuteA(nullptr, "open", p, nullptr, nullptr, SW_SHOWNORMAL);
+    }
+    break;
+  }
+  case apex::quick::FooterAction::kQuit:
+    LogLine("tray: quit (from the flyout)");
+    DestroyWindow(g_wnd);
+    break;
+  default:
+    LogLine("quickpanel: a footer button with no command (%d) -- nothing was done", index);
+    break;
+  }
+}
+
 } // namespace host
 } // namespace apex
 
@@ -1847,32 +1905,100 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int)
   InitHostApi();
   const int n = g_loader.LoadAll(&g_hostApi);
 
-  // ⚠️⚠️ A FRESH INSTALL STARTS WITH EVERY FEATURE SWITCHED OFF, AND THIS IS WHERE "FRESH" IS ACTED ON. The user's
-  // rule: "所有插件的开关默认值改成关…就是用户全新用上时，什么功能也不开，让用户按需打开。已经有配置过的用户不影响。"
+
+
   //
-  // ⚠️ SO THE DEFAULT IS NOT A VALUE -- IT IS A ONE-TIME SEEDING OF THE `off` LIST, and only for a machine with no
-  // apex.ini. An existing file keeps every choice in it, including an EMPTY off list: that still means "everything
-  // on", exactly as it did before this existed, which is what makes "an existing user is unaffected" true rather
-  // than hoped for.
+  // ⚠️⚠️ THE FIRST VERSION ONLY COVERED THE FIRST HALF OF THAT, AND THE MISSING HALF WAS FOUND IN THE FIELD
+  // (2026-10-08): the seeding ran only `if (!g_cfgFileExisted)`, so on a machine with an apex.ini the rule
+  // simply did not apply -- and a feature added to an existing installation arrived **ENABLED**, in silence.
   //
-  // ⚠️ WHY IT IS WRITTEN OUT RATHER THAN REMEMBERED AS "nothing was configured yet": the list has to exist BEFORE
-  // the user's first real edit. A user who then switches one feature on must end up with the OTHER three named in
-  // `off` -- and that falls out of this for free, because by then the list is already the whole set. Keeping it in
-  // memory instead would need the save path to know about first runs, which is a second implementation of the
-  // same rule.
+  // The reason it cannot be fixed by looking at `off` alone is worth stating plainly, because it is the whole
+  // difficulty: `off` records ONLY the features that are switched off, so "the user turned this feature ON"
+  // and "this feature was installed five minutes ago" are THE SAME STATE -- absent from the list. Nothing in
+  // that list can tell them apart.
   //
-  // ⚠️ IT RUNS AFTER LoadAll ON PURPOSE: the ids are the ones actually loaded, so a feature that failed to load is
-  // not written into a list the user would have to clean up by hand.
+  // SO THERE IS A SECOND LIST, `seen`: every feature id this machine has been offered. An id that is not in
+  // it has never been shown to the user, so it is seeded into `off` and recorded. From then on the user's own
+  // choice is the only thing that moves it -- which is exactly "已经有配置过的用户不影响".
+  //
+  // ⚠️ AND AN EXISTING USER'S EXISTING FEATURES ARE NOT TOUCHED BY THIS. On the first run after this change
+  // the machine has no `seen` list at all, so it would be tempting to seed every loaded feature and switch
+  // everything off under the user -- which is precisely what "已经有配置过的用户不影响" forbids. The rule for
+  // THAT case is the one the older code already had: `off` is the whole truth, and an id absent from it means
+  // the feature is on because the user left it on.
+  //
+  // The two cases are told apart by whether `off` has ever been maintained, which is what `g_cfgFileExisted`
+  // knows: no file at all is a genuinely fresh install, and a file is a machine where the user's choices are
+  // already recorded. A machine with a file but no `seen` list is an upgrade, and the upgrade seeds `seen`
+  // with what is loaded WITHOUT changing a single switch.
   if (!g_cfgFileExisted)
   {
     for (int i = 0; i < g_loader.CountAll(); ++i)
     {
       const LoadedFeature &f = g_loader.Seen(i);
       if (f.ok && f.api && f.api->id[0])
+      {
         g_cfg.FeatureSetOff(f.api->id, true);
+        g_cfg.FeatureMarkSeen(f.api->id);
+      }
     }
     LogLine("host settings: fresh install -- every feature starts switched off (%d seeded)", g_cfg.offN);
     SaveHostConfig();
+  }
+  else
+  {
+    // ⚠️ AN EXISTING INSTALLATION. A feature this machine has never been offered is switched off and recorded
+    // as seen; one it has seen before is left exactly as the user left it.
+    //
+    // ⚠️⚠️ WHAT THE UPGRADE TO THIS VERSION DOES, AND WHY IT IS ACCEPTED RATHER THAN WORKED AROUND
+    // (the user's decision, 2026-10-08: "用 seen 名单，我手动开一次").
+    //
+    // A configuration written before this change has no `seen` list, so on the FIRST start after the upgrade
+    // every feature looks new and gets switched off -- including ones the user has been using for weeks. That
+    // is a one-time cost, and the alternative was rejected for a reason worth writing down: TELLING "THE USER
+    // HAS ALWAYS HAD THIS ON" FROM "THIS WAS INSTALLED FIVE MINUTES AGO" CANNOT BE DONE FROM THE FILE. An id
+    // the user leaves on is simply ABSENT from `off` -- and so is an id that arrived today. Every substitute
+    // that was tried had a worse failure:
+    //
+    //   * a list of feature names compiled into the host -- REJECTED: it breaks the host's one hard boundary
+    //     ("the host does not know any feature by name", features.md 3.0) and check_apex_modular.sh caught it;
+    //   * "does the feature's folder hold a settings file" -- REJECTED: measured, and it is WRONG IN BOTH
+    //     DIRECTIONS. SmoothWheel keeps no file of its own in this layout, so it looked new; and VolumeLock
+    //     had already written one on the very first run, so it looked old.
+    //
+    // ⚠️ SO THE COST IS PAID ONCE, ON THE UPGRADE, AND IT IS PAID IN THE MILD DIRECTION: the user re-enables
+    // what they want, and from that moment `seen` is populated and the rule is exact for every later version.
+    // The log says which features were switched off for this reason, so "why is my feature off?" has an
+    // answer in the file rather than in somebody's memory.
+    int fresh = 0;
+    for (int i = 0; i < g_loader.CountAll(); ++i)
+    {
+      const LoadedFeature &f = g_loader.Seen(i);
+      if (!f.ok || !f.api || !f.api->id[0])
+        continue;
+      if (g_cfg.FeatureSeen(f.api->id))
+        continue;
+      g_cfg.FeatureSetOff(f.api->id, true);
+      if (g_cfg.FeatureMarkSeen(f.api->id))
+      {
+        ++fresh;
+        LogLine("host settings: \"%s\" is new on this machine -- switched off until the user turns it on",
+                f.api->id);
+      }
+      else
+      {
+        // ⚠️ NO ROOM IN THE LIST IS SAID OUT LOUD, because the alternative is a feature that is treated as new
+        // on EVERY start -- it would be switched off again each time the user turned it on, which reads as
+        // "the switch does not work".
+        LogLine("host settings: could not record \"%s\" as seen (the list is full) -- it may be treated as "
+                "new again next time",
+                f.api->id);
+      }
+    }
+    // ⚠️ SAVED ONLY WHEN SOMETHING CHANGED, so a machine that has already met every feature does not rewrite
+    // the user's file on every launch (and does not disturb its timestamp).
+    if (fresh > 0)
+      SaveHostConfig();
   }
 
   for (int i = 0; i < g_loader.CountAll(); ++i)

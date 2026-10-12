@@ -34,6 +34,7 @@ bash test/run_all.sh --assembly   # 构建层 + 装配层：交付前跑一次
 | `check_feature_keepawake` | **KeepAwake**：两个开关独立、名单开关真的在拦、发给系统的请求位精确（0x80000001/3/2/0）、**关掉时请求被清掉**、各插件名单互不干扰 |
 | `check_feature_mediacontrol` | **MediaControl**：每屏一行亮度、熄屏真的是一块盖住那块屏的窗口（连着、没锁屏、可撤销）、每个应用的音量、两个具名分组；⚠️ **它是构建层里唯一会短暂盖黑一块屏的门**（`APEX_MC_NO_DARK=1` 可跳过那一段） |
 | `check_apex_palette` | **面板配色**：明暗两条路（auto / 钉住）声明同一套；层次顺序对；对比度够；比被否掉的那版淡 |
+| `check_apex_menutheme` | **托盘菜单能不能跟着外观走**：探测本机的 uxtheme 序号（`SetPreferredAppMode` 是**未文档化的 135**，会随 Windows 版本挪动）＋ 宿主**真的调用了它**、且**两条改主题的路径都到得了** ＋ 菜单有三个值且当前那个打了勾（见 `docs/rules/ui-look.md` §3.7.0） |
 | `check_apex_panel` | **面板脚本**跑在 DOM 桩上：每种控件都还画得出来（抓过 §3.5 前两条） |
 | `check_apex_quickpanel` | **快速面板**：几何/命中/数值/淡入淡出（纯逻辑）＋**插件必须被用户映射过才给控件**（跑真实 DLL）＋**渲染成图逐像素验"没有外层大板、缝是空气"**（见 §3.12） |
 | `check_apex_deploy` | **部署只换程序，不碰用户数据**（见 5.0.2）＋退役功能会被删掉 |
@@ -513,3 +514,36 @@ ABI 说的是 `init` 之后功能的状态才算建好，而 KeepAwake 和 Media
 
 ⚠️ **还有一条流程上的**：这扇门是**构建层**的，所以它本该在**部署之前**就红。它没红，因为上面三条。
 构建层的意义就是"数据模型在交付前验完"（用户定的），而这次漏的就是它该管的那一类。
+## ★ 「已知的环境性红」：装配层 4 扇在本机（工具进程树内启动）会红
+
+**2026-10-12 实测并定位。** 装配层有 4 扇会红，而且**报的是四种不同的症状**：
+
+| 门 | 它说的话 |
+|---|---|
+| `check_apex_icons` | `the host wrote no tray line at all` |
+| `check_apex_flyout` | `the shell would not say where the tray icon is -- placed at the cursor` |
+| `check_apex_endtoend` | `the wheels were probably not taken at all` |
+| `check_apex_persist` | `the value survived an unclean kill` 失败 |
+
+**四种症状，一个形状**：私有拷贝**起来了**（`engine running`、`wheel hook installed` 都在），但**没有拿到托盘图标**。
+
+**定位方法（可复现）**：同一条 `apex.exe`、同一个 scratch 目录，**只换启动方式**：
+
+| 启动方式 | `engine running` | `wheel hook installed` | `tray icon added` |
+|---|---|---|---|
+| `Start-Process`（手工） | ✅ | ✅ | ✅ |
+| `cmd //c start "" apex.exe`（**门用的**） | ✅ | ✅ | ❌ |
+
+⚠️ **根因**：这条会话里 `Shell_NotifyIcon(NIM_ADD)` 对**工具进程派生的进程**返回 **error 5（拒绝访问）**。
+`_diag/trayrect_probe.cpp` 直接量到了这一点：一个只做"建窗口 + 加图标 + 问矩形"的最小程序，在受限上下文里
+`NIM_ADD refused (5)`。托盘加不上 → 依赖托盘的门全红（icons 读托盘行、flyout 要 shell 报图标矩形、
+persist 要托盘图标做"脏退出"标记、endtoend 的滚轮链路也在同一批启动里）。
+
+⚠️⚠️ **这不是代码缺陷，判据是"用户那份能跑"**：`D:\App protable\Apex\apex.log` 里
+`tray icon added` 与 `wheel hook installed` **都正常**，部署实例的哈希与 `build/apex/apex.exe` **逐字节一致**。
+
+**怎么办（下次会话）**：
+1. **不要在门里改断言去迁就它** —— 那会把"托盘加不上"变成永久静音；
+2. 想要全绿，**在不受限的交互式会话里跑** `bash test/run_all.sh --assembly`（或让它从 explorer 拉起）；
+3. ⚠️ **恢复现场**：这些门会 `apex_take_the_field`（停掉用户那份），红着退出时**可能没有把 Apex 还回去** ——
+   跑完确认 `D:\App protable\Apex\apex.exe` 在跑，不在就 `bash apex/deploy.sh` 重新拉起。

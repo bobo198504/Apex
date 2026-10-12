@@ -518,6 +518,40 @@ function selectRowCtl(p, slot, disabled, path, sink) {
     sel.appendChild(op);
   });
   sel.disabled = !!disabled;
+  // ⚠️⚠️ THE OPTIONAL CONFIRM BUTTON (apex/abi.h, ABI 22 -> 23): `applyZh`/`applyEn` -- present means "the
+  // choice is committed by pressing this", absent means the old behaviour, where the highlighted option IS the
+  // answer and is sent the moment it changes.
+  //
+  // ⚠️ WHY THE PAGE CANNOT JUST ALWAYS SHOW A BUTTON. Two controls on the general page (language, theme) are
+  // `select`s whose entire meaning is "pick it and it happens"; a button in front of them would be a step the
+  // user has to learn for no reason. So the button is DECLARED BY THE FEATURE, and everything below keeps both
+  // behaviours in one place rather than in two branches that drift.
+  //
+  // ⚠️ AND WHY A DROPDOWN NEEDED ONE AT ALL: AN OPTION THAT IS ALREADY HIGHLIGHTED CANNOT BE CHOSEN -- picking
+  // it changes no value and fires no `change`, so it silently does nothing. For a list of things to ADD, that
+  // means the first candidate can never be taken: broken for exactly one item, and only the user notices.
+  var applyLabel = S.lang === "zh" ? (p.applyZh || p.applyEn) : (p.applyEn || p.applyZh);
+  if (applyLabel) {
+    var apply = el("button", "addbtn", applyLabel);
+    apply.disabled = !!disabled;
+    apply.addEventListener("click", function () {
+      // ⚠️ THE CURRENT SELECTION IS WHAT IS SENT, read at the moment of the press -- not a value remembered
+      // from a `change`, which would be stale the instant the user re-picked the same option.
+      //
+      // ⚠️ AND THE DROPDOWN GOES BACK TO ITS FIRST ENTRY AFTERWARDS, which is what makes repeated adding
+      // possible: otherwise the thing just added would stay highlighted, and highlighting it again to add it a
+      // second time would be the very no-event case this button exists to avoid. A re-render follows anyway
+      // (the host answers every command with a snapshot), so this is only the immediate, visible half.
+      var chosen = sel.value;
+      if (!chosen) return; // nothing selected: a control with no options at all
+      if (sink) sink(chosen); else sendControl(slot, path, chosen);
+      if (sel.options.length) sel.selectedIndex = 0;
+    });
+    ctl.appendChild(sel);
+    ctl.appendChild(apply);
+    row.appendChild(ctl);
+    return row;
+  }
   // The echo guard, same shape as everywhere else: compare against the value we last told the host, never
   // against the argument (a frozen argument swallows every edit after the first -- see switchRow).
   var last = p.value;
@@ -2683,12 +2717,41 @@ function fitNameColumn(card) {
     if (w > widest) widest = w;
   }
   if (widest <= 0) return;
+  // ⚠️⚠️ AND THE MEASURED WIDTH GETS A PIXEL OF SLACK, WHICH IS NOT FUSSINESS -- IT IS THE BUG THE USER SAW.
+  //
+  // The user reported `PLATANE UP2 SE` drawn as `PLATANE UP2 S...`, and proved it was a real shortfall rather
+  // than a coincidence: THE ELLIPSIS COULD NOT BE SELECTED WITH THE MOUSE while the name could. `text-overflow:
+  // ellipsis` is painted outside the text, so a cell holding a selectable ellipsis is a cell whose content
+  // overflowed -- by however little.
+  //
+  // ⚠️ AND "HOWEVER LITTLE" IS THE POINT: this number is written into `style.width` and the browser then lays
+  // the text out again in that box. A sub-pixel difference between the probe's own measurement and the cell's
+  // real line box (rounding of `offsetWidth`, the cell's border, the fractional layout of a flex row) is enough
+  // to make `scrollWidth > clientWidth` by one unit -- and the moment that is true, the whole last word is
+  // replaced by an ellipsis, not one pixel of it. A measurement that is right to the pixel still fails.
+  //
+  // ⚠️ SO THE COLUMN IS ONE PIXEL WIDER THAN ITS WIDEST NAME. That is invisible in the layout (the fader gives
+  // up 1 px of a row that is hundreds wide) and it cannot truncate. Failing towards "a hair too wide" instead of
+  // "a hair too narrow" is the whole lesson of this bug.
+  widest += 1;
   // ⚠️ A FLOOR AND A CEILING, BOTH FOR THE SAME REASON: this is a NAME column beside a control, not the row's
   // content. Below the floor a name is unreadable noise; above the ceiling one absurd program name would push the
   // fader back to where the user just asked for it not to be. Both are the kind of number that should be visible
   // rather than hidden in a stylesheet, and they are also the two ends the probe checks.
   if (widest < 70) widest = 70;
-  if (widest > 220) widest = 220;
+  // ⚠️⚠️ THE CEILING WAS 220 AND IT WAS CUTTING REAL NAMES IN HALF (the user, 2026-10-08):
+  //
+  //     「设备名称显示全，可以缩短拉杆」
+  //
+  // and that is not a contradiction of the earlier rule -- the two together are "as narrow as the names allow,
+  // AND the names must be readable" (「要缩到最短，但是不能显示不全」). 220 px truncates `MOTU Pro Audio` and
+  // anything like `适用于蓝牙® 音频的英特尔® 智音技术`, and `.skiprow .nm` ends in an ellipsis, so a cut name
+  // LOOKS like a shorter name rather than like a bug.
+  //
+  // ⚠️ SO THE CEILING IS NOW A BACKSTOP RATHER THAN A BUDGET. It sits well above any device or program name
+  // this page has ever shown, and its only job is to stop one pathological string from consuming a row -- which
+  // is why it is stated as a number that cannot be reached by a real name, not as a width the layout wants.
+  if (widest > 420) widest = 420;
   for (var j = 0; j < cells.length; ++j)
     cells[j].style.width = widest + "px";
 }

@@ -430,8 +430,30 @@ button:disabled { opacity: .45; }
    narrow as its own names allow.
    ⚠️ THE WIDTH HERE IS THE FALLBACK, NOT THE ANSWER: `fitNameColumn` (panel.js) measures the widest name in the
    card and writes that number onto every cell in it, so the rows stay aligned. This value is what stands when
-   there is no layout to measure -- a DOM stub, or a page rendered before it is attached (see the note there). */
-.rowlist .skiprow .nm { flex: 0 0 auto; width: 140px; min-width: 0; }
+   there is no layout to measure -- a DOM stub, or a page rendered before it is attached (see the note there).
+
+   ⚠️⚠️ AND THE FALLBACK IS NOW `max-content` RATHER THAN `140px`, BECAUSE A FIXED NUMBER WAS THE THING THAT WAS
+   WRONG (the user, 2026-10-08: 「设备名称是没显示全的，PLATANE UP2 SE的SE没显示出来，变成....」).
+
+   ⚠️ WHAT THE SYMPTOM PROVED, and it is what finally pointed at this rule: the ellipsis could NOT be selected
+   with the mouse while the name beside it could. A CSS `text-overflow: ellipsis` is painted by the browser
+   OUTSIDE the text and takes no part in selection -- so the cell really was narrower than its own text, and the
+   two candidates were this number and the measured one.
+
+   ⚠️⚠️ `max-content` ALONE WOULD BREAK THE ALIGNMENT THE USER ASKED FOR ON 2026-09-23 ("每个小面板各控制要保持
+   对齐"): `max-content` is computed PER ROW, so a short name and a long name would start their controls at
+   different x. That is why this is a FALLBACK and not the answer -- `fitNameColumn` still runs and still writes
+   ONE number onto every cell of a card, which is what makes the column straight.
+
+   ⚠️ WHAT CHANGED IS THE FAILURE MODE. When the measurement works, nothing is different from before. When it
+   does NOT -- no layout yet, a DOM stub, any reason at all -- the column used to fall back to 140 px and CUT a
+   longer name, silently, because an ellipsis looks exactly like a shorter name. Now it falls back to the width
+   of the text itself: the column may be ragged in that case, which is visible and harmless, instead of
+   truncating, which is invisible and wrong.
+
+   ⚠️ AND IT IS STILL `flex: 0 0 auto`, SO THE FADER KEEPS WHAT IS LEFT: the rule of 2026-09-23 stands unchanged
+   -- the name column is as narrow as its names allow, and the fader gets everything that frees. */
+.rowlist .skiprow .nm { flex: 0 0 auto; width: max-content; min-width: 0; }
 /* ... and the row's own group of controls is what stretches, so the fader can use the width the name gave back.
    ⚠️⚠️ BUT ONLY THE FADER STRETCHES, AND THAT IS THE PART THAT TOOK A SECOND PASS (2026-09-23). This rule used to
    be `flex: 1 1 auto` for EVERY field row, which was written when a row held one control besides the name. The

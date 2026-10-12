@@ -89,6 +89,7 @@ run_gate check_feature_chart   # the feature's own controls document: valid JSON
 run_gate check_feature_device  # which DEVICE sent the wheel: the classifier, and that a touchpad is left alone
 run_gate check_feature_ime     # AutoIME's matching engine: the rules, the order, the anchoring
 run_gate check_feature_keepawake  # KeepAwake: two independent switches, a gated list, and the power requests it makes
+run_gate check_feature_volumelock # VolumeLock: ONE device's volume, at the moment it appears, and nothing else touched
 # ⚠️ THE ONE BUILD-LAYER GATE THAT TOUCHES THE SCREEN, AND IT SAYS SO: it checks that a "screen off" is a WINDOW
 # covering a real monitor (connected, unlocked, undoable) by looking at the window itself, which cannot be done
 # without the window existing. It is put back in tens of milliseconds, and APEX_MC_NO_DARK=1 skips that part --

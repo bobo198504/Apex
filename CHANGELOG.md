@@ -5,6 +5,40 @@
 `*` 和 `+` 会变成同一种圆点，符号的区分就没了）。只写"改了什么"。
 -->
 
+## 1.5.0
+
+## 更新内容
+
+```
++ 版本号：主程序 1.5
+* 托盘右键菜单取消：四个命令（设置 / 打开文件夹 / 查看日志 / 退出）移到快速面板底部的四个图标
++ 快速面板底部新增一整块面板，四个图标靠右：齿轮、文件夹、一页纸、X
++ 托盘左右键单击都开快速面板，双击直接打开设置
+# 单击托盘不再等待一个双击超时，面板立刻出现
++ 快速面板的局部功能按「一个控件一组」排列，不再按插件分组
+# 快速面板底部多出的一段空白去掉（面板边距收紧，窗口不再为不存在的阴影留位置）
+# 快速面板在没有任何插件开关可显示时，仍然有底部四个图标可用
+# 设置面板与快速面板的同步改为重读快照，侧栏状态点也会跟着变
++ 移除未文档化的 SetPreferredAppMode 调用（菜单取消后它已无作用对象）
+```
+
+## What's changed
+
+```
++ Version: the host is 1.5 (the number beside the slogan in the sidebar)
+* The tray's right-click menu is gone: its four commands (Settings / Open folder / Show log / Quit) are four icons
+*  in the quick panel's footer
++ The quick panel's footer is one pane with four icons at its right: a gear, a folder, a page, and an X
++ Either tray button opens the quick panel; a double click opens the settings
+# A single click no longer waits for a double-click timeout -- the panel appears at once
++ A feature's own controls are grouped one control per pane, no longer one pane per feature
+# Removed the empty strip below the quick panel (tighter panel margin, and the window no longer reserves room for a
+#  shadow it does not draw)
+# The quick panel still has four working icons when no feature has anything to show
+# The panel's sync with the settings window now re-reads the snapshot, so the sidebar's status dots follow too
++ Removed the undocumented SetPreferredAppMode call (nothing left for it to colour once the menu was gone)
+```
+
 ## 1.4.0
 
 ## 更新内容

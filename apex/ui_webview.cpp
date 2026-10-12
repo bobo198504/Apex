@@ -150,20 +150,77 @@ bool g_pageReady = false;
 // A log beside the exe, so a panel that fails to come up says why instead of just not appearing. (The host
 // has its own; this one is the panel's, and the two are separate files because they are separate
 // processes -- a shared file would be two writers with no lock.)
+//
+// ⚠️⚠️ IT IS CAPPED, AND THE REASON IS MEASURED RATHER THAN IMAGINED: this file reached **23.9 MB / 150,082
+// lines** between 2026-09-18 and 2026-10-08 on the deployed copy. Two things make it grow without bound --
+// every line does its own fopen/fclose (so nothing is held open and nothing ever rotates), and one line
+// dumps the WHOLE document the host sent (`  content: %s`, several KB, on every state change).
+//
+// ⚠️ WHAT THAT COST IS NOT DISK SPACE, IT IS THE LOG ITSELF: the question this file exists to answer is
+// "why did the panel not come up THIS time", and that answer is in the LAST startup's few dozen lines. At
+// 150k lines the useful part is a needle, and reading the file to find it is the work the log was supposed
+// to save.
+//
+// SO: ONE ROTATION, AT STARTUP, WITH A SIZE CAP. Startup is the only moment where the boundary is meaningful
+// (the previous run's story ends there), it costs one stat() per process rather than one per line, and the
+// previous run is KEPT as `.1` rather than deleted -- a panel that fails to start is exactly when the run
+// before it is worth reading.
+//
+// ⚠️ WHY NOT "DELETE ANYTHING OLDER THAN N DAYS": a panel that has not been opened for a month would lose
+// its whole history on the next launch, and a panel opened fifty times today would still hit the cap. Size
+// is the thing that actually causes the harm, and it is the thing this measures.
+static const long kPanelLogCap = 2 * 1024 * 1024; // 2 MB: thousands of startups, one of them readable
+
+static void PanelLogPath(char *path, int pathSize)
+{
+  GetModuleFileNameA(nullptr, path, pathSize);
+  if (char *slash = strrchr(path, '\\'))
+    *(slash + 1) = 0;
+  strncat(path, "apex-settings.log", (size_t)pathSize - strlen(path) - 1);
+}
+
+// Called once per process, before the first line is written. Over the cap, the old file becomes `.1` and a
+// fresh one starts -- so the file never grows past the cap and the run BEFORE this one is still on disk.
+static void RotatePanelLogIfNeeded()
+{
+  char path[MAX_PATH] = {0};
+  PanelLogPath(path, MAX_PATH);
+
+  WIN32_FILE_ATTRIBUTE_DATA fad;
+  if (!GetFileAttributesExA(path, GetFileExInfoStandard, &fad))
+    return; // no file yet -- the normal first run
+  const long long size = ((long long)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+  if (size <= (long long)kPanelLogCap)
+    return;
+
+  char old[MAX_PATH] = {0};
+  _snprintf(old, sizeof(old), "%s.1", path);
+  // ⚠️ REPLACED, NOT APPENDED TO: `.1` is "the run before this one", so keeping a second generation would
+  // reintroduce the same problem one file over.
+  DeleteFileA(old);
+  MoveFileA(path, old);
+}
+
 void Log(const char *fmt, ...)
 {
   char path[MAX_PATH] = {0};
-  GetModuleFileNameA(nullptr, path, MAX_PATH);
-  if (char *slash = strrchr(path, '\\'))
-    *(slash + 1) = 0;
-  strcat(path, "apex-settings.log");
+  PanelLogPath(path, MAX_PATH);
   FILE *f = fopen(path, "a");
   if (!f)
     return;
   va_list ap;
   va_start(ap, fmt);
-  vfprintf(f, fmt, ap);
+  // ⚠️ ONE LINE CANNOT DOMINATE THE FILE. `Log("  content: %s", doc)` writes a whole document, and that one
+  // format string is most of the 23.9 MB measured above. The beginning of such a line is what identifies it,
+  // so it is TRUNCATED with a marker rather than dropped -- a log that silently omits the line it was called
+  // for is worse than one that shows the first part of it.
+  char buf[4096] = {0};
+  vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
   va_end(ap);
+  const size_t len = strlen(buf);
+  if (len >= sizeof(buf) - 1)
+    strncat(buf, " ...(truncated: this line was longer than the panel's log allows)", sizeof(buf) - len - 1);
+  fputs(buf, f);
   fputc('\n', f);
   fclose(f);
 }
@@ -1257,6 +1314,12 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 int RunPanel(HINSTANCE inst, bool warm)
 {
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+  // ⚠️ BEFORE THE FIRST LINE IS WRITTEN, AND ONLY HERE. This is the one moment where "the previous run" is a
+  // meaningful boundary in the log, and it costs one stat() per process instead of one per line. See the
+  // measured note on kPanelLogCap: uncapped, this file reached 23.9 MB / 150,082 lines in three weeks, and
+  // the answer to "why did the panel not start this time" was buried in it.
+  RotatePanelLogIfNeeded();
 
   // The "something happened" notification, by name so both processes agree without sharing a number.
   g_activityMsg = RegisterWindowMessageA(APEX_ACTIVITY_MSG_NAME);

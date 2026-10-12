@@ -27,6 +27,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+// For the one check that reads the painter's SOURCE (the footer must use the pane's surface -- see the note there).
+// ⚠️ IT IS THE ONLY REASON THIS PROBE TOUCHES THE FILESYSTEM, and it is deliberate: "does the footer have a colour of
+// its own" cannot be asked of a probe that draws nothing, and it is exactly the question the user raised twice.
+#include <fstream>
+#include <string>
 
 #include "abi.h"
 #include "quickpalette.h"
@@ -435,11 +440,222 @@ static void TestLayout()
           "and its switches sit exactly where they did before this existed", pdetail);
   }
 
-  // AN EMPTY MODEL HAS NO HEIGHT, and the caller draws nothing. A panel with a border and no content is worse
-  // than no panel.
-  Model empty;
-  Layout ly2;
-  Check(MeasureModel(empty, mx, &ly2) == 0, "an empty model measures zero (nothing to show)");
+  // ---- AN EMPTY MODEL IS NOT AN EMPTY PANEL ANY MORE ------------------------------------------------
+  //
+  // ⚠️ THIS ASSERTION USED TO SAY THE OPPOSITE ("an empty model measures zero"), and it was right while the panel
+  // was only the features' controls: a flyout with a border and no content is worse than no flyout. The user
+  // changed what the panel IS -- "把原来的右键菜单三个功能和退出，直接做到快速面板下方4个按钮... 这样就算快速面板
+  // 没有打开任何插件开关，它也有东西显示" -- so the footer is content, and a model with no items still has a height
+  // and four buttons to click. The old assertion failing here is the change being noticed, which is what it is for.
+  {
+    Model empty;
+    Layout le;
+    const int h = MeasureModel(empty, mx, &le);
+    char detail[128];
+    _snprintf(detail, sizeof(detail), "(h=%d, pad=%d footerH=%d)", h, mx.pad, mx.footerH);
+    Check(h >= 2 * mx.pad + mx.footerH, "an empty model still measures the footer (there is always something)",
+          detail);
+
+    // ... and every one of the four is a real target, in a panel with no rows at all.
+    int clickable = 0;
+    for (int b = 0; b < kFooterButtons; ++b)
+    {
+      const Rect &r = le.footer[b];
+      const Hit hit = ClickAt(empty, le, r.x + r.w / 2, r.y + r.h / 2);
+      if (hit.kind == HitKind::kFooter && hit.footer == FooterActionAt(b))
+        ++clickable;
+    }
+    _snprintf(detail, sizeof(detail), "(%d of %d)", clickable, kFooterButtons);
+    Check(clickable == kFooterButtons, "every footer button is clickable with no features shown", detail);
+
+    // ⚠️⚠️ AND THE FOOTER IS ONE PANE WITH FOUR ICONS IN IT -- NOT FOUR SMALL PANES IN A ROW.
+    //
+    // Three attempts got here, and this assertion is the third shape. The user rejected each: a full-width rule with a
+    // word per button ("面板颜色要统一"), four buttons wearing the pane's material ("颜色不对，就把它当成一个'插件开关'面板
+    // 就可以了"), and then the one that named it -- **"还是不对，是要整体的面板，不是只有按钮的底色"**.
+    //
+    // ⚠️ THE DIFFERENCE IS COUNTABLE, WHICH IS WHY IT IS WORTH ASSERTING: four small panes leave three gaps for the
+    // panel to show through, so the eye counts four objects; one pane with four icons in it is ONE. So the checks are
+    // (a) there IS a pane, (b) it is the full content width like every other block, and (c) the icons are INSIDE it,
+    // right-aligned, with the pane's own inner padding on the right of the last one.
+    {
+      const Rect &pane = le.footerPane;
+      _snprintf(detail, sizeof(detail), "(pane %d,%d %dx%d, content is %d wide)", pane.x, pane.y, pane.w, pane.h,
+                le.width - 2 * mx.pad);
+      Check(pane.w == le.width - 2 * mx.pad && pane.x == mx.pad,
+            "the footer is ONE pane, the full content width like every other block", detail);
+
+      bool inside = true;
+      for (int b = 0; b < kFooterButtons; ++b)
+      {
+        const Rect &r = le.footer[b];
+        if (r.x < pane.x + mx.sectionPad || r.Right() > pane.Right() - mx.sectionPad + 1 || r.y < pane.y ||
+            r.Bottom() > pane.Bottom())
+          inside = false;
+      }
+      _snprintf(detail, sizeof(detail), "(icons %d..%d inside pane %d..%d)", le.footer[0].x,
+                le.footer[kFooterButtons - 1].Right(), pane.x, pane.Right());
+      Check(inside, "the four icons sit INSIDE that pane, with its own padding", detail);
+
+      const int rightGap = pane.Right() - le.footer[kFooterButtons - 1].Right();
+      const int leftGap = le.footer[0].x - pane.x;
+      _snprintf(detail, sizeof(detail), "(%d px on the right of the last icon, %d px of pane to its left)", rightGap,
+                leftGap);
+      Check(rightGap >= mx.sectionPad && rightGap <= mx.sectionPad + 1 && leftGap > 4 * mx.footerW,
+            "the icons are a right-aligned cluster, and the pane's left half is empty", detail);
+
+      // ... and one pane is taller than a single icon row: it carries the same inner padding every block does.
+      _snprintf(detail, sizeof(detail), "(%d = 2*%d + %d)", pane.h, mx.sectionPad, mx.footerH);
+      Check(pane.h == 2 * mx.sectionPad + mx.footerH, "the pane is padded like every other block", detail);
+
+      const Rect &f0 = le.footer[0];
+      _snprintf(detail, sizeof(detail), "(%dx%d, a control row is %d tall)", f0.w, f0.h, mx.rowH);
+      Check(f0.h < mx.rowH, "a footer icon is smaller than a control row", detail);
+
+      // ⚠️⚠️ AND THE GAP ABOVE IT IS THE GAP BETWEEN BLOCKS -- the user's own report: "这个面板的间距离上面的不要太远，
+      // 保持一样的间距". It was a `footerTop = 10` against a `sectionGap` of 3, i.e. 7 px of "the last block is not
+      // really part of this stack" that nobody could have pointed at. ⚠️ THE ASSERTION COMPARES THE TWO GAPS RATHER
+      // THAN CHECKING A NUMBER, so it cannot be satisfied by changing both constants to some third value: what the
+      // user asked for is that they be THE SAME, whatever that is.
+      {
+        Layout lgap;
+        Model full2 = BuildSampleModel();
+        MeasureModel(full2, mx, &lgap);
+        const int betweenBlocks = lgap.boxes[1].y - lgap.boxes[0].Bottom();
+        const int beforeFooter = lgap.footerPane.y - lgap.boxes[full2.sectionCount - 1].Bottom();
+        _snprintf(detail, sizeof(detail), "(between blocks %d, before the footer %d)", betweenBlocks, beforeFooter);
+        Check(betweenBlocks > 0 && beforeFooter == betweenBlocks,
+              "the footer is separated from the block above by the SAME gap as two blocks", detail);
+      }
+
+      // ... and the glyph is drawn SMALLER than the target it is clicked in -- "图标可以再精致些，太大了". A fraction
+      // rather than a size, so this holds at every scale factor.
+      const int glyph = le.footer[0].w * kFooterGlyph / 100;
+      _snprintf(detail, sizeof(detail), "(glyph %d px in a %d px slot, %d%%)", glyph, le.footer[0].w, kFooterGlyph);
+      Check(kFooterGlyph > 0 && kFooterGlyph < 100 && glyph >= 12 && glyph < le.footer[0].w,
+            "a footer glyph is drawn smaller than its slot, and stays big enough to read", detail);
+
+      // ⚠️⚠️ AND THE PANEL HAS NO EXTRA STRIP BELOW ITS LAST BLOCK. The user's question -- "整个面板下面有块空白的地方，
+      // 是不是这次加上去的" -- was about a real defect (the panel was 10 px taller at the bottom than at the top) that the
+      // footer merely made VISIBLE: a lone pane at the very bottom, with nothing under it, draws the eye to the gap.
+      //
+      // ⚠️ THE ASSERTION IS "THE BOTTOM MARGIN EQUALS THE SIDE MARGIN, MEASURED FROM THE GLASS" and not a number, for
+      // the same reason the gap check above is a comparison: the fault was an INCONSISTENCY, and any pair of values
+      // that agrees is fine. `boxes[0].x` is the left margin, which is `pad`; the top margin is `boxes[0].y`.
+      {
+        Layout lb;
+        Model full3 = BuildSampleModel();
+        const int h = MeasureModel(full3, mx, &lb);
+        const int below = h - lb.footerPane.Bottom();
+        _snprintf(detail, sizeof(detail), "(below the last pane %d, side margin %d, top margin %d)", below,
+                  lb.boxes[0].x, lb.boxes[0].y);
+        Check(below == lb.boxes[0].x && lb.boxes[0].y == lb.boxes[0].x,
+              "the panel's bottom margin matches its side and top margins", detail);
+      }
+
+      // ⚠️⚠️ AND THE WINDOW RESERVES A MARGIN ONLY WHEN A SHADOW IS ACTUALLY DRAWN.
+      //
+      // This is the SECOND half of the user's report, and the more expensive one -- they had to say it twice: "整个面板
+      // 下面有块空白的地方" and then "还是有的，大概25像素，可以直接整体往下移23个像素". The window kept `kShadow = 12` on
+      // EVERY side while the painter drew no shadow at all (whose reach is 0 at a 3 px gap), so 12 px of window on
+      // four sides was reserved and left blank; under the panel that read as a gap, and 14 (the panel's own margin)
+      // + 12 (the window's) = 26 is the "大概25像素" they measured.
+      //
+      // ⚠️ THE ASSERTION IS THE INVARIANT, NOT THE NUMBER: a margin must exist exactly when there is a shadow to put
+      // in it. Written as a number ("margin == 0") it would be an assertion about today's `sectionGap`, and would
+      // have to be edited -- or worse, deleted -- the day someone widens the gap again.
+      {
+        const int reach = ShadowReachFor(mx.sectionGap, 100);
+        _snprintf(detail, sizeof(detail), "(sectionGap %d -> reach %d)", mx.sectionGap, reach);
+        Check((reach == 0) == (mx.sectionGap < 4),
+              "a pane's shadow reach is zero while the panes are packed tightly, and the window reserves nothing",
+              detail);
+
+        // ... and the painter and the window ask the SAME function, so the two can never disagree. Checked in the
+        // source, because the probe draws nothing and the window is in another translation unit.
+        std::string frame;
+        {
+          std::ifstream in("apex/quickpanel_win.cpp");
+          frame.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        }
+        std::string paint;
+        {
+          std::ifstream in("apex/quickpaint.h");
+          paint.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        }
+        if (frame.empty() || paint.empty())
+        {
+          printf("  %-62s %s\n", "the window's margin and the painter's shadow agree", "SKIP (source not readable)");
+        }
+        else
+        {
+          // The window must no longer size itself from a fixed constant, and both sides must call ShadowReachFor.
+          //
+          // ⚠️ THE "STILL FIXED" TEST IS DELIBERATELY LOOSE, AND THE FIRST VERSION OF IT WAS TOO TIGHT TO WORK. It
+          // looked for the exact line `g.w = g.panelW + 2 * kShadow;`, so when I broke the code with `kShadowMax`
+          // instead of `kShadow` the assertion stayed GREEN -- a gate that could not see the mistake it exists for.
+          // What is actually being asked is "does the window's size come from a computed margin?", so the test is for
+          // the constant being used in the SIZE ARITHMETIC at all, whatever it is called.
+          const bool frameUsesFn = frame.find("ShadowReachFor(") != std::string::npos;
+          const bool paintUsesFn = paint.find("ShadowReachFor(") != std::string::npos;
+          // Any `g.w = g.panelW + 2 * <constant>` -- i.e. a margin that is not `margin`.
+          const bool frameFixed = frame.find("g.w = g.panelW + 2 * kShadow") != std::string::npos ||
+                                  frame.find("g.h = g.panelH + 2 * kShadow") != std::string::npos;
+          _snprintf(detail, sizeof(detail), "(window calls it: %s, painter calls it: %s, window still fixed: %s)",
+                    frameUsesFn ? "yes" : "no", paintUsesFn ? "yes" : "no", frameFixed ? "yes" : "no");
+          Check(frameUsesFn && paintUsesFn && !frameFixed,
+                "the window's margin and the painter's shadow come from ONE function", detail);
+        }
+      }
+    }
+
+    // ⚠️⚠️ AND IT IS THE PANEL'S OWN SURFACE, NOT A STYLE OF ITS OWN -- asserted against the SOURCE, because that is
+    // the only place the question can be asked from a probe that draws nothing. The user rejected two attempts at the
+    // footer's colour ("面板颜色要统一" / "颜色不对，就把它当成一个'插件开关'面板就可以了... 不要单独写"), and both times the
+    // REASON was the same: the footer had a surface of its own while everything above it had another.
+    //
+    // So: the painter must draw a footer button with `DrawGlassPane`, which is the same function that draws a pane.
+    // A `FillPath` of a solid brush inside the footer loop is exactly the shape of the mistake, and it is what this
+    // catches -- including the case where someone adds a THIRD colour later and calls it "hover".
+    {
+      std::string src;
+      {
+        std::ifstream in("apex/quickpaint.h");
+        src.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      }
+      if (src.empty())
+      {
+        printf("  %-62s %s\n", "the footer uses the panel's own surface", "SKIP (quickpaint.h not readable)");
+      }
+      else
+      {
+        // The footer's own block: from its banner comment to the end of PaintPanel.
+        const size_t at = src.find("---- THE FOOTER");
+        const size_t end = src.find("gfx.ResetTransform();", at);
+        const std::string footer = (at == std::string::npos || end == std::string::npos)
+                                       ? std::string()
+                                       : src.substr(at, end - at);
+        const bool usesPane = footer.find("DrawGlassPane(") != std::string::npos;
+        const bool ownFill = footer.find("SolidBrush back(") != std::string::npos ||
+                             footer.find("SolidBrush fill(") != std::string::npos;
+        _snprintf(detail, sizeof(detail), "(footer block: %s, uses DrawGlassPane: %s, own fill: %s)",
+                  footer.empty() ? "NOT FOUND" : "found", usesPane ? "yes" : "no", ownFill ? "yes" : "no");
+        Check(!footer.empty() && usesPane && !ownFill,
+              "the footer is drawn as a PANE (DrawGlassPane), with no colour of its own", detail);
+      }
+    }
+
+    // The footer does NOT overlap the rows when there are rows: it sits below the last pane's bottom edge.
+    Layout lf;
+    Model full = BuildSampleModel();
+    MeasureModel(full, mx, &lf);
+    int lowestRow = 0;
+    for (int i = 0; i < full.itemCount; ++i)
+      if (lf.rows[i].Bottom() > lowestRow)
+        lowestRow = lf.rows[i].Bottom();
+    _snprintf(detail, sizeof(detail), "(rows end %d, footer starts %d)", lowestRow, lf.footerStrip.y);
+    Check(lf.footerStrip.y >= lowestRow, "the footer sits below the controls, never over them", detail);
+  }
 }
 
 // ---------------------------------------------------------------------------

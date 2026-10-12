@@ -260,6 +260,48 @@ struct HostConfig
   char off[kMaxList][kMaxName] = {{0}};
   int offN = 0;
 
+  // ⚠️⚠️ EVERY FEATURE ID THIS MACHINE HAS EVER SEEN, which is a DIFFERENT list from `off` and is what makes
+  // "a feature that appears for the first time starts switched off" true for an UPGRADE and not only for a
+  // fresh install. See the seeding block in main.cpp for the whole argument; the short of it is:
+  //
+  //   `off` alone cannot tell "the user switched this feature ON" apart from "this feature was installed
+  //   today" -- both are simply ABSENT from the list. Adding a feature to an existing installation therefore
+  //   used to arrive ENABLED, silently, whatever the fresh-install rule said. This list is the missing half:
+  //   an id that is absent from `seen` has never been offered to the user, so it is seeded into `off` and
+  //   from then on the user's own choice is the only thing that moves it.
+  //
+  // ⚠️ IT IS NOT "the features that are enabled" AND NOT A SECOND SOURCE OF TRUTH about the switch -- the
+  // switch stays in `off` and nowhere else. This answers one question only: have we met this feature before?
+  char seen[kMaxList][kMaxName] = {{0}};
+  int seenN = 0;
+
+  bool FeatureSeen(const char *id) const
+  {
+    if (!id || !*id)
+      return true; // an unnamed feature is not something to seed
+    for (int i = 0; i < seenN; ++i)
+      if (NameEquali(seen[i], id))
+        return true;
+    return false;
+  }
+
+  // Record that this feature has been offered to the user. Returns false when there was no room, so the
+  // caller can say so rather than silently treating the feature as new on every single start.
+  bool FeatureMarkSeen(const char *id)
+  {
+    if (!id || !*id)
+      return false;
+    if (FeatureSeen(id))
+      return true;
+    if (seenN >= kMaxList)
+      return false;
+    NormaliseExe(id, seen[seenN], kMaxName); // same lower-casing as `off`: ids are compared case-insensitively
+    if (!seen[seenN][0])
+      return false;
+    ++seenN;
+    return true;
+  }
+
   // ---- the disabled features ----
   bool FeatureOff(const char *id) const
   {
@@ -537,6 +579,8 @@ inline bool ParseHostConfig(const char *text, HostConfig &c)
     }
     else if (strcmp(key, "off") == 0)
       c.FeatureSetOff(val, true);
+    else if (strcmp(key, "seen") == 0)
+      c.FeatureMarkSeen(val);
     else if (strcmp(key, "autostart") == 0)
     {
       bool b;
@@ -575,6 +619,8 @@ inline void FormatHostConfig(const HostConfig &c, char *out, int outSize)
                    "# lang   : auto (follow the system) | zh | en\n"
                    "# theme  : auto (follow the system) | light | dark\n"
                    "# off    : a feature id to leave loaded but inactive; repeat the line for more\n"
+                   "# seen   : managed by Apex -- every feature id this machine has been offered. A NEW\n"
+                   "#          feature is added here and switched off; do not edit by hand.\n"
                    "# autostart : 1 to start with Windows (default 0)\n"
                    "# quickcompact : 1 to show every feature's on/off switch in the quick panel (default 0)\n"
                    "# quickown     : 1 to show the controls the features asked for there (default 0)\n"
@@ -591,6 +637,10 @@ inline void FormatHostConfig(const HostConfig &c, char *out, int outSize)
     off += _snprintf(out + off, outSize - off, "quickorder=%s\n", c.quickOrder[i]);
   for (int i = 0; i < c.offN && off < outSize - (kMaxName + 8); ++i)
     off += _snprintf(out + off, outSize - off, "off=%s\n", c.off[i]);
+  // ⚠️ THE `seen` LIST IS WRITTEN TOO, and it is what makes the fresh-feature rule survive an upgrade -- see
+  // the note on the field. It is written AFTER `off` so a human reading the file sees the switch first.
+  for (int i = 0; i < c.seenN && off < outSize - (kMaxName + 8); ++i)
+    off += _snprintf(out + off, outSize - off, "seen=%s\n", c.seen[i]);
 }
 
 } // namespace apex

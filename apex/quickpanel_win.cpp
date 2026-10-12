@@ -79,13 +79,31 @@ const int kValueStepMs = 400;
 const UINT_PTR kSettleTimer = 4;
 const int kSettleMs = 140;
 
-// ⚠️ THE SHADOW IS PART OF THE WINDOW. A layered window gets no shadow from the DWM (the DWM does not decorate
-// one), and a flyout with a hard edge floating over a light desktop looks like a rendering mistake. So the
-// window is `kShadow` pixels larger than the panel on every side and the painter spends that margin on a soft
-// edge. Everything else works in PANEL coordinates: the painter translates by kShadow, the hit test subtracts
-// it, and PlaceAbove is given the panel's size rather than the window's.
-const int kShadow = 12;
-const int kGapAboveTray = 8; // between the tray icon and the panel's bottom edge
+// ⚠️⚠️ THE SHADOW MARGIN IS A VARIABLE, NOT THIS CONSTANT -- AND AT THE CURRENT GAP IT IS ZERO.
+//
+// A layered window gets no shadow from the DWM (it does not decorate one), so when a pane casts a shadow the window has
+// to be that much larger than the panel and the painter spends the margin on a soft edge. Everything else works in
+// PANEL coordinates: the painter translates by the margin, the hit test subtracts it, and PlaceAbove is given the
+// panel's size rather than the window's.
+//
+// ⚠️ WHAT THIS CONSTANT USED TO BE WAS A BUG WAITING: the window reserved it on every side unconditionally, while the
+// painter stops drawing the shadow once the panes are closer together than twice its reach. At the current
+// `sectionGap` of 3 the reach is 0, so the margin was reserved and never painted -- 12 px of blank window on four
+// sides, of which the bottom one read as a gap under the panel (the user: "整个面板下面有块空白的地方", then "还是有的，
+// 大概25像素，可以直接整体往下移23个像素"). See `g.shadow`, set in Relayout from ShadowReachFor.
+//
+// ⚠️ IT IS KEPT AS THE *MAXIMUM* rather than deleted, because that is what it documents: 12 is the most a shadow would
+// ever want here, and it is what a future, wider `sectionGap` would get back automatically.
+const int kShadowMax = 12;
+// BETWEEN THE TRAY ICON AND THE PANEL'S BOTTOM EDGE. 8 -> 6 together with the panel's own margin (see `pad` in
+// quickpanel.h): the user's target was "与 windows 任务栏间留 10 个像素", and the glass now sits 4 px inside the panel's
+// edge, so 6 + 4 is the ten they asked for.
+//
+// ⚠️ IT IS MEASURED TO THE TRAY ICON'S RECTANGLE, NOT TO THE TASKBAR. The icon sits INSIDE the taskbar with its own
+// inset above it, so "the gap to the taskbar" is that inset plus this gap minus the panel's margin -- which on this
+// machine worked out to 8 px while this constant was 8. Anything exact has to be measured rather than derived from
+// these two numbers alone, which is what _diag/traygap.cpp is for.
+const int kGapAboveTray = 6;
 
 // (kMaxOwnPerFeature MOVED TO apex/quickpanel.h -- the host's glue needs the same bound, see the note there.)
 
@@ -122,10 +140,19 @@ struct Panel
   Layout ly;
 
   int panelW = 0, panelH = 0; // the body, without the shadow margin
+  // ⚠️ THE MARGIN THE WINDOW ACTUALLY HAS AROUND THE BODY -- which is the shadow's own reach, and therefore ZERO while
+  // the panes are packed 3 px apart (see kShadowMax above and ShadowReachFor in quickpanel.h). Every use of it at run
+  // time reads this field rather than the constant, so "the window has room for a shadow" and "a shadow is drawn"
+  // cannot come apart.
+  int shadow = 0;
   int w = 0, h = 0;           // the whole window, shadow included
   int x = 0, y = 0;
 
   int hover = -1;
+  // Which FOOTER button the pointer is on, or -1 (see FooterAction). Kept beside `hover` rather than folded into it
+  // because they index different things -- a row in the model and a button in the host's own strip -- and a single
+  // index that meant either would be read as an item the moment anyone forgot which one it was.
+  int hoverFooter = -1;
   DWORD hoverSince = 0; // when the pointer arrived on that row (drives the scrolling label)
   bool marquee = false; // is the label-scrolling timer running
   int drag = -1;        // the row being dragged, or -1
@@ -245,10 +272,15 @@ bool Render(double alpha)
     // still: two motions at once (a fade and a scroll) is one more than the user asked for, and the label would
     // arrive on screen already half-scrolled past its own beginning.
     ctx.hoverMs = (g.hover >= 0 && !g.fadingOut && alpha >= 1.0) ? (int)(GetTickCount() - g.hoverSince) : 0;
-    ctx.shadow = kShadow;
+    ctx.shadow = g.shadow; // the margin this window actually has, which is the shadow's own reach (see Relayout)
     // ... and the gap between two panes, which the painter uses to decide whether there is room for a shadow
     // (see the reach in PaintPanel); it comes from the same metrics the layout was measured with.
     ctx.sectionGap = g.mx.sectionGap;
+    // THE FOOTER'S WORDS, from the host -- the same four strings the right-click menu used to show, in the language
+    // in force right now (so a language change lands on the next open, like every other word in this panel).
+    for (int b = 0; b < apex::quick::kFooterButtons; ++b)
+      ctx.footer[b] = host::QuickPanelCommandLabel(b);
+    ctx.hoverFooter = g.hoverFooter;
     PaintPanel(gfx, ctx, alpha);
     gfx.Flush(Gdiplus::FlushIntentionSync);
   }
@@ -287,6 +319,7 @@ void Rebuild()
   }
   g.model = Model();
   g.hover = -1;
+  g.hoverFooter = -1;
   g.drag = -1;
   SyncMarqueeTimer();
   if (!cfg || !ld)
@@ -549,19 +582,47 @@ void Relayout()
   g.panelW = g.mx.width;
   if (g.panelH <= 0)
     g.panelH = Scaled(40, g.scale); // a window is never zero-sized; the caller decides whether to show it
-  g.w = g.panelW + 2 * kShadow;
-  g.h = g.panelH + 2 * kShadow;
+  // ⚠️⚠️ THE SHADOW MARGIN IS ASKED FOR, NOT ASSUMED, AND IT IS ZERO AT THE CURRENT GAP. The window used to reserve
+  // `kShadow` on every side unconditionally, and at a `sectionGap` of 3 the painter draws NO shadow at all (the reach
+  // is zero -- see ShadowReachFor in quickpanel.h). So 12 px of window on every side were reserved and left blank, and
+  // below the panel that read as a gap: the user's "整个面板下面有块空白的地方" and then "还是有的，大概25像素，可以直接整体往下
+  // 移23个像素". Removing the margin IS the shift they asked for, and it takes 12 px off the top and both sides too.
+  //
+  // ⚠️ THE MARGIN IS STILL THE SHADOW'S SIZE WHEN THERE IS A SHADOW, and it has to be: a shadow drawn into a margin the
+  // window does not have would be clipped, which is why this is one number used twice rather than two.
+  const int margin = ShadowReachFor(g.mx.sectionGap, g.scale);
+  g.shadow = margin;
+  g.w = g.panelW + 2 * margin;
+  g.h = g.panelH + 2 * margin;
 }
 
 bool Place()
 {
   int ax = 0, ay = 0, aw = 0, ah = 0;
-  const bool anchored = host::TrayIconScreenRect(&ax, &ay, &aw, &ah);
+  bool anchored = host::TrayIconScreenRect(&ax, &ay, &aw, &ah);
+
+  // ⚠️⚠️ THE SHELL CAN SAY "I DON'T KNOW YET", AND GIVING UP ON THE FIRST ASK IS A REAL BUG RATHER THAN A TEST
+  // PROBLEM. `Shell_NotifyIconGetRect` returns a failure while the notification area is still registering the icon
+  // -- which is exactly the state a host is in for its first moments, and exactly when the self-test (and a fast
+  // user) opens the panel. Measured here: the very same binary, started the very same way, sometimes anchors and
+  // sometimes falls back to the cursor, and the flyout gate caught it as "the shell would not say where the tray
+  // icon is" (see test/check_apex_flyout.sh, which refuses to accept an unverified placement).
+  //
+  // ⚠️ SO IT IS A SHORT RETRY, NOT A SLEEP. The condition being waited for is "the shell knows where our icon is",
+  // it is asked directly, and the loop ends the moment it is true -- the project's rule against fixed sleeps is
+  // about not guessing how long something takes, and nothing here guesses. Four tries a few milliseconds apart is
+  // under a frame's worth of extra work in the case that matters (the first ask, which normally succeeds).
+  for (int attempt = 0; !anchored && attempt < 4; ++attempt)
+  {
+    Sleep(15);
+    anchored = host::TrayIconScreenRect(&ax, &ay, &aw, &ah);
+  }
+
   if (!anchored)
   {
-    // ⚠️ THE SHELL DOES NOT ALWAYS KNOW, and the fallback is not decoration: an icon in the overflow flyout, a
-    // tray that has just restarted, or a shell that answers with a failure all mean "no rectangle". Putting the
-    // panel at the cursor is where the user's attention already is, which is the honest second-best answer.
+    // ⚠️ THE SHELL DOES NOT ALWAYS KNOW, and the fallback is not decoration: an icon in the overflow flyout or a
+    // tray that has just restarted both mean "no rectangle" for good, not just for a moment. Putting the panel at
+    // the cursor is where the user's attention already is, which is the honest second-best answer.
     POINT pt;
     GetCursorPos(&pt);
     ax = pt.x;
@@ -587,8 +648,8 @@ bool Place()
   const Rect area{work.left, work.top, work.right - work.left, work.bottom - work.top};
   int px = 0, py = 0;
   PlaceAbove(anchor, area, g.panelW, g.panelH, Scaled(kGapAboveTray, g.scale), &px, &py);
-  g.x = px - kShadow; // the window is the panel plus its shadow margin on every side
-  g.y = py - kShadow;
+  g.x = px - g.shadow; // the window is the panel plus its shadow margin on every side
+  g.y = py - g.shadow;
   return anchored;
 }
 
@@ -674,6 +735,7 @@ void FinishFadeOut()
   g.visible = false;
   g.fadingOut = false;
   g.hover = -1;
+  g.hoverFooter = -1;
   g.hoverSince = 0;
   g.drag = -1;
   g.wheelAccum = 0;
@@ -827,13 +889,20 @@ void OnMouseMove(int cx, int cy, bool dragging)
 {
   if (g.fadingOut)
     return; // on the way out: nothing to hover, and re-rendering at full opacity would fight the fade
-  const int px = cx - kShadow, py = cy - kShadow;
+  const int px = cx - g.shadow, py = cy - g.shadow;
   if (!dragging)
   {
+    // ⚠️ THE FOOTER IS ASKED FIRST, AND OVER THE WHOLE LAYOUT RATHER THAN PER ROW -- it is not an item, so
+    // `HitTest` cannot see it (see ClickAt in quickpanel.h). Both the hover highlight and the click go through
+    // this one call, so what lights up under the pointer and what a click acts on cannot be two different buttons.
+    const Hit fh = ClickAt(g.model, g.ly, px, py);
+    const int hoverFooter = (fh.kind == HitKind::kFooter) ? (int)fh.footer : -1;
+
     const int hit = HitTest(g.model, g.ly, px, py);
-    if (hit != g.hover)
+    if (hit != g.hover || hoverFooter != g.hoverFooter)
     {
       g.hover = hit;
+      g.hoverFooter = hoverFooter;
       // ⚠️ THE CLOCK STARTS WHEN THE POINTER ARRIVES, not when the panel opened: a label that was already
       // half-scrolled when the user's eye reached it would be unreadable. See LabelScrollOffset in quickpanel.h.
       g.hoverSince = GetTickCount();
@@ -864,12 +933,31 @@ void OnMouseMove(int cx, int cy, bool dragging)
 
 void OnLButtonDown(int cx, int cy)
 {
-  const int px = cx - kShadow, py = cy - kShadow;
+  const int px = cx - g.shadow, py = cy - g.shadow;
   // ⚠️ WHAT THE CLICK DOES IS ASKED OF `ClickAt`, NOT OF `HitTest`: "which row is this" and "which control am I
   // operating" are two different questions, and the user's report -- "鼠标点击改变数值只在推子内，现在点到推子左右区域都会
   // 改变" -- is what happens when one answer is used for both. A click on a fader's own rectangle is an absolute
   // jump and starts a drag; a click on the row but beside the fader does NOTHING.
   const Hit hit = ClickAt(g.model, g.ly, px, py);
+
+  // ---- THE FOOTER ---------------------------------------------------------------------------------
+  //
+  // ⚠️ THE PANEL GOES AWAY FIRST, AND THEN THE COMMAND RUNS -- and the order is the answer to "what does the user
+  // expect to be looking at a moment later". They picked a command from a flyout that floats over the tray icon;
+  // the settings window (or Explorer, or the log) opening BEHIND a flyout that is still up would leave the panel
+  // covering the very thing they just asked for. So: put it away, then act.
+  //
+  // ⚠️ AND IT IS `host::QuickPanelCommand`, i.e. ONE IMPLEMENTATION FOR EVERY SURFACE THAT OFFERS THESE FOUR. They
+  // used to be the right-click menu's cases (see main.cpp); the buttons are a second way to REACH them, not a
+  // second way to DO them. Anything else -- a "show log" that opened a different file here, say -- would be two
+  // answers to "where is the log", which is the kind of split this project has a rule about.
+  if (hit.kind == HitKind::kFooter)
+  {
+    StartFadeOut("the user picked one of the footer's commands");
+    host::QuickPanelCommand((int)hit.footer);
+    return;
+  }
+
   if (hit.index < 0)
     return;
   Item &it = g.model.items[hit.index];
@@ -949,7 +1037,7 @@ void OnMouseWheel(int cx, int cy, int delta)
 {
   if (!g.visible || g.fadingOut)
     return;
-  const int px = cx - kShadow, py = cy - kShadow;
+  const int px = cx - g.shadow, py = cy - g.shadow;
   // A wheel over a row that is NOT a fader (the label of one, a switch, the gaps) does nothing -- the same rule a
   // click follows (see ClickAt): the fader takes the wheel, not the row it happens to be on.
   const int row = WheelTarget(g.model, g.ly, px, py);

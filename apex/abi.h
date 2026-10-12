@@ -89,6 +89,26 @@
 //         one: the user asked for it (they had asked whether it was possible), the request is about a ROW rather
 //         than about a feature, and a feature that has no companion sends an empty string and gets exactly the
 //         row it used to get.
+// 22 -> 23: `select` gained `applyZh`/`applyEn` -- AN OPTIONAL CONFIRM BUTTON BESIDE THE DROPDOWN, so a choice
+//         can be COMMITTED rather than taken the moment it is highlighted. The user asked for it in the shape of
+//         the control: 「不是给下拉框加"添加"，是在它右侧，另一个，列表选中设备后，点一下"添加"才生效」.
+//
+//         ⚠️ WHY A NEW KEY RATHER THAN "THE PAGE COULD INFER IT": until now `select` had exactly ONE meaning --
+//         the highlighted option IS the answer -- and the language and theme pickers rely on that meaning
+//         ("select" them and the change is immediate). A page that guessed a button was wanted would break
+//         those two. So the button is DECLARED, and a `select` without these keys behaves exactly as it did
+//         before this version existed.
+//
+//         ⚠️ AND WHY THE DROPDOWN ALONE WAS NOT ENOUGH, which is the reason this is a version and not a style
+//         tweak: an option that is already highlighted CANNOT be chosen, because choosing it changes nothing
+//         and no event fires. A list of candidates whose FIRST entry can never be taken is a control that is
+//         broken for exactly one of its items, and it reports nothing when it happens.
+//
+//         ⚠️ A KEY A PAGE ACTS ON, like `noAdd`, `waiting`, `quick` and `live` before it -- and the usual
+//         warning applies with the usual force: a page that does not know this key shows a dropdown whose
+//         selection takes effect immediately, which for a list of devices means "adding a device you merely
+//         looked at". That is why the version is bumped rather than the key added quietly.
+//
 // 21 -> 22: `ApexHost::activeEngines` hands back `ApexEngine` (a kind PLUS the PROGRAM'S OWN NAME) instead of bare
 //         `APEX_ENGINE_*` values -- one day after 20 -> 21, and for a reason the user gave in one line: "包括以后可能
 //         会增加的 APP". With kinds alone, adding an engine meant editing the HOST (for its probe) AND EVERY FEATURE
@@ -156,7 +176,7 @@
 // The version is bumped rather than a field simply appended, because the host requires an EXACT match -- see
 // the loader: a DLL built against an older layout would otherwise be read past its own end. Refusing it with a
 // log line is the whole point of carrying a version at all.
-#define APEX_ABI_VERSION 22u
+#define APEX_ABI_VERSION 23u
 
 #ifdef __cplusplus
 extern "C" {
@@ -553,6 +573,23 @@ typedef struct ApexFeature
   //                 and `value` is the chosen `value` string (NOT an index -- an index would break the
   //                 moment a feature reordered its own list, and it would put the feature's vocabulary in
   //                 the page). Sent back through `setControl` as the same string.
+  //
+  //                 ⚠️⚠️ OPTIONAL `applyZh`/`applyEn` -- A CONFIRM BUTTON BESIDE THE DROPDOWN (ABI 22 -> 23).
+  //                 Give either one and the page draws a button with that label, AND THE CHOICE IS NOT SENT
+  //                 UNTIL IT IS PRESSED. Give neither and the control behaves exactly as it always has: the
+  //                 highlighted option IS the answer, sent the moment it changes (the language and theme
+  //                 pickers are built on that).
+  //
+  //                 ⚠️ WHAT IT IS FOR, in the words of the request that added it: 「列表选中设备后，点一下
+  //                 "添加"才生效」 -- a DROPDOWN AS A SOURCE OF THINGS TO ADD, rather than as a setting. That
+  //                 shape has a failure the plain `select` cannot avoid: AN OPTION THAT IS ALREADY
+  //                 HIGHLIGHTED CANNOT BE CHOSEN, because choosing it changes no value and fires no event. A
+  //                 candidate list whose first entry can never be taken is broken for exactly one of its
+  //                 items, silently -- which is what the button fixes, by turning "the value changed" into
+  //                 "the user asked for this".
+  //
+  //                 ⚠️ AND THE FEATURE STILL DECIDES WHAT IS ACCEPTABLE: the value arrives through `setControl`
+  //                 like any other, and reply 0 to refuse (see the note there). The button only says WHEN.
   //   * `text`   -- a single line of text. `value` is what it holds; `placeholderZh/En` is the greyed hint
   //                 an empty field shows. THE FEATURE VALIDATES: reply 0 from `setControl` to refuse, and the
   //                 page re-reads the control so a refused value is replaced by what the feature actually has

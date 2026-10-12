@@ -294,6 +294,12 @@ static const unsigned kStateReaper = 1u; // the REAPER-plugin answer may have ch
 // exists to avoid (see the note in panel.js).
 static const unsigned kStateQuickPanel = 2u;
 
+// ⚠️ THE APPEARANCE WAS CHANGED FROM THE TRAY'S OWN MENU. Same message and the same page entry point as the two
+// above -- the page re-reads and `applyHostToUi` re-applies the theme -- but it is its own NAME rather than a
+// reuse of `kStateQuickPanel`, because the `what` is a record of WHY the page was disturbed and the host should
+// not say "the quick panel changed" when what changed was the colour of everything.
+static const unsigned kStateTheme = 3u;
+
 struct IpcRequest
 {
   unsigned long cmd;

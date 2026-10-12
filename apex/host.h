@@ -22,7 +22,7 @@
 // the number for Apex itself, which the panel puts beside the slogan in the sidebar ("Apex主程序版本号1.0 ... 居右").
 // One definition, because the snapshot and anything else that reports it must not be able to disagree.
 // ---------------------------------------------------------------------------
-#define APEX_HOST_VERSION "1.4"
+#define APEX_HOST_VERSION "1.5"
 
 // ---------------------------------------------------------------------------
 // THE HOST'S OWN INTERFACE: everything apex.exe needs from host_win.cpp, plus the places where the
@@ -118,6 +118,19 @@ bool UiIsChinese();
 // is open behind it (the user's rule: "快速面板的开关要能实时同步到设置面板上"). `what` is one of the
 // kState* values in settings_ipc.h. Cheap and safe to call with no panel open.
 void PanelStateChanged(unsigned what);
+
+// THE FLYOUT'S FOOTER: THE HOST'S OWN FOUR COMMANDS, AND THEIR WORDS.
+//
+// ⚠️⚠️ THESE ARE ONE IMPLEMENTATION FOR EVERY SURFACE THAT OFFERS THEM, WHICH IS WHY THEY ARE HERE RATHER THAN IN
+// THE FLYOUT. The four used to be the right-click menu's items (see TrayMenu in main.cpp) and the user moved them
+// into the panel: "把原来的右键菜单三个功能和退出，直接做到快速面板下方4个按钮". So the panel is a second way to
+// REACH them, not a second way to DO them -- and the case that makes that concrete is "show log": if the flyout
+// had opened `apex.log` itself and the menu had opened something else, there would be two answers to a question
+// that has one.
+//
+// `index` is an apex::quick::FooterAction. The label is what to draw on the button, in the language in force now.
+const char *QuickPanelCommandLabel(int index);
+void QuickPanelCommand(int index);
 
 // ONE BLOCK OF THE QUICK PANEL: WHAT THE FLYOUT DRAWS AS A SINGLE PANE.
 //

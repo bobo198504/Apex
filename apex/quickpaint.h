@@ -67,6 +67,13 @@ struct PaintCtx
   // sized from it (see the reach below), and a painter that carried its own idea of the gap would draw a shadow
   // that reaches into a seam it thinks is wider than it is.
   int sectionGap = 3;
+  // ⚠️ THE FOOTER'S WORDS COME IN, RATHER THAN BEING WRITTEN HERE. They are the host's own interface text and
+  // they exist in two languages, which is `main.cpp`'s business (it already owns every other word the tray says);
+  // a copy in the painter would be a second place to translate, and the two would drift the first time one of them
+  // was edited. Order matches `FooterAction` -- see `FooterLabel` in main.cpp.
+  const char *footer[kFooterButtons] = {nullptr, nullptr, nullptr, nullptr};
+  // Which footer button the pointer is on, or -1. Same role as `hover` for the rows.
+  int hoverFooter = -1;
 };
 
 inline Gdiplus::Color Col(const Rgb &c, int a = 255) { return Gdiplus::Color(a, c.r, c.g, c.b); }
@@ -427,6 +434,41 @@ inline void DrawCardShadow(Gdiplus::Graphics &gfx, const Gdiplus::Rect &card, do
   }
 }
 
+// A PANE OF GLASS, WHICH IS THE PANEL'S ONE SURFACE -- used by every block AND by the footer's buttons.
+//
+// ⚠️⚠️ IT IS A FUNCTION BECAUSE THE USER ASKED FOR IT TO BE ONE, IN EFFECT: "颜色不对，就把它当成一个'插件开关'面板就可以了，
+// 原来添加都可以直接是一样的，不要单独写". The footer had its own surface (a deeper well on `p.track`, no gradient, no top
+// highlight), and against the panes above it that read as a different kind of object -- a third visual language in a
+// panel that has one. A footer button is a small pane; there is nothing else to invent.
+//
+// ⚠️ AND A SECOND COPY OF THIS WOULD DRIFT THE MOMENT EITHER IS TOUCHED -- the gradient, the `bgAlpha` tint, the
+// hairline, the highlight. That is the rule this project states as "one rule, one implementation", and the test for
+// it is exact here: if the panes' surface is ever changed, the footer must change with it or the panel is wrong in a
+// way nobody would think to look at.
+inline void DrawGlassPane(Gdiplus::Graphics &gfx, const Gdiplus::Rect &box, const Palette &p, int alpha,
+                          int radius)
+{
+  Gdiplus::GraphicsPath path;
+  AddRoundRect(path, box, radius);
+  const int ba = (int)((p.bgAlpha * alpha) / 255);
+  Gdiplus::LinearGradientBrush bg(Gdiplus::Point(box.X, box.Y), Gdiplus::Point(box.X, box.Y + box.Height),
+                                  Col(p.bgTop, ba), Col(p.bgBottom, ba));
+  gfx.FillPath(&bg, &path);
+
+  // THE EDGE, and the light it catches along the top. The highlight is most of what separates "a translucent
+  // rectangle" from "a pane" -- and it is drawn over the top straight run only, so it follows the rounded corner
+  // instead of cutting across it. It is skipped on a box too small to have a straight run (see the footer's 30 px
+  // buttons): there the two corners meet, and a line between them is a smudge rather than a highlight.
+  Gdiplus::Pen edge(Col(p.border, alpha), 1.0f);
+  gfx.DrawPath(&edge, &path);
+  if (box.Width > 2 * radius + 4)
+  {
+    Gdiplus::Pen shine(Col(p.highlight, (int)(alpha * 0.7)), 1.0f);
+    gfx.DrawLine(&shine, (Gdiplus::REAL)(box.X + radius), (Gdiplus::REAL)(box.Y + 1),
+                 (Gdiplus::REAL)(box.X + box.Width - radius), (Gdiplus::REAL)(box.Y + 1));
+  }
+}
+
 // THE WHOLE PICTURE, at `alpha` opacity. Coordinates are CONTENT coordinates: the shadow margin is added by one
 // translation at the top, and every rectangle below comes from MeasureModel (see quickpanel.h).
 inline void PaintPanel(Gdiplus::Graphics &gfx, const PaintCtx &ctx, double alpha)
@@ -465,12 +507,10 @@ inline void PaintPanel(Gdiplus::Graphics &gfx, const PaintCtx &ctx, double alpha
   // ⚠️ AND IT IS DERIVED RATHER THAN WRITTEN DOWN, so the two numbers cannot drift apart: a future change to
   // either one either keeps the rule or takes the shadow away, and neither can quietly put the shadow back into
   // the seam. (The pixel gate in check_apex_quickpanel.sh reads that seam's centre line and would catch it.)
-  const int halfGap = Scaled(ctx.sectionGap, ctx.scale) / 2;
-  int reach = Scaled(6, ctx.scale); // what a pane's own shadow wants, if there is room for it
-  if (reach > halfGap - 1)
-    reach = halfGap - 1;
-  if (reach < 0)
-    reach = 0;
+  // ⚠️ AND IT COMES FROM `ShadowReachFor` (quickpanel.h) RATHER THAN BEING WORKED OUT HERE, because the WINDOW reserves
+  // the margin for it (see `kShadow` in quickpanel_win.cpp) and the two must not be able to disagree: at a 3 px section
+  // gap the reach is 0, and a window that kept its 12 px of room anyway is what the user saw as a blank strip.
+  const int reach = ShadowReachFor(ctx.sectionGap, ctx.scale);
 
   for (int s = 0; s < m.sectionCount; ++s)
   {
@@ -482,28 +522,8 @@ inline void PaintPanel(Gdiplus::Graphics &gfx, const PaintCtx &ctx, double alpha
     DrawCardShadow(gfx, card, alpha, reach);
 
     // (2) THE GLASS: a shallow gradient at `bgAlpha`, so what is behind the panel shows through as a tint.
-    {
-      Gdiplus::GraphicsPath path;
-      AddRoundRect(path, card, kSectionRadius);
-      const int ba = (int)(p.bgAlpha * alpha);
-      Gdiplus::LinearGradientBrush bg(Gdiplus::Point(card.X, card.Y),
-                                      Gdiplus::Point(card.X, card.Y + card.Height), Col(p.bgTop, ba),
-                                      Col(p.bgBottom, ba));
-      gfx.FillPath(&bg, &path);
-
-      // (3) THE EDGE, and the light it catches along the top. The highlight is most of what separates "a
-      // translucent rectangle" from "a pane" -- and it is drawn over the top straight run only, so it follows
-      // the rounded corner instead of cutting across it.
-      Gdiplus::Pen edge(Col(p.border, a), 1.0f);
-      gfx.DrawPath(&edge, &path);
-      const int inset = kSectionRadius; // where the top edge stops being a curve
-      if (card.Width > 2 * inset + 4)
-      {
-        Gdiplus::Pen shine(Col(p.highlight, (int)(a * 0.7)), 1.0f);
-        gfx.DrawLine(&shine, (Gdiplus::REAL)(card.X + inset), (Gdiplus::REAL)(card.Y + 1),
-                     (Gdiplus::REAL)(card.X + card.Width - inset), (Gdiplus::REAL)(card.Y + 1));
-      }
-    }
+    // ... plus the hairline edge and the highlight along the top (see DrawGlassPane -- THE ONE SURFACE).
+    DrawGlassPane(gfx, card, p, a, kSectionRadius);
 
     const char *title = ctx.zh ? m.sections[s].titleZh : m.sections[s].titleEn;
     DrawTextIn(gfx, title, ly.titles[s], headFont, Col(p.sub, a), 0, true);
@@ -590,6 +610,146 @@ inline void PaintPanel(Gdiplus::Graphics &gfx, const PaintCtx &ctx, double alpha
         char num[64];
         FormatValue(it, num, sizeof(num));
         DrawTextIn(gfx, num, ly.values[i], smallFont, Col(p.sub, rowA), 1, false);
+      }
+    }
+  }
+
+  // ---- THE FOOTER: ONE PANE, FOUR ICONS IN IT ----------------------------------------------------
+  //
+  // ⚠️ IT IS DRAWN AFTER THE PANES AND INDEPENDENTLY OF THEM, which is the point: it is present when there are no
+  // feature panes at all (both halves switched off in the settings -- see FooterAction in quickpanel.h).
+  //
+  // ⚠️⚠️ AND IT IS A PANE -- `DrawGlassPane`, the same call the feature blocks above make. Three attempts got here:
+  // a full-width rule with a word per button (a second visual language), four buttons each wearing the pane's
+  // material (four objects with the panel showing through the gaps), and finally one pane with four icons inside it.
+  // The user named the difference exactly: "是要整体的面板，不是只有按钮的底色".
+  //
+  // ⚠️ SO THE ICONS HAVE NO BOX OF THEIR OWN. They sit on the pane like a switch sits in a row -- the surface belongs
+  // to the pane, and the only thing the pointer changes is the GLYPH (which turns from `sub` to `fg`), because there
+  // is no room left for a second kind of highlight once the pane is already a pane.
+  {
+    const Gdiplus::Rect pane = GRect(ly.footerPane);
+    if (pane.Width > 2 * kSectionRadius + 4)
+    {
+      DrawGlassPane(gfx, pane, p, a, kSectionRadius);
+      // ⚠️ THE SAME TOP-OF-THE-PANE AIR THE FEATURE BLOCKS GET: their rows start `sectionPad` below the top edge,
+      // and the icons are placed there by the layout too (see `footerPane` in MeasureModel). Nothing extra is drawn
+      // for it -- it is the layout's own arithmetic that has to agree, which is why it is named here.
+    }
+
+    for (int b = 0; b < kFooterButtons; ++b)
+    {
+      const Gdiplus::Rect slot = GRect(ly.footer[b]);
+      if (slot.Width <= 0 || slot.Height <= 0)
+        continue;
+      const bool hot = (b == ctx.hoverFooter);
+
+      // The glyph, on the same 24-unit box as the companion icons, so 125% and 200% need no second set of numbers.
+      //
+      // ⚠️⚠️ AND IT IS DRAWN SMALLER THAN ITS SLOT (see `kFooterGlyph` in quickpanel.h). The slot is the HIT TARGET
+      // -- a box a finger can find on the way out of a flyout -- while the picture inside it is line art; filling the
+      // box edge to edge is what made the user say "图标可以再精致些，太大了". A bigger target and a smaller drawing are
+      // not in conflict: they are two different jobs.
+      const double cx = slot.X + slot.Width / 2.0, cy = slot.Y + slot.Height / 2.0;
+      const double s = (slot.Width * kFooterGlyph / 100.0) / 24.0;
+      // ⚠️ THE STROKE GETS THINNER WITH IT, and it has to: a 1.7-unit pen scaled down is a thinner line, but the
+      // rounded ends and the anti-aliasing make a very thin line grey rather than crisp. 1.6 is the value that still
+      // reads as a line at this size while looking drawn rather than smudged.
+      // ⚠️ THE POINTER CHANGES THE INK, NOT A BACKGROUND -- see the note above. `sub` at rest, `fg` under the
+      // pointer: the two colours this panel already uses for "a label" and "the thing you are on".
+      const Gdiplus::Color ink = Col(hot ? p.fg : p.sub, a);
+      Gdiplus::Pen mark(ink, (Gdiplus::REAL)(1.7 * s));
+      Gdiplus::SolidBrush solid(ink);
+
+      switch (FooterIconAt(b))
+      {
+      case FooterIcon::kGear:
+      {
+        // A cog: a ring, eight teeth, and a hollow centre. Teeth rather than a spoked wheel, because at this size a
+        // wheel's spokes close up into a dot while a toothed outline still reads as a cog.
+        const Gdiplus::REAL r = (Gdiplus::REAL)(5.0 * s);
+        gfx.DrawEllipse(&mark, (Gdiplus::REAL)cx - r, (Gdiplus::REAL)cy - r, 2 * r, 2 * r);
+        const Gdiplus::REAL hub = (Gdiplus::REAL)(2.0 * s);
+        gfx.DrawEllipse(&mark, (Gdiplus::REAL)cx - hub, (Gdiplus::REAL)cy - hub, 2 * hub, 2 * hub);
+        for (int t = 0; t < 8; ++t)
+        {
+          const double ang = t * 3.14159265358979 / 4.0;
+          gfx.DrawLine(&mark, (Gdiplus::REAL)(cx + cos(ang) * r), (Gdiplus::REAL)(cy + sin(ang) * r),
+                       (Gdiplus::REAL)(cx + cos(ang) * (r + 2.6 * s)),
+                       (Gdiplus::REAL)(cy + sin(ang) * (r + 2.6 * s)));
+        }
+      }
+      break;
+
+      case FooterIcon::kFolder:
+      {
+        // ⚠️ THE TAB IS ON THE LEFT. Mirrored, this glyph reads as a SPEECH BUBBLE -- a real folder's tab is at its
+        // top-left, and the first version had it on the right.
+        Gdiplus::PointF body[7] = {{(Gdiplus::REAL)(cx - 8.0 * s), (Gdiplus::REAL)(cy + 5.5 * s)},
+                                   {(Gdiplus::REAL)(cx - 8.0 * s), (Gdiplus::REAL)(cy - 5.5 * s)},
+                                   {(Gdiplus::REAL)(cx - 2.0 * s), (Gdiplus::REAL)(cy - 5.5 * s)},
+                                   {(Gdiplus::REAL)(cx - 0.5 * s), (Gdiplus::REAL)(cy - 2.5 * s)},
+                                   {(Gdiplus::REAL)(cx + 8.0 * s), (Gdiplus::REAL)(cy - 2.5 * s)},
+                                   {(Gdiplus::REAL)(cx + 8.0 * s), (Gdiplus::REAL)(cy + 5.5 * s)},
+                                   {(Gdiplus::REAL)(cx - 8.0 * s), (Gdiplus::REAL)(cy + 5.5 * s)}};
+        gfx.DrawPolygon(&mark, body, 7);
+      }
+      break;
+
+      case FooterIcon::kLog:
+      {
+        // A page with a folded corner and three lines. The fold is a second stroke and the lines are inset: run edge
+        // to edge, they read as a striped block rather than as a document.
+        const Gdiplus::REAL w = (Gdiplus::REAL)(6.0 * s), h = (Gdiplus::REAL)(8.0 * s);
+        const Gdiplus::REAL fold = (Gdiplus::REAL)(4.0 * s);
+        Gdiplus::PointF page[6] = {{(Gdiplus::REAL)cx - w, (Gdiplus::REAL)cy - h},
+                                   {(Gdiplus::REAL)(cx + w - fold), (Gdiplus::REAL)cy - h},
+                                   {(Gdiplus::REAL)cx + w, (Gdiplus::REAL)(cy - h + fold)},
+                                   {(Gdiplus::REAL)cx + w, (Gdiplus::REAL)cy + h},
+                                   {(Gdiplus::REAL)cx - w, (Gdiplus::REAL)cy + h},
+                                   {(Gdiplus::REAL)cx - w, (Gdiplus::REAL)cy - h}};
+        gfx.DrawPolygon(&mark, page, 6);
+        gfx.DrawLine(&mark, (Gdiplus::REAL)(cx + w - fold), (Gdiplus::REAL)cy - h,
+                     (Gdiplus::REAL)(cx + w - fold), (Gdiplus::REAL)(cy - h + fold));
+        gfx.DrawLine(&mark, (Gdiplus::REAL)(cx + w - fold), (Gdiplus::REAL)(cy - h + fold),
+                     (Gdiplus::REAL)cx + w, (Gdiplus::REAL)(cy - h + fold));
+        for (int L = 0; L < 3; ++L)
+        {
+          const Gdiplus::REAL y2 = (Gdiplus::REAL)(cy - h + (4.8 + 3.2 * L) * s);
+          gfx.DrawLine(&mark, (Gdiplus::REAL)(cx - w + 1.8 * s), y2, (Gdiplus::REAL)(cx + w - 1.8 * s), y2);
+        }
+      }
+      break;
+
+      // ⚠️⚠️ THE QUIT MARK IS AN X, AND IT WAS CHOSEN BY LOOKING AT BOTH CANDIDATES.
+      //
+      // The user asked to pick between a power button and a cross ("退出做成电源按钮，或者一个X也行，看哪个好看"), so both were
+      // rendered on the real footer side by side (_diag/quiticon.cpp) and they chose the cross. What the picture
+      // showed, and the reason this is the better glyph at this size:
+      //
+      //   * THE CROSS HAS THE SAME STROKE WEIGHT AND SPAN AS THE OTHER THREE. The power mark's ring came out optically
+      //     lighter than the folder and the page beside it, so it read as the one icon drawn by a different hand;
+      //   * AND IT IS THE SIMPLEST SHAPE IN THE ROW. At 19 px a ring with a gap and a stem has three features to
+      //     resolve; two crossed strokes have one.
+      //
+      // ⚠️ THE POWER BRANCH IS DELETED, NOT COMMENTED OUT, and the temporary `quitAsCross` switch with it: a comparison
+      // fixture is not a feature, and the loser's geometry has no business in the shipped painter.
+      case FooterIcon::kPower:
+      default:
+      {
+        Gdiplus::Pen cross(ink, (Gdiplus::REAL)(1.7 * s));
+        cross.SetStartCap(Gdiplus::LineCapRound);
+        cross.SetEndCap(Gdiplus::LineCapRound);
+        // ⚠️ ROUND CAPS, BECAUSE A BUTT-CAPPED X HAS FOUR SHARP CORNERS THAT CATCH THE EYE; and the half-diagonal is
+        // 5.9 units rather than the box's 12, so the mark has the same optical weight as the ring it replaced -- an X
+        // that filled its square would read heavier than any other glyph in the row.
+        const double d = 5.9 * s;
+        gfx.DrawLine(&cross, (Gdiplus::REAL)(cx - d), (Gdiplus::REAL)(cy - d), (Gdiplus::REAL)(cx + d),
+                     (Gdiplus::REAL)(cy + d));
+        gfx.DrawLine(&cross, (Gdiplus::REAL)(cx + d), (Gdiplus::REAL)(cy - d), (Gdiplus::REAL)(cx - d),
+                     (Gdiplus::REAL)(cy + d));
+      }
+      break;
       }
     }
   }
