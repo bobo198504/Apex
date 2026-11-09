@@ -308,9 +308,62 @@ for FEAT in "$ROOT"/features/*/; do
   # one. The build then handed `AGENTS.md` to g++ as source. Collecting with `for` cannot do that: an
   # unmatched glob contributes zero iterations, and `$CPPS` really is empty.
   CPPS=""
-  for f in "$FEAT"*.cpp; do
+  for f in "$FEAT"feature_*.cpp; do
     [ -e "$f" ] && CPPS="$f"
   done
+
+  # -------------------------------------------------------------------------
+  # OPTIONAL PAYLOADS
+  #
+  # A feature may need a second DLL that is loaded INSIDE another program (today AppProxy's Winsock hook).
+  # The convention is `payload/<name>.cpp` -> `Plugins/<id>/<name>.payload`.
+  #
+  # ⚠️ THE EXTENSION IS NOT .DLL ON PURPOSE. Several gates iterate every `Plugins/*/*.dll` and call the
+  # feature ABI on it; a payload has no ApexFeatureEntry and is not a feature. Windows' loader accepts a PE
+  # image with any extension when given its full path, so `.payload` keeps both facts true at once.
+  #
+  # ⚠️ THE BUILD SCRIPT DOES NOT NAME A FEATURE. Any feature with this folder gets the same treatment.
+  # -------------------------------------------------------------------------
+  for PAYLOAD_SRC in "$FEAT"payload/*.cpp; do
+    [ -e "$PAYLOAD_SRC" ] || continue
+    PAYLOAD_NAME="${PAYLOAD_SRC##*/}"
+    PAYLOAD_NAME="${PAYLOAD_NAME%.cpp}"
+    PAYLOAD_OUT="$DEST/$PAYLOAD_NAME.payload"
+    mkdir -p "$DEST"
+    if [ -f "$PAYLOAD_OUT" ] && [ "$PAYLOAD_OUT" -nt "$PAYLOAD_SRC" ] &&
+       ! AnyHeaderNewerThan "$PAYLOAD_OUT" "$FEAT" "${HDR_DIRS[@]}"; then
+      echo "   $ID -> Plugins/$ID/$PAYLOAD_NAME.payload  (up to date)"
+    else
+      echo "   $ID -> Plugins/$ID/$PAYLOAD_NAME.payload"
+      # ⚠️ THE PAYLOAD IS LINKED WITHOUT THE C/C++ RUNTIME. A target program is not required to have the
+      # compiler's preferred CRT loaded. `-lkernel32` supplies the Windows imports; `-lgcc` supplies the x64
+      # stack-probe helper and nothing that becomes a DLL dependency.
+      g++ "${FEATURE_FLAGS[@]}" -shared -I"$FEAT" \
+          -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-builtin -nostdlib \
+          -Wl,--entry,DllMain "$PAYLOAD_SRC" -o "$PAYLOAD_OUT" \
+          -lkernel32 -lws2_32 -lgcc || exit 1
+    fi
+  done
+
+  # Optional service/control executables live in a `service/` subfolder and ship beside the feature. They use
+  # the same public feature headers, but are console/service binaries rather than DLLs.
+  for SERVICE_SRC in "$FEAT"service/*.cpp; do
+    [ -e "$SERVICE_SRC" ] || continue
+    SERVICE_NAME="${SERVICE_SRC##*/}"
+    SERVICE_NAME="${SERVICE_NAME%.cpp}"
+    SERVICE_OUT="$DEST/$SERVICE_NAME.exe"
+    mkdir -p "$DEST"
+    if [ -f "$SERVICE_OUT" ] && [ "$SERVICE_OUT" -nt "$SERVICE_SRC" ] &&
+       ! AnyHeaderNewerThan "$SERVICE_OUT" "$FEAT" "${HDR_DIRS[@]}"; then
+      echo "   $ID -> Plugins/$ID/$SERVICE_NAME.exe  (up to date)"
+    else
+      echo "   $ID -> Plugins/$ID/$SERVICE_NAME.exe"
+      g++ -std=c++17 -O2 -mconsole -I"$ROOT/apex" -I"$ROOT/common" -I"$FEAT" \
+          "$SERVICE_SRC" -o "$SERVICE_OUT" \
+          -luser32 -ladvapi32 -lws2_32 -liphlpapi || exit 1
+    fi
+  done
+
   if [ -z "$CPPS" ]; then
     if [ -f "$FEAT/Cargo.toml" ]; then
       if ! command -v cargo >/dev/null 2>&1 && [ ! -x "$HOME/.cargo/bin/cargo.exe" ]; then
@@ -392,7 +445,15 @@ for FEAT in "$ROOT"/features/*/; do
   #   -loleaut32   VARIANT and BSTR, which every WMI answer arrives in
   #   -luuid       the IIDs and CLSIDs themselves (MMDeviceEnumerator, IAudioSessionManager2, PROPERTYKEYs)
   #   -lshell32    already linked into the host; a feature that draws a window may want it too
-  g++ "${FEATURE_FLAGS[@]}" -shared -I"$FEAT" "$SRC" -o "$DEST/$ID.dll" \
+  MAIN_EXTRA=()
+  if [ -f "$FEAT/.crtless" ]; then
+    # ⚠️ A FEATURE THAT MUST WORK IN OTHER PROGRAMS CAN OPT OUT OF THE MINGW CRT STARTUP CHAIN. The marker
+    # belongs to the feature; no feature is named here. Such a feature supplies DllMain and avoids dynamic
+    # global initialisers. AppProxy needs this for its injected payload and uses the same discipline in its
+    # main DLL, since a startup path that fails before DllMain is indistinguishable from a rejected feature.
+    MAIN_EXTRA=(-fno-exceptions -fno-rtti -fno-threadsafe-statics -nostartfiles -Wl,--entry,DllMain)
+  fi
+  g++ "${FEATURE_FLAGS[@]}" "${MAIN_EXTRA[@]}" -shared -I"$FEAT" "$SRC" -o "$DEST/$ID.dll" \
       -luser32 -lgdi32 -lole32 -ladvapi32 -ldxva2 -lwbemuuid -loleaut32 -luuid -lshell32
 done
 
@@ -400,6 +461,6 @@ echo
 echo "== built =="
 ls -l "$OUT/apex.exe"
 [ -f "$OUT/apex-settings.exe" ] && ls -l "$OUT/apex-settings.exe"
-for d in "$OUT"/Plugins/*/; do ls -l "$d"*.dll 2>/dev/null; done
+for d in "$OUT"/Plugins/*/; do ls -l "$d"*.dll "$d"*.payload "$d"*.exe 2>/dev/null; done
 echo
 echo "the folder to run or copy is: $OUT"

@@ -5,6 +5,34 @@
 `*` 和 `+` 会变成同一种圆点，符号的区分就没了）。只写"改了什么"。
 -->
 
+## 1.6.0
+
+## 更新内容
+
+```
++ 版本号：主程序 1.6
+* 新增应用代理：每个程序可指定独立的 SOCKS5 / HTTP CONNECT 代理
++ 应用代理支持多组代理配置、按程序手动填写规则、驱动服务安装/修复/启动/停止/卸载
++ 应用代理新增连接状态提示：显示服务、最近应用与目标、成功/失败次数和失败原因
+# 修复应用代理只接管 TCP SYN、后续连接无法完成的问题
+# 修复 Firefox 优先使用 IPv6 / QUIC 时绕过代理的问题
+# 修复驱动服务缺少 Windows 防火墙入站规则时无法连接本机中转的问题
++ 设置页新增只读状态卡和多行字段布局
+```
+
+## What's changed
+
+```
++ Version: the host is 1.6
+* Added App Proxy: assign an independent SOCKS5 / HTTP CONNECT proxy to each program
++ App Proxy supports multiple proxy profiles, manually entered per-program rules, and a driver service with install / repair / start / stop / uninstall
++ App Proxy now reports service state, the latest application and target, success/failure counts, and failure reasons
+# Fixed App Proxy redirecting only the TCP SYN, which prevented connections from completing
+# Fixed Firefox bypassing the proxy when it preferred IPv6 / QUIC
+# Fixed the driver service being unable to reach its local relay when the Windows firewall rule was missing
++ The settings page now supports read-only status cards and multi-line fields
+```
+
 ## 1.5.1
 
 ## 更新内容

@@ -209,7 +209,11 @@ pub struct ApexFeature {
 /// requires an exact match, so a stale constant here does not "degrade" anything -- it makes AutoIME fail to
 /// load, with one line in the log. (That is exactly what happened once, and the end-to-end wheel gate went red
 /// because of it: one feature missing changes what the host decides about a wheel.)
-pub const APEX_ABI_VERSION: c_uint = 23;
+/// ⚠️ 23 -> 24: settingsJson gained the read-only `status` control type and the optional
+/// `group.fieldsWrap` shape (five proxy fields on one line ran past the window). Both are page-facing keys
+/// with no Rust field, and the exact-match rule is unchanged: this constant moves with the C side or AutoIME
+/// does not load.
+pub const APEX_ABI_VERSION: c_uint = 24;
 
 pub const APEX_FEATURE_ENABLED: c_uint = 1;
 

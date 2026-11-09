@@ -313,6 +313,21 @@ function switchRow(label, checked, onToggle, disabled) {
   return row;
 }
 
+// A FEATURE'S READ-ONLY STATUS SENTENCE (apex/abi.h, `status`, ABI 23 -> 24).
+//
+// The page owns the shape and the colour; the feature owns the answer. A status card is deliberately NOT a
+// control: there is nothing to click and nothing is sent back. Its one job is to make "connected and the last
+// proxy hop worked" distinguishable from "the service exists but no connection has succeeded".
+function statusCard(p) {
+  var level = String(p.level || "warn").toLowerCase();
+  if (level !== "ok" && level !== "error") level = "warn";
+  var card = el("div", "card statuscard " + level);
+  card.appendChild(el("span", "statusdot"));
+  var text = S.lang === "zh" ? (p.textZh || p.textEn || "") : (p.textEn || p.textZh || "");
+  card.appendChild(el("div", "statustext", text));
+  return card;
+}
+
 // TWO SWITCHES ON ONE LINE, UNDER ONE LABEL -- for a pair that is ONE thing seen from two sides rather than two
 // settings that happen to be adjacent. The user's words for this pair: "它是一个单独的功能，一行两个开关".
 //
@@ -918,6 +933,9 @@ function groupCard(p, slot, disabled) {
   // that branches on it does so because the two kinds of item differ in what they HAVE, not in how they look:
   // a row has no draft to edit, no name field to open, and no order to rearrange.
   var byRows = (p.layout === "rows");
+  // A rows item with many fields asks for one field per line (`fieldsWrap`). A proxy profile has five; keeping
+  // them on the title's line pushed the last fields beyond the window.
+  var fieldsWrap = byRows && !!p.fieldsWrap;
   // ... and a rows group whose items are IDENTIFIED BY THEIR NAME asks for a text box to add one with
   // (`addHintZh`/`addHintEn`): the feature cannot invent a program name, so the plain "append an item" button
   // would create a row that matches nothing and cannot be fixed.
@@ -1320,7 +1338,8 @@ function groupCard(p, slot, disabled) {
       var locked = !!item.locked;
       // The row's own bottom border is dropped on the LAST one, exactly as the list control does it -- a
       // selector would have to guess, and the guess breaks the moment anything else lands in the card.
-      var r = el("div", "skiprow" + (i === items.length - 1 ? " last" : "") + (locked ? " locked" : ""));
+      var r = el("div", "skiprow" + (fieldsWrap ? " fields-wrap" : "") +
+                         (i === items.length - 1 ? " last" : "") + (locked ? " locked" : ""));
       r.appendChild(el("div", "nm", itemTitle(p, item, i)));
       (p.fields || []).forEach(function (fld) {
         if (toggles.indexOf(fld.id) >= 0) return; // drawn as a switch further along this same line
@@ -2833,7 +2852,10 @@ function renderFeature(slot) {
     // rather than invisible, which is the honest failure: the panel cannot invent a control it was never told
     // about, and drawing nothing would make a typo in a feature's document look like a feature with fewer
     // settings.
-    if (p.type === "list") {
+    if (p.type === "status") {
+      if (anyRow) { b.appendChild(cc); cc = el("div", "card"); anyRow = false; }
+      b.appendChild(statusCard(p));
+    } else if (p.type === "list") {
       if (anyRow) { b.appendChild(cc); cc = el("div", "card"); anyRow = false; }
       b.appendChild(listRow(p, slot));
     } else if (p.type === "group") {

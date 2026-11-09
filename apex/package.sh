@@ -28,7 +28,7 @@
 # will not contain it, and the read-back below lists what shipped).
 #
 # ⚠️ AND IT IS CHECKED AFTER IT IS BUILT (see the read-back), not trusted -- the same way the settings-file rule is.
-PUBLIC_FEATURES="AutoIME KeepAwake MediaControl SmoothWheel"
+PUBLIC_FEATURES="AppProxy AutoIME KeepAwake MediaControl SmoothWheel"
 # ⚠️ THE PRIVATE ONES ARE STILL BUILT AND STILL DEPLOYED to the author's own copy -- they are simply not shipped.
 # Build-time exclusion would be a second, invisible difference between "what I run" and "what I test"; this is one
 # decision in one place, at the moment of packaging.
@@ -94,6 +94,18 @@ for d in "$SRC"/Plugins/*/; do
   mkdir -p "$DEST/Plugins/$id"
   cp "$d$id.dll" "$DEST/Plugins/$id/" || exit 1
   echo "   Plugins/$id/$id.dll"
+  # A feature may carry an injected-payload PE beside its main DLL. It is part of the program, not user data,
+  # and the extension is deliberately not `.dll` (see apex/build.sh).
+  for payload in "$d"*.payload; do
+    [ -f "$payload" ] || continue
+    cp "$payload" "$DEST/Plugins/$id/" || exit 1
+    echo "   Plugins/$id/${payload##*/}"
+  done
+  for exe in "$d"*.exe; do
+    [ -f "$exe" ] || continue
+    cp "$exe" "$DEST/Plugins/$id/" || exit 1
+    echo "   Plugins/$id/${exe##*/}"
+  done
 done
 
 rm -f "$OUT"
@@ -140,6 +152,23 @@ for id in $PUBLIC_FEATURES; do
     echo "   the allow-list pattern does not match what the staging loop produced"
     exit 1
   fi
+  for payload in "$SRC/Plugins/$id"/*.payload; do
+    [ -f "$payload" ] || continue
+    if ! echo "$entries" | grep -qi "Plugins/$id/${payload##*/}"; then
+      echo
+      echo "FAIL: '$id' has a built payload '${payload##*/}' that is NOT in the package:"
+      echo "   the staging/copy rules do not carry runtime support files"
+      exit 1
+    fi
+  done
+  for exe in "$SRC/Plugins/$id"/*.exe; do
+    [ -f "$exe" ] || continue
+    if ! echo "$entries" | grep -qi "Plugins/$id/${exe##*/}"; then
+      echo
+      echo "FAIL: '$id' runtime executable '${exe##*/}' is NOT in the package"
+      exit 1
+    fi
+  done
 done
 
 size=$(stat -c %s "$OUT" 2>/dev/null || echo 0)

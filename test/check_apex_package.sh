@@ -30,7 +30,7 @@ fail=0
 # to disagree with the script. If both read one variable, a change to that variable would move both halves together and
 # the gate would agree with any mistake.
 PRIVATE="VolumeLock"
-PUBLIC="AutoIME KeepAwake MediaControl SmoothWheel"
+PUBLIC="AppProxy AutoIME KeepAwake MediaControl SmoothWheel"
 
 echo "== 1. the package can be built, and says what it did =="
 if [ ! -f "$SRC/apex.exe" ]; then
@@ -94,6 +94,26 @@ for id in $PUBLIC; do
     echo "   FAIL: '$id' is built and public but is MISSING from the package"
     fail=1
   fi
+  for payload in "$SRC/Plugins/$id"/*.payload; do
+    [ -f "$payload" ] || continue
+    rel="Plugins/$id/${payload##*/}"
+    if printf '%s\n' "$entries" | grep -qi "$rel"; then
+      echo "   ok  '$id' payload ${payload##*/} shipped"
+    else
+      echo "   FAIL: '$id' payload ${payload##*/} is built but MISSING from the package"
+      fail=1
+    fi
+  done
+  for exe in "$SRC/Plugins/$id"/*.exe; do
+    [ -f "$exe" ] || continue
+    rel="Plugins/$id/${exe##*/}"
+    if printf '%s\n' "$entries" | grep -qi "$rel"; then
+      echo "   ok  '$id' runtime executable ${exe##*/} shipped"
+    else
+      echo "   FAIL: '$id' runtime executable ${exe##*/} is built but MISSING from the package"
+      fail=1
+    fi
+  done
 done
 
 echo

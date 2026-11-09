@@ -110,6 +110,15 @@ if [ -f "$TARGET/apex.exe" ] && [ -f "$TARGET/apex-settings.exe" ]; then
     echo "   FAIL: the feature DLLs were not copied"
     fail=1
   fi
+  if [ -f "$ROOT/build/apex/Plugins/AppProxy/AppProxyHook.payload" ] &&
+     [ -f "$TARGET/Plugins/AppProxy/AppProxyHook.payload" ] &&
+     cmp -s "$TARGET/Plugins/AppProxy/AppProxyHook.payload" \
+            "$ROOT/build/apex/Plugins/AppProxy/AppProxyHook.payload"; then
+    echo "   ok  and the injected payload beside its feature is too"
+  elif [ -f "$ROOT/build/apex/Plugins/AppProxy/AppProxyHook.payload" ]; then
+    echo "   FAIL: a feature's runtime payload was not copied"
+    fail=1
+  fi
 else
   echo "   FAIL: the deployed folder has no program in it"
   fail=1

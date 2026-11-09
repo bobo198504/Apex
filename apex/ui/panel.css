@@ -395,6 +395,22 @@ button:disabled { opacity: .45; }
 /* ---- notes and lists ---- */
 .note { color: var(--sub); font-size: 12px; margin: 2px 0 10px; }
 
+/* A FEATURE'S CONNECTION STATUS (apex/abi.h, `status`). The dot uses the same three semantic colours as the
+   feature list, so "connected", "waiting" and "failed" mean the same thing in both places. The text is
+   selectable because it often contains the exact reason a proxy failed, which the user may need to copy. */
+.statuscard { display: flex; align-items: flex-start; gap: 10px; }
+.statusdot {
+  flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%;
+  margin-top: 6px; background: var(--warn);
+}
+.statuscard.ok .statusdot { background: var(--dot-on); }
+.statuscard.error .statusdot { background: var(--dot-disabled); }
+.statustext {
+  min-width: 0; color: var(--fg); font-size: 13px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text; -webkit-user-select: text;
+}
+
 /* A NOTE BESIDE A LABEL (see listRow): smaller and greyer than the label, and pushed to the right of it.
    `--sub` is the same muted colour the rest of the page's secondary text uses, so "quiet" is one value and
    not a new shade someone has to keep in step. `text-align: right` puts it at the far end of the row, which
@@ -415,6 +431,17 @@ button:disabled { opacity: .45; }
    honest way for a name that does not fit; a two-line name is a row that has stopped being a row. */
 .skiprow .nm { flex: 1; min-width: 90px; user-select: text; -webkit-user-select: text;
                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A rows item whose fields ask for their own lines (`fieldsWrap` in apex/abi.h). The title and Remove stay on
+   the first line; every field below spans the row, so a proxy profile's five inputs cannot push the card past
+   the window. The inline rows layout is still the default and is unchanged. */
+.rowlist .skiprow.fields-wrap {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: 8px 12px;
+}
+.fields-wrap > .nm { grid-column: 1; grid-row: 1; min-width: 0; }
+.fields-wrap > button { grid-column: 2; grid-row: 1; justify-self: end; }
+.fields-wrap > .row { grid-column: 1 / -1; }
+.fields-wrap > .swcell { grid-column: 1 / -1; justify-self: end; }
 .addrow { display: flex; gap: 8px; margin-top: 12px; }
 /* ⚠️ A GROUP ASKED FOR `layout:"rows"` REUSES THE LIST CONTROL'S ROW (`.skiprow`), and that reuse is on purpose:
    "a name and its own controls, one per line" is the same interaction as the blacklist's rows, and the user has

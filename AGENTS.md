@@ -5,8 +5,9 @@
 
 ## 零、这个项目是什么
 
-**Apex 是一个功能集（PowerToys 那种形态），不是单一工具。** 现在有五个功能：SmoothWheel（丝滑滚动）、
-AutoIME（自动输入法）、KeepAwake（保持唤醒）、MediaControl（媒体控制）、VolumeLock（音量保护）——清单与现状见 §三，
+**Apex 是一个功能集（PowerToys 那种形态），不是单一工具。** 现在有六个功能：SmoothWheel（丝滑滚动）、
+AutoIME（自动输入法）、KeepAwake（保持唤醒）、MediaControl（媒体控制）、AppProxy（应用代理）、
+VolumeLock（音量保护）——清单与现状见 §三，
 细节见 `docs/rules/features.md`。
 
 ```
@@ -251,7 +252,7 @@ bash apex/deploy.sh                  # 只部署（门已经单独跑过时）
 | 改一个 `.cpp` 之后构建 | 4.1 s |
 | 改 AutoIME（Rust）之后构建 | 5.7 s |
 | 改 `panel.html` 之后构建 | 3.3 s |
-| **跑一遍构建层的全部门** | **约 52 s**（**22 扇**；大的几扇：modular 14.2 / deploy 7.3 / keepawake 5.3 / ime 4.1 / quickpanel 3.8 / mediacontrol 3.0 / **chart 2.8**。⚠️ 这个数是逐扇相加来的，**不是**一次重新量的整轮：那几轮赶在机器很忙的时候，逐扇相加到了 234 s，比安静时慢四倍，所以旧数不动、新数单独加。⚠️ 有两扇是加了又撤的：`check_feature_unifiedui`（2026-10-06 当天加、当天随功能撤）和 `check_apex_menutheme`（2026-10-12 当天加、当天随"托盘菜单被撤掉"一起删），所以这个总数只配一个「约」） |
+| **跑一遍构建层的全部门** | **约 52 s**（**24 扇**；大的几扇：modular 14.2 / deploy 7.3 / keepawake 5.3 / ime 4.1 / quickpanel 3.8 / mediacontrol 3.0 / **chart 2.8**。⚠️ 这个数是逐扇相加来的，**不是**一次重新量的整轮：那几轮赶在机器很忙的时候，逐扇相加到了 234 s，比安静时慢四倍，所以旧数不动、新数单独加。⚠️ 有两扇是加了又撤的：`check_feature_unifiedui`（2026-10-06 当天加、当天随功能撤）和 `check_apex_menutheme`（2026-10-12 当天加、当天随"托盘菜单被撤掉"一起删）；`check_feature_appproxy` 也未重量整轮，所以这个总数仍然只配一个「约」） |
 | **构建层 + 装配层一次跑完** | **约 155 s**（十扇装配门；`check_apex_flyout` 是 2026-09-22 加的。⚠️ 从 PowerShell 量的整轮 169 s 减掉约 1 秒 Git-bash 启动推出来的，**不是** bash 内的读数——要精确值跑 `test/timing.sh`。⚠️⚠️ **2026-10-12：装配层有 4 扇（icons / endtoend / persist / flyout）在"由工具进程树启动私有拷贝"时全红，而同一条 exe、同一个目录、改用 `Start-Process` 手动启动就全绿**——根因是这条会话里 `Shell_NotifyIcon` 对工具派生的进程返回 **error 5**，托盘图标加不上。**这不是代码缺陷**：用户那份部署的 Apex 日志里 `tray icon added` 正常。详见 `docs/rules/gates.md` 的「已知的环境性红」） |
 | `cargo` 空跑一次 | 61 ms —— **它从来不是"构建慢"的原因** |
 
@@ -280,6 +281,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | `AutoIME` | 自动输入法 / Auto IME | **Rust**（cdylib） | 完成 |
 | `KeepAwake` | 保持唤醒 / Keep Awake | C++ | 完成 |
 | `MediaControl` | 媒体控制 / Media Control | C++ | 完成（每屏亮度与熄屏、每个应用的音量） |
+| `AppProxy` | 应用代理 / App Proxy | C++ | 完成（第一版：普通 64 位程序的 TCP；SOCKS5 / HTTP CONNECT） |
 | `VolumeLock` | 音量保护 / Volume Guard | C++ | 完成（一张设备列表，每台各自一个音量；拖推子立刻生效，其它设备不动） |
 
 ### 三·一、★★ 版本号：**改动哪个组件，就同步更新哪个组件的版本号**（**每次都适用**）
@@ -297,7 +299,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | 设置面板侧栏显示 | 走快照（`settings_host.cpp`），**没有第二个号** |
 | 便携包文件名 | 由 `apex/package.sh` **读同一个宏**生成，不许手写 |
 
-**五个功能各自的号**（⚠️ 声明形式**不统一**，这是现状，改的时候按各自那一行来）：
+**六个功能各自的号**（⚠️ 声明形式**不统一**，这是现状，改的时候按各自那一行来）：
 
 | 功能 | 声明 | 位置 |
 |---|---|---|
@@ -305,6 +307,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | AutoIME | `version: c"1.2.1".as_ptr(),` | `features/AutoIME/src/lib.rs` |
 | KeepAwake | `const char *kVersion = "2.0.0";` | `features/KeepAwake/feature_keepawake.cpp` |
 | MediaControl | `const char *kVersion = "1.1.0";` | `features/MediaControl/feature_mediacontrol.cpp` |
+| AppProxy | `const char *kVersion = "2.1.1";` | `features/AppProxy/feature_appproxy.cpp` |
 | VolumeLock | **没有字段**，只有一句注释 `// VERSION: 1.0.0` | `features/VolumeLock/feature_volumelock.cpp` |
 
 ⚠️ **`VolumeLock` 那一行是已知缺陷**：它没有真正的版本字段，所以面板上那个位置是**空的**。
@@ -324,7 +327,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 ⚠️ **确认方式**：`grep -rn 'APEX_HOST_VERSION\|kVersion\s*=\|version: c' apex/ features/` 一次列全，
 不要凭记忆——上面的表就是**这么查出来的**，而它纠正了一个想当然：我原以为五个功能写法一致，实际有**三种写法 + 一个没有**。
 
-- **ABI 版本 = 23**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
+- **ABI 版本 = 24**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
   `features/AutoIME/src/abi.rs` —— **升版必须同时改两处**（漏了那边不是"退化"，是那个功能**直接加载失败**）。
   宿主要求版本**精确相等**；改契约就要升版，"只是加一个位"也要升。
   （11 → 12 是 `quickItems`：功能可以往**快速面板**里放几个自己的控件；
@@ -348,8 +351,10 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
   排序**（REAPER 与 Lertaro），提示句由功能拼——见 `docs/rules/cases.md` §3.9.1；
   21 → 22 是它**从"一串 kind"变成"一串 `ApexEngine`（kind + 程序自己的名字）"**：只有 kind 时加一个引擎要改
   宿主**和每个功能**，没改的功能会**静默丢掉**新引擎；名字随答案给之后，加引擎只是宿主那边一行表 + 一个探测函数
-  （见 `common/engines.h` 与 `docs/rules/cases.md` §3.9.1）。
-  都见 `docs/rules/quickpanel.md`。）
+  （见 `common/engines.h` 与 `docs/rules/cases.md` §3.9.1）；
+  22 → 23 是 `select` 可以选择显示确认按钮；23 → 24 是 `status` 只读状态卡与 `group.fieldsWrap`
+  （项目字段太多时每条字段独立一行）。AppProxy 用前者明确回答“最近一次代理连接成功还是失败”，用后者
+  避免代理服务器的五个字段挤出窗口。）
 - **加一个功能 = 只写一个文件夹**（`features\<id>\`），面板一行都不用改。要画的新形状，**加进 `abi.h` 的契约**，
   绝不在页面里写死某个功能的名字、id 或字段。边界与理由：`docs/rules/features.md`。
 - ⚠️ **每个功能的名单/设置互不相干**（用户定的）：「每个插件的进程名字都是独立的，不要混用」。
@@ -361,6 +366,9 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 - ❌ **不替接收方做取舍**：不预判某个程序"吃不了这么多"就降低精度
 - ❌ **不自己驱动视图**：只把参数交给对方自己的机制
 - ❌ **不写 `%APPDATA%`/注册表**（除了读系统明暗与语言；**读**是必要的，写不行）
+  - **唯一例外（用户 2026-11-09 明确批准）**：`AppProxy` 可以由用户在插件页主动安装/卸载自己的
+    `ApexAppProxy` 服务；WinDivert 驱动服务由用户自行安装的 WinDivert 管理。Apex 不复制 WinDivert
+    DLL/SYS，只引用用户指定目录。该例外只覆盖 AppProxy 服务安装，不扩及其它功能。
 - ❌ **不要为了"自动"造跑不起来的探针**（已放弃两条：`thread_owner.cpp`、
   `apex_tray_state.cpp`——本机 `FindWindow("Shell_TrayWnd")` 返回 0，Win11 的托盘结构变了）
 

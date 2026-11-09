@@ -104,7 +104,7 @@ ChangedArtefacts() {
   for d in "$OUT"/Plugins/*/; do
     [ -d "$d" ] || continue
     id="$(basename "$d")"
-    for f in "$d"*.dll; do
+    for f in "$d"*.dll "$d"*.payload "$d"*.exe; do
       [ -f "$f" ] || continue
       rel="Plugins/$id/$(basename "$f")"
       if [ ! -f "$TARGET/$rel" ] || ! cmp -s "$f" "$TARGET/$rel"; then echo "$rel"; fi
@@ -278,11 +278,23 @@ for d in "$OUT"/Plugins/*/; do
   # Same rule one level down: a feature whose DLL is byte-identical to the deployed one is left alone (its
   # folder may hold the user's config.json right next to it, and not touching it at all is the safest form of
   # "not touching the user's data").
-  for f in "$d"*.dll; do
+  for f in "$d"*.dll "$d"*.payload "$d"*.exe; do
     [ -f "$f" ] || continue
-    if [ ! -f "$TARGET/Plugins/$id/$(basename "$f")" ] || ! cmp -s "$f" "$TARGET/Plugins/$id/$(basename "$f")"; then
-      cp -f "$f" "$TARGET/Plugins/$id/"
-      echo "   Plugins/$id/$(basename "$f")"
+    dst="$TARGET/Plugins/$id/$(basename "$f")"
+    if [ ! -f "$dst" ] || ! cmp -s "$f" "$dst"; then
+      if ! cp -f "$f" "$dst"; then
+        # A payload can be mapped by a target process and Windows refuses to overwrite it. Rename is still
+        # allowed for a mapped image; preserve the old file and put the new one at the canonical path.
+        old="$dst.old.$(date +%s)"
+        if mv "$dst" "$old" 2>/dev/null && cp -f "$f" "$dst"; then
+          echo "   Plugins/$id/$(basename "$f") (replaced; old mapped copy kept as $(basename "$old"))"
+        else
+          echo "   FAIL: could not replace $dst"
+          exit 1
+        fi
+      else
+        echo "   Plugins/$id/$(basename "$f")"
+      fi
     else
       echo "   Plugins/$id/$(basename "$f")  (unchanged, left alone)"
     fi

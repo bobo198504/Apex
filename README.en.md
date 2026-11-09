@@ -21,8 +21,11 @@ A Windows tool set in the shape of PowerToys: each feature does one thing.
 | **Auto IME** | Switches the input method by the program or control that has focus; rules are reordered by dragging and recorded by pressing a key |
 | **Keep Awake** | A list of programs, two switches per row — "keep awake" and "keep the screen on"; plus one unremovable "system-wide" row |
 | **Media Control** | One brightness slider and one screen-off button per monitor (also useful against OLED burn-in); one volume slider and one mute button per application |
+| **App Proxy** | Multiple SOCKS5 / HTTP CONNECT profiles, assigned per program; uses a user-installed WinDivert driver to redirect new connections |
 
 Every feature **minds its own business**: its own switch, its own settings file, its own *Exclude* list.
+
+App Proxy does not bundle WinDivert. Download WinDivert separately, point the feature at the folder containing `WinDivert.dll` and `WinDivert64.sys`, and install the Apex proxy service. Driver mode takes over new connections without restarting the target app. UDP 443 (QUIC) is rejected by default so browsers fall back to TCP; other UDP is not forwarded. Installing/removing the service requires UAC, and proxy passwords are stored in plain text in the feature's folder.
 
 ## The two projects that bring their own engine
 

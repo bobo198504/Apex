@@ -637,6 +637,45 @@ check("both pages render without throwing", rendered, renderError);
   }
 }
 
+// ---- A READ-ONLY STATUS CARD (apex/abi.h, `status`, ABI 23 -> 24) ----
+//
+// "The service is installed" and "the last proxy connection succeeded" are different answers, and the panel
+// must make the second one visible without turning it into an editable range control. The page chooses the dot
+// colour from the feature's level and draws the feature's sentence unchanged.
+{
+  P.controls(JSON.stringify({
+    params: [{
+      id: "serviceStatus", type: "status", level: "ok",
+      textZh: "服务已连接，最近一次代理连接成功。",
+      textEn: "Service connected; the latest proxy connection succeeded."
+    }],
+  }));
+  P.S.controls = JSON.parse(JSON.stringify(P.S.controls));
+  elements["body"].children.length = 0;
+  P.S.view = 0;
+  P.renderFeature(0);
+
+  function findByClassForStatus(node, want, depth) {
+    if (!node || (depth || 0) > 8) return null;
+    if ((node.className || "").split(" ").indexOf(want) >= 0) return node;
+    const kids = node.children || [];
+    for (let i = 0; i < kids.length; i++) {
+      const hit = findByClassForStatus(kids[i], want, (depth || 0) + 1);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  const card = findByClassForStatus(elements["body"], "statuscard", 0);
+  const text = findByClassForStatus(card, "statustext", 0);
+  check("a feature's status answer gets a read-only card", !!card && !!text,
+        card ? "class=" + card.className : "no status card");
+  check("  which shows the feature's sentence in the page's language",
+        !!text && String(text.textContent).indexOf("服务已连接") >= 0,
+        text ? String(text.textContent) : "-");
+  check("  and the level selects the status colour", !!card && card.className.indexOf("ok") >= 0,
+        card ? card.className : "-");
+}
+
 // ---- THE CHART ANIMATES ON WHEEL ACTIVITY, NOT ON A TIMER ----
 //
 // ---- THE MOTION CURVE: DRAWN AT ONCE, ANIMATED ONLY BY REAL WHEEL ACTIVITY ----
@@ -987,8 +1026,8 @@ check("both pages render without throwing", rendered, renderError);
     (node.children || []).forEach((c) => { n += countButtons(c, (depth || 0) + 1); });
     return n;
   }
-  function rowsGroupDoc() {
-    return JSON.stringify({ params: [{
+  function rowsGroupDoc(fieldsWrap) {
+    const g = {
       id: "rules", type: "group", labelZh: "程序名单", labelEn: "Programs",
       layout: "rows", rowToggle: ["awake", "display"],
       addHintZh: "例如 chrome.exe", addHintEn: "e.g. chrome.exe",
@@ -996,8 +1035,10 @@ check("both pages render without throwing", rendered, renderError);
                 { id: "display", type: "bool", labelZh: "阻止熄屏", labelEn: "Keep the screen on" } ],
       items: [ { titleZh: "系统全局", titleEn: "System-wide", locked: true, values: { awake: 0, display: 0 } },
                { title: "chrome.exe", values: { awake: 1, display: 0 } },
-               { title: "vlc.exe", values: { awake: 1, display: 1 } } ],
-    }]});
+               { title: "vlc.exe", values: { awake: 1, display: 1 } } ]
+    };
+    if (fieldsWrap) g.fieldsWrap = true;
+    return JSON.stringify({ params: [g] });
   }
   const bodyRows = renderGroup(rowsGroupDoc());
   check("a group asking for layout=rows draws one line per item",
@@ -1014,6 +1055,14 @@ check("both pages render without throwing", rendered, renderError);
   // and a tooltip is not an answer to "which one is which" for a list read at a glance.
   check("  and each switch carries its own visible label",
         countByClass(bodyRows, "swtxt", 0) === 6, "labels=" + countByClass(bodyRows, "swtxt", 0));
+  check("  fields share the item line by default", countByClass(bodyRows, "fields-wrap", 0) === 0, "");
+  {
+    const wrapped = renderGroup(rowsGroupDoc(true));
+    check("  but a group with fieldsWrap gives every field its own line",
+          countByClass(wrapped, "fields-wrap", 0) === 3,
+          "wrapped lines=" + countByClass(wrapped, "fields-wrap", 0));
+    renderGroup(rowsGroupDoc());
+  }
 
   const rowList = findBy(bodyRows, (n) => (n.className || "").split(" ").indexOf("rowlist") >= 0);
   check("  the lines live in their own list", !!rowList && rowList.children.length === 3, "");

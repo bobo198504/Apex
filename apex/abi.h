@@ -104,6 +104,14 @@
 //         and no event fires. A list of candidates whose FIRST entry can never be taken is a control that is
 //         broken for exactly one of its items, and it reports nothing when it happens.
 //
+// 23 -> 24: TWO PAGE SHAPES FOR APPPROXY'S CONNECTION SETTINGS.
+//         * `status` -- a READ-ONLY STATUS CARD at the top of a feature's page. It carries one sentence in each
+//           language and a level (`ok`, `warn`, `error`). "The service is installed" is not the question the user
+//           is asking; "the last connection succeeded" is.
+//         * `group.fieldsWrap` -- a rows group whose item fields each take their own line instead of sharing one.
+//           A proxy profile has five fields; one line ran past the window edge.
+//         Both are keys a page acts on, so the page-facing contract changed even though no struct field did.
+//
 //         ⚠️ A KEY A PAGE ACTS ON, like `noAdd`, `waiting`, `quick` and `live` before it -- and the usual
 //         warning applies with the usual force: a page that does not know this key shows a dropdown whose
 //         selection takes effect immediately, which for a list of devices means "adding a device you merely
@@ -176,7 +184,7 @@
 // The version is bumped rather than a field simply appended, because the host requires an EXACT match -- see
 // the loader: a DLL built against an older layout would otherwise be read past its own end. Refusing it with a
 // log line is the whole point of carrying a version at all.
-#define APEX_ABI_VERSION 23u
+#define APEX_ABI_VERSION 24u
 
 #ifdef __cplusplus
 extern "C" {
@@ -565,6 +573,10 @@ typedef struct ApexFeature
   //                 written once, so a slider and its piece of curve cannot end up different colours.
   //                 `seg` says WHICH SEGMENT that is; see the note under `curve`.
   //   * `bool`   -- a switch.
+  //   * `status` -- a READ-ONLY CONNECTION/HEALTH CARD (ABI 23 -> 24). It carries no control and is never sent
+  //                 to `setControl`; `textZh`/`textEn` are the sentence to show and `level` is one of `ok`,
+  //                 `warn` or `error`. The FEATURE decides those values because only it can know whether the last
+  //                 connection succeeded; the page only chooses the dot colour and draws the words.
   //   * `list`   -- a list of strings the user edits. THE FEATURE OWNS THE LIST: where it lives, what it
   //                 means, whether it is used at all. Apex provides the editor and nothing else -- a
   //                 blacklist is not something every feature has, so it is not something the host knows
@@ -643,6 +655,11 @@ typedef struct ApexFeature
   //                   "master" a LIST of items, with only the SELECTED one's fields shown beside it;
   //                   "rows"   one LINE per item, every field live, the `rowToggle` switches and a remove
   //                            button in the line. See its own note below.
+  //
+  //                 `fieldsWrap` -- OPTIONAL, only meaningful with `layout:"rows"`: draw each field in the item on
+  //                          its own labelled line under the item title. Without it the fields share the title's
+  //                          horizontal line, which is right for one switch but runs past the window for a proxy
+  //                          profile's five fields (type, server, port, username, password).
   //
   //                 ⚠️ AND "rows" IS A THIRD KIND OF DATA, NOT A COMPACT "stack". A rule has a dozen fields, a
   //                 name you type once and a draft worth having; a LIST OF PROGRAMS WITH SWITCHES has no draft
