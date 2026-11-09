@@ -5,6 +5,22 @@
 `*` 和 `+` 会变成同一种圆点，符号的区分就没了）。只写"改了什么"。
 -->
 
+## 1.7.0
+
+## 更新内容
+
+```
++ 版本号：主程序 1.7
++ 应用代理状态卡固定显示 6 行：第一行是服务状态，下面五行实时显示最近连接的程序和目标地址
+```
+
+## What's changed
+
+```
++ Version: the host is 1.7
++ App Proxy's status card now has six fixed rows: service state on the first line, and the five most recent program-to-target connections below it
+```
+
 ## 1.6.0
 
 ## 更新内容

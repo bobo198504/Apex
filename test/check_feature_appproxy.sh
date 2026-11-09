@@ -60,7 +60,8 @@ node -e '
     throw new Error("the running-process dropdown is back; programs must be typed by name");
   const status = d.params.find(p => p.id === "serviceStatus");
   if (status.type !== "status" || !status.textZh || !status.textEn ||
-      ["ok", "warn", "error"].indexOf(status.level) < 0)
+      ["ok", "warn", "error"].indexOf(status.level) < 0 ||
+      status.live !== true || !Array.isArray(status.lines) || status.lines.length !== 5)
     throw new Error("the service status card is missing or malformed");
   const proxies = d.params.find(p => p.id === "proxies");
   if (proxies.type !== "group" || proxies.layout !== "rows" || proxies.items.length !== 2)

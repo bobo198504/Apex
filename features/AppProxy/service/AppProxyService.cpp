@@ -22,6 +22,7 @@
 
 #include "../proxy_common.h"
 #include "../process_tree.h"
+#include "../service_status.h"
 #include "windivert_api.h"
 
 namespace {
@@ -83,6 +84,8 @@ char g_lastResult[16] = {0};
 char g_lastApp[64] = {0};
 char g_lastTarget[96] = {0};
 char g_lastError[160] = {0};
+char g_recent[appproxy::kRecentLines][160] = {{0}};
+int g_recentCount = 0;
 ULONGLONG g_lastStatusWrite = 0;
 LONG g_statusWriting = 0;
 
@@ -122,6 +125,8 @@ void WriteStatus(const char *state, const char *detail)
   char lastApp[64] = {0};
   char lastTarget[96] = {0};
   char lastError[160] = {0};
+  char recent[appproxy::kRecentLines][160] = {{0}};
+  int recentCount = 0;
   if (g_statusLockReady)
   {
     EnterCriticalSection(&g_statusLock);
@@ -129,6 +134,9 @@ void WriteStatus(const char *state, const char *detail)
     appproxy::Copy(lastApp, sizeof(lastApp), g_lastApp);
     appproxy::Copy(lastTarget, sizeof(lastTarget), g_lastTarget);
     appproxy::Copy(lastError, sizeof(lastError), g_lastError);
+    recentCount = g_recentCount;
+    for (int i = 0; i < recentCount; ++i)
+      appproxy::Copy(recent[i], sizeof(recent[i]), g_recent[i]);
     LeaveCriticalSection(&g_statusLock);
   }
   const long relayOk = (long)InterlockedCompareExchange(&g_relayOk, 0, 0);
@@ -152,6 +160,8 @@ void WriteStatus(const char *state, const char *detail)
           state, detail ? detail : "", (unsigned)g_relayPort, packets,
           matches, rewrites, relayOk, relayFail, ipv6Blocked,
           quicBlocked, lastResult, lastApp, lastTarget, lastError);
+  for (int i = 0; i < recentCount; ++i)
+    fprintf(f, "recent_%d=%s\r\n", i + 1, recent[i]);
   fclose(f);
   g_lastStatusWrite = GetTickCount64();
   InterlockedExchange(&g_statusWriting, 0);
@@ -182,6 +192,36 @@ void RecordMatch(const char *app, const char *target)
   LeaveCriticalSection(&g_statusLock);
 }
 
+void RememberRecentLocked(const char *app, const char *target)
+{
+  char entry[160] = {0};
+  snprintf(entry, sizeof(entry), "%s|%s", app && app[0] ? app : "?",
+           target && target[0] ? target : "?");
+  int found = -1;
+  for (int i = 0; i < g_recentCount; ++i)
+    if (strcmp(g_recent[i], entry) == 0)
+    {
+      found = i;
+      break;
+    }
+  if (found == 0)
+    return;
+  if (found > 0)
+  {
+    for (int i = found; i > 0; --i)
+      appproxy::Copy(g_recent[i], sizeof(g_recent[i]), g_recent[i - 1]);
+    appproxy::Copy(g_recent[0], sizeof(g_recent[0]), entry);
+    return;
+  }
+  const int keep = g_recentCount < appproxy::kRecentLines ? g_recentCount
+                                                          : appproxy::kRecentLines - 1;
+  for (int i = keep; i > 0; --i)
+    appproxy::Copy(g_recent[i], sizeof(g_recent[i]), g_recent[i - 1]);
+  appproxy::Copy(g_recent[0], sizeof(g_recent[0]), entry);
+  if (g_recentCount < appproxy::kRecentLines)
+    ++g_recentCount;
+}
+
 void RecordRelayResult(bool ok, const char *app, const TargetV4 &target, const char *error)
 {
   char targetText[96] = {0};
@@ -197,6 +237,8 @@ void RecordRelayResult(bool ok, const char *app, const TargetV4 &target, const c
     appproxy::Copy(g_lastApp, sizeof(g_lastApp), app);
     appproxy::Copy(g_lastTarget, sizeof(g_lastTarget), targetText);
     appproxy::Copy(g_lastError, sizeof(g_lastError), ok ? "" : error);
+    if (ok)
+      RememberRecentLocked(app, targetText);
     LeaveCriticalSection(&g_statusLock);
   }
   MaybeWriteRunningStatus();

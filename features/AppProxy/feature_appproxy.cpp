@@ -50,7 +50,7 @@ extern "C" int atexit(void (*)(void))
 namespace {
 
 const char *kId = "AppProxy";
-const char *kVersion = "2.1.1";
+const char *kVersion = "2.2.0";
 const int kScanMs = 500;
 const int kMaxTracked = 128;
 const int kLogCap = 256 * 1024;
@@ -466,128 +466,70 @@ void BuildStatusNotes(const Status &status, const appproxy::Config &c, bool serv
                       const appproxy::ServiceStatus &ss, char *noteZh, int zhCap,
                       char *noteEn, int enCap)
 {
-  const char *lastApp = ss.lastApp[0] ? ss.lastApp : "";
-  const char *lastTarget = ss.lastTarget[0] ? ss.lastTarget : "";
-  const char *lastError = ss.lastError[0] ? ss.lastError : "";
-
   if (!status.enabled)
   {
-    _snprintf(noteZh, zhCap, "插件总开关已关闭，当前不会转发任何网络流量。");
-    _snprintf(noteEn, enCap, "The feature is off, so no traffic is being routed.");
+    _snprintf(noteZh, zhCap, "服务未启用");
+    _snprintf(noteEn, enCap, "Service disabled");
   }
   else if (!ConfigReady(c))
   {
-    _snprintf(noteZh, zhCap,
-              "配置还没有完成：请填写 WinDivert 目录、代理服务器，并添加至少一个应用程序。");
-    _snprintf(noteEn, enCap,
-              "Setup is incomplete: choose the WinDivert folder, configure a proxy, and add at "
-              "least one application.");
+    _snprintf(noteZh, zhCap, "配置未完成");
+    _snprintf(noteEn, enCap, "Setup incomplete");
   }
   else if (!serviceRunning)
   {
     if (ss.any && appproxy::EqNoCase(ss.state, "error") && ss.detail[0])
-      _snprintf(noteZh, zhCap,
-                "服务未连接。驱动启动失败：%s。当前只能用用户态兼容模式，Edge 等沙箱程序可能无法接管。",
-                ss.detail);
+      _snprintf(noteZh, zhCap, "服务未连接 · 驱动启动失败");
     else
-      _snprintf(noteZh, zhCap,
-                "服务未连接。当前只有用户态兼容模式；请点「安装 / 修复服务」，Edge、ChatGPT "
-                "等现代程序可能无法接管。");
+      _snprintf(noteZh, zhCap, "服务未连接");
     if (ss.any && appproxy::EqNoCase(ss.state, "error") && ss.detail[0])
-      _snprintf(noteEn, enCap,
-                "Service not connected. The driver failed to start: %s. Only the user-mode "
-                "compatibility path is active, so Edge and ChatGPT may not be intercepted.",
-                ss.detail);
+      _snprintf(noteEn, enCap, "Service disconnected · Driver failed to start");
     else
-      _snprintf(noteEn, enCap,
-                "Service not connected. Only the user-mode compatibility path is active; press "
-                "\"Install / repair service\" because modern programs such as Edge and ChatGPT "
-                "may not be intercepted.");
+      _snprintf(noteEn, enCap, "Service disconnected");
   }
   else if (ss.any && appproxy::EqNoCase(ss.state, "error"))
   {
-    _snprintf(noteZh, zhCap, "服务已启动，但 WinDivert 驱动连接失败：%s。",
-              ss.detail[0] ? ss.detail : "没有提供详细原因");
-    _snprintf(noteEn, enCap, "The service is running, but the WinDivert driver failed: %s.",
-              ss.detail[0] ? ss.detail : "no details were provided");
+    _snprintf(noteZh, zhCap, "服务连接失败");
+    _snprintf(noteEn, enCap, "Service connection failed");
   }
   else if (appproxy::EqNoCase(ss.lastResult, "fail"))
   {
-    _snprintf(noteZh, zhCap,
-              "服务已连接，但最近一次代理连接失败。成功 %d 次，失败 %d 次。%s%s%s%s",
-              ss.relayOk, ss.relayFail, lastApp, lastApp[0] && lastTarget[0] ? " → " : "",
-              lastTarget, lastError[0] ? "" : "");
-    if (lastError[0])
-    {
-      const size_t used = strlen(noteZh);
-      _snprintf(noteZh + used, zhCap - (int)used, " 错误：%s。", lastError);
-    }
-    _snprintf(noteEn, enCap,
-              "Service connected, but the latest proxy connection failed. Successes: %d, "
-              "failures: %d. %s%s%s",
-              ss.relayOk, ss.relayFail, lastApp, lastApp[0] && lastTarget[0] ? " -> " : "",
-              lastTarget);
-    if (lastError[0])
-    {
-      const size_t used = strlen(noteEn);
-      _snprintf(noteEn + used, enCap - (int)used, " Error: %s.", lastError);
-    }
+    _snprintf(noteZh, zhCap, "服务已连接 · 最近失败 · 成功 %d / 失败 %d", ss.relayOk,
+              ss.relayFail);
+    _snprintf(noteEn, enCap, "Service connected · Latest failed · %d ok / %d failed",
+              ss.relayOk, ss.relayFail);
   }
   else if (appproxy::EqNoCase(ss.lastResult, "ok"))
   {
-    _snprintf(noteZh, zhCap,
-              "服务已连接，最近一次代理连接成功。累计成功 %d 次，失败 %d 次。%s%s%s",
-              ss.relayOk, ss.relayFail, lastApp, lastApp[0] && lastTarget[0] ? " → " : "",
-              lastTarget);
-    _snprintf(noteEn, enCap,
-              "Service connected; the latest proxy connection succeeded. Successes: %d, "
-              "failures: %d. %s%s%s",
-              ss.relayOk, ss.relayFail, lastApp, lastApp[0] && lastTarget[0] ? " -> " : "",
-              lastTarget);
+    _snprintf(noteZh, zhCap, "服务已连接 · 最近成功 · 成功 %d / 失败 %d", ss.relayOk,
+              ss.relayFail);
+    _snprintf(noteEn, enCap, "Service connected · Latest succeeded · %d ok / %d failed",
+              ss.relayOk, ss.relayFail);
   }
   else if (ss.rewrites > 0)
   {
-    _snprintf(noteZh, zhCap,
-              "服务已连接，已接管 %d 条 TCP 连接，正在等待代理握手结果。", ss.rewrites);
-    _snprintf(noteEn, enCap,
-              "Service connected; %d TCP connection(s) were taken over and are waiting for the "
-              "proxy handshake.",
-              ss.rewrites);
+    _snprintf(noteZh, zhCap, "服务已连接 · 正在建立代理连接");
+    _snprintf(noteEn, enCap, "Service connected · Establishing proxy connection");
   }
   else if (ss.ipv6Blocked > 0 || ss.quicBlocked > 0)
   {
-    _snprintf(noteZh, zhCap,
-              "服务已连接。已拦截 %d 条 IPv6 TCP 连接和 %d 条 QUIC 数据报，等待应用回退到 IPv4 "
-              "TCP 后转发。",
-              ss.ipv6Blocked, ss.quicBlocked);
-    _snprintf(noteEn, enCap,
-              "Service connected. Blocked %d IPv6 TCP connection(s) and %d QUIC datagram(s) so "
-              "the application falls back to proxied IPv4 TCP.",
-              ss.ipv6Blocked, ss.quicBlocked);
+    _snprintf(noteZh, zhCap, "服务已连接 · 等待应用回退到 IPv4");
+    _snprintf(noteEn, enCap, "Service connected · Waiting for IPv4 fallback");
   }
   else if (ss.matches > 0)
   {
-    _snprintf(noteZh, zhCap,
-              "服务已连接，已匹配到已选应用，但还没有新的 TCP 连接需要转发。");
-    _snprintf(noteEn, enCap,
-              "Service connected. An application rule has matched, but there is no new TCP "
-              "connection to route yet.");
+    _snprintf(noteZh, zhCap, "服务已连接 · 已匹配应用");
+    _snprintf(noteEn, enCap, "Service connected · Application matched");
   }
   else if (ss.packets > 0)
   {
-    _snprintf(noteZh, zhCap,
-              "服务已连接，也看到了网络流量，但还没有匹配到已选应用程序。请确认程序名和规则。");
-    _snprintf(noteEn, enCap,
-              "Service connected and traffic is visible, but no selected application has matched "
-              "yet. Check the program name and its rule.");
+    _snprintf(noteZh, zhCap, "服务已连接 · 尚未匹配应用");
+    _snprintf(noteEn, enCap, "Service connected · No matching application yet");
   }
   else
   {
-    _snprintf(noteZh, zhCap,
-              "服务已连接，驱动已就绪，正在等待已选应用发起新连接。");
-    _snprintf(noteEn, enCap,
-              "Service connected and the driver is ready, waiting for a selected application to "
-              "open a new connection.");
+    _snprintf(noteZh, zhCap, "服务已连接 · 等待应用连接");
+    _snprintf(noteEn, enCap, "Service connected · Waiting for applications");
   }
 }
 
@@ -1079,7 +1021,39 @@ int SettingsJson(char *out, int outSize)
   AppendJson(out, outSize, o, "textEn");
   Append(out, outSize, o, ":");
   AppendJson(out, outSize, o, noteEn);
-  Append(out, outSize, o, "},");
+  Append(out, outSize, o, ",\"live\":true,\"lines\":[");
+  for (int i = 0; i < appproxy::kRecentLines; ++i)
+  {
+    char lineZh[220] = {0};
+    char lineEn[220] = {0};
+    if (i < serviceStatus.recentCount)
+    {
+      char recent[160] = {0};
+      appproxy::Copy(recent, sizeof(recent), serviceStatus.recent[i]);
+      char *bar = strchr(recent, '|');
+      if (bar)
+      {
+        *bar++ = 0;
+        _snprintf(lineZh, sizeof(lineZh), "%s → %s", recent, bar);
+        _snprintf(lineEn, sizeof(lineEn), "%s -> %s", recent, bar);
+      }
+      else
+        appproxy::Copy(lineZh, sizeof(lineZh), recent);
+    }
+    if (!lineZh[0])
+    {
+      appproxy::Copy(lineZh, sizeof(lineZh), "暂无最近连接");
+      appproxy::Copy(lineEn, sizeof(lineEn), "No recent connection");
+    }
+    if (!lineEn[0])
+      appproxy::Copy(lineEn, sizeof(lineEn), lineZh);
+    Append(out, outSize, o, "%s{\"textZh\":", i ? "," : "");
+    AppendJson(out, outSize, o, lineZh);
+    Append(out, outSize, o, ",\"textEn\":");
+    AppendJson(out, outSize, o, lineEn);
+    Append(out, outSize, o, "}");
+  }
+  Append(out, outSize, o, "]},");
 
   Append(out, outSize, o, "{\"id\":\"bypassLocal\",\"type\":\"bool\",\"value\":%d,",
          c.bypassLocal ? 1 : 0);

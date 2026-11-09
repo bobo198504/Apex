@@ -213,7 +213,9 @@ pub struct ApexFeature {
 /// `group.fieldsWrap` shape (five proxy fields on one line ran past the window). Both are page-facing keys
 /// with no Rust field, and the exact-match rule is unchanged: this constant moves with the C side or AutoIME
 /// does not load.
-pub const APEX_ABI_VERSION: c_uint = 24;
+/// ⚠️ 24 -> 25: `status` gained optional `lines` (bilingual recent-connection rows) and `live` (re-read the
+/// document while the status card is visible). Another page-facing change, another exact-match bump.
+pub const APEX_ABI_VERSION: c_uint = 25;
 
 pub const APEX_FEATURE_ENABLED: c_uint = 1;
 

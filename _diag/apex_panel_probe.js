@@ -202,6 +202,7 @@ try {
          "snapshot:window.__apexSnapshot, controls:window.__apexControls, t:t, " +
          "applyTheme:applyTheme, syncNativeTheme:syncNativeTheme, " +
          "activity:window.__apexActivity, stateChanged:window.__apexStateChanged, " +
+         "stopLiveGroups:stopLiveGroups, " +
          "balls:function(){return curveBorn;}};");
 } catch (e) {
   booted = false;
@@ -647,7 +648,15 @@ check("both pages render without throwing", rendered, renderError);
     params: [{
       id: "serviceStatus", type: "status", level: "ok",
       textZh: "服务已连接，最近一次代理连接成功。",
-      textEn: "Service connected; the latest proxy connection succeeded."
+      textEn: "Service connected; the latest proxy connection succeeded.",
+      live: true,
+      lines: [
+        { textZh: "firefox.exe → 203.0.113.10:443", textEn: "firefox.exe -> 203.0.113.10:443" },
+        { textZh: "chatgpt.exe → 203.0.113.11:443", textEn: "chatgpt.exe -> 203.0.113.11:443" },
+        { textZh: "暂无最近连接", textEn: "No recent connection" },
+        { textZh: "暂无最近连接", textEn: "No recent connection" },
+        { textZh: "暂无最近连接", textEn: "No recent connection" }
+      ]
     }],
   }));
   P.S.controls = JSON.parse(JSON.stringify(P.S.controls));
@@ -674,6 +683,18 @@ check("both pages render without throwing", rendered, renderError);
         text ? String(text.textContent) : "-");
   check("  and the level selects the status colour", !!card && card.className.indexOf("ok") >= 0,
         card ? card.className : "-");
+  const lines = [];
+  (function collectStatusLines(node, depth) {
+    if (!node || (depth || 0) > 8) return;
+    if ((node.className || "").split(" ").indexOf("statusline") >= 0) lines.push(node);
+    (node.children || []).forEach((c) => collectStatusLines(c, (depth || 0) + 1));
+  })(card, 0);
+  check("  with the fixed status line plus five recent-connection rows",
+        lines.length === 5 && String(lines[0].textContent).indexOf("firefox.exe") >= 0,
+        "rows=" + lines.length);
+  check("  and a live status card re-reads itself",
+        intervalsOf(1000).length === 1, "live timers=" + intervalsOf(1000).length);
+  P.stopLiveGroups();
 }
 
 // ---- THE CHART ANIMATES ON WHEEL ACTIVITY, NOT ON A TIMER ----

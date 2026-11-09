@@ -9,6 +9,8 @@
 
 namespace appproxy {
 
+static const int kRecentLines = 5;
+
 struct ServiceStatus
 {
   char state[32];
@@ -25,6 +27,8 @@ struct ServiceStatus
   int relayFail;
   int ipv6Blocked;
   int quicBlocked;
+  char recent[kRecentLines][160];
+  int recentCount;
   int any;
 };
 
@@ -99,6 +103,16 @@ inline void ParseServiceStatus(const char *text, int textLen, ServiceStatus *out
       Copy(out->lastTarget, (int)sizeof(out->lastTarget), v);
     else if (EqNoCase(s, "last_error"))
       Copy(out->lastError, (int)sizeof(out->lastError), v);
+    else if (strncmp(s, "recent_", 7) == 0)
+    {
+      int slot = 0;
+      if (ParseInt(s + 7, &slot) && slot >= 1 && slot <= kRecentLines)
+      {
+        Copy(out->recent[slot - 1], (int)sizeof(out->recent[slot - 1]), v);
+        if (slot > out->recentCount)
+          out->recentCount = slot;
+      }
+    }
   }
 }
 

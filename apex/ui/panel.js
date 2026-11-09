@@ -323,8 +323,25 @@ function statusCard(p) {
   if (level !== "ok" && level !== "error") level = "warn";
   var card = el("div", "card statuscard " + level);
   card.appendChild(el("span", "statusdot"));
+  var body = el("div", "statusbody");
   var text = S.lang === "zh" ? (p.textZh || p.textEn || "") : (p.textEn || p.textZh || "");
-  card.appendChild(el("div", "statustext", text));
+  var main = el("div", "statustext", text);
+  main.title = text;
+  body.appendChild(main);
+  var lines = p.lines || [];
+  if (lines.length) {
+    var list = el("div", "statuslines");
+    lines.forEach(function (line) {
+      var words = S.lang === "zh"
+        ? (line.textZh || line.textEn || "")
+        : (line.textEn || line.textZh || "");
+      var row = el("div", "statusline", words);
+      row.title = words;
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+  }
+  card.appendChild(body);
   return card;
 }
 
@@ -2051,7 +2068,7 @@ function syncWaitWatch(slot, json) {
 }
 
 // ---------------------------------------------------------------------------
-// A GROUP WHOSE ROWS ARE A LIVE PICTURE OF SOMETHING OUTSIDE THE PAGE (apex/abi.h, `live`, ABI 17 -> 18)
+// A GROUP OR STATUS CARD WHOSE CONTENT IS A LIVE PICTURE OF SOMETHING OUTSIDE THE PAGE (apex/abi.h, `live`)
 //
 // ⚠️ WHAT IT REPLACED IS A BUTTON, AND THE USER SAID SO IN ONE SENTENCE: "媒体控制列表的「刷新应用列表」按钮去掉，这个
 // 做成实时自动刷新". The volume group listed the programs that are making sound and carried an action that re-read
@@ -2075,13 +2092,13 @@ function stopLiveGroups() {
   liveGroupTimer = 0;
 }
 
-/// Start watching the page's live groups, or stop when it has none. Called with every document that is drawn.
+/// Start watching the page's live controls, or stop when it has none. Called with every document that is drawn.
 function syncLiveGroups(slot) {
   var params = (S.controls && S.controls.params) || [];
   var live = false;
   for (var i = 0; i < params.length; i++) {
     var p = params[i];
-    if (p && p.type === "group" && p.live) { live = true; break; }
+    if (p && p.live && (p.type === "group" || p.type === "status")) { live = true; break; }
   }
   if (!live) { stopLiveGroups(); return; }
   if (liveGroupTimer) return; // already watching this page; the answer that arrived is what started it

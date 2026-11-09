@@ -307,7 +307,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | AutoIME | `version: c"1.2.1".as_ptr(),` | `features/AutoIME/src/lib.rs` |
 | KeepAwake | `const char *kVersion = "2.0.0";` | `features/KeepAwake/feature_keepawake.cpp` |
 | MediaControl | `const char *kVersion = "1.1.0";` | `features/MediaControl/feature_mediacontrol.cpp` |
-| AppProxy | `const char *kVersion = "2.1.1";` | `features/AppProxy/feature_appproxy.cpp` |
+| AppProxy | `const char *kVersion = "2.2.0";` | `features/AppProxy/feature_appproxy.cpp` |
 | VolumeLock | **没有字段**，只有一句注释 `// VERSION: 1.0.0` | `features/VolumeLock/feature_volumelock.cpp` |
 
 ⚠️ **`VolumeLock` 那一行是已知缺陷**：它没有真正的版本字段，所以面板上那个位置是**空的**。
@@ -327,7 +327,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 ⚠️ **确认方式**：`grep -rn 'APEX_HOST_VERSION\|kVersion\s*=\|version: c' apex/ features/` 一次列全，
 不要凭记忆——上面的表就是**这么查出来的**，而它纠正了一个想当然：我原以为五个功能写法一致，实际有**三种写法 + 一个没有**。
 
-- **ABI 版本 = 24**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
+- **ABI 版本 = 25**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
   `features/AutoIME/src/abi.rs` —— **升版必须同时改两处**（漏了那边不是"退化"，是那个功能**直接加载失败**）。
   宿主要求版本**精确相等**；改契约就要升版，"只是加一个位"也要升。
   （11 → 12 是 `quickItems`：功能可以往**快速面板**里放几个自己的控件；
@@ -353,8 +353,8 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
   宿主**和每个功能**，没改的功能会**静默丢掉**新引擎；名字随答案给之后，加引擎只是宿主那边一行表 + 一个探测函数
   （见 `common/engines.h` 与 `docs/rules/cases.md` §3.9.1）；
   22 → 23 是 `select` 可以选择显示确认按钮；23 → 24 是 `status` 只读状态卡与 `group.fieldsWrap`
-  （项目字段太多时每条字段独立一行）。AppProxy 用前者明确回答“最近一次代理连接成功还是失败”，用后者
-  避免代理服务器的五个字段挤出窗口。）
+  （项目字段太多时每条字段独立一行）；24 → 25 是 `status` 的 `lines`（固定状态句下面五行最近连接）与
+  `live`（状态卡可见时每秒刷新）。AppProxy 用它们显示最近五个“程序 → 目标”。）
 - **加一个功能 = 只写一个文件夹**（`features\<id>\`），面板一行都不用改。要画的新形状，**加进 `abi.h` 的契约**，
   绝不在页面里写死某个功能的名字、id 或字段。边界与理由：`docs/rules/features.md`。
 - ⚠️ **每个功能的名单/设置互不相干**（用户定的）：「每个插件的进程名字都是独立的，不要混用」。

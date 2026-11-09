@@ -112,6 +112,14 @@
 //           A proxy profile has five fields; one line ran past the window edge.
 //         Both are keys a page acts on, so the page-facing contract changed even though no struct field did.
 //
+// 24 -> 25: `status` gained TWO OPTIONAL THINGS FOR A LIVE CONNECTION LIST:
+//         * `lines` -- up to five short bilingual rows below the fixed status sentence; and
+//         * `live` -- the feature says these rows describe something outside the page, so the panel re-reads
+//           the document once a second while it is visible.
+//         AppProxy uses its fixed first line for service state and the five rows for recent program -> target
+//         connections. A page that ignored these keys would still show the status sentence, but the recent
+//         connections would never appear or refresh.
+//
 //         ⚠️ A KEY A PAGE ACTS ON, like `noAdd`, `waiting`, `quick` and `live` before it -- and the usual
 //         warning applies with the usual force: a page that does not know this key shows a dropdown whose
 //         selection takes effect immediately, which for a list of devices means "adding a device you merely
@@ -184,7 +192,7 @@
 // The version is bumped rather than a field simply appended, because the host requires an EXACT match -- see
 // the loader: a DLL built against an older layout would otherwise be read past its own end. Refusing it with a
 // log line is the whole point of carrying a version at all.
-#define APEX_ABI_VERSION 24u
+#define APEX_ABI_VERSION 25u
 
 #ifdef __cplusplus
 extern "C" {
@@ -573,10 +581,11 @@ typedef struct ApexFeature
   //                 written once, so a slider and its piece of curve cannot end up different colours.
   //                 `seg` says WHICH SEGMENT that is; see the note under `curve`.
   //   * `bool`   -- a switch.
-  //   * `status` -- a READ-ONLY CONNECTION/HEALTH CARD (ABI 23 -> 24). It carries no control and is never sent
-  //                 to `setControl`; `textZh`/`textEn` are the sentence to show and `level` is one of `ok`,
-  //                 `warn` or `error`. The FEATURE decides those values because only it can know whether the last
-  //                 connection succeeded; the page only chooses the dot colour and draws the words.
+  //   * `status` -- a READ-ONLY CONNECTION/HEALTH CARD (ABI 23 -> 25). It carries no control and is never sent
+  //                 to `setControl`; `textZh`/`textEn` are the fixed first-line sentence and `level` is one of
+  //                 `ok`, `warn` or `error`. Optional `lines` is an array of `{"textZh":"...","textEn":"..."}`
+  //                 rows shown below it, and optional `live:true` makes the page re-read the document while it is
+  //                 visible. The FEATURE decides every value because only it knows what happened outside the page.
   //   * `list`   -- a list of strings the user edits. THE FEATURE OWNS THE LIST: where it lives, what it
   //                 means, whether it is used at all. Apex provides the editor and nothing else -- a
   //                 blacklist is not something every feature has, so it is not something the host knows

@@ -106,14 +106,18 @@ static int TestServiceStatus()
       "state=running\r\ndetail=driver attached\r\nrelay_port=10931\r\npackets=12\r\n"
       "matches=4\r\nrewrites=3\r\nrelay_ok=2\r\nrelay_fail=1\r\nipv6_blocked=5\r\n"
       "quic_blocked=7\r\nlast_result=ok\r\nlast_app=firefox.exe\r\n"
-      "last_target=203.0.113.10:443\r\nlast_error=\r\n";
+      "last_target=203.0.113.10:443\r\nlast_error=\r\n"
+      "recent_1=firefox.exe|203.0.113.10:443\r\n"
+      "recent_2=chatgpt.exe|203.0.113.11:443\r\n";
   appproxy::ServiceStatus s;
   appproxy::ParseServiceStatus(text, (int)strlen(text), &s);
   if (!s.any || strcmp(s.state, "running") != 0 || strcmp(s.detail, "driver attached") != 0 ||
       s.relayPort != 10931 || s.packets != 12 || s.matches != 4 || s.rewrites != 3 ||
       s.relayOk != 2 || s.relayFail != 1 || s.ipv6Blocked != 5 || s.quicBlocked != 7 ||
       strcmp(s.lastResult, "ok") != 0 || strcmp(s.lastApp, "firefox.exe") != 0 ||
-      strcmp(s.lastTarget, "203.0.113.10:443") != 0)
+      strcmp(s.lastTarget, "203.0.113.10:443") != 0 || s.recentCount != 2 ||
+      strcmp(s.recent[0], "firefox.exe|203.0.113.10:443") != 0 ||
+      strcmp(s.recent[1], "chatgpt.exe|203.0.113.11:443") != 0)
   {
     printf("FAIL: service-status.txt was not parsed into its named fields\n");
     return 1;
