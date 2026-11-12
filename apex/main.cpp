@@ -324,8 +324,10 @@ UINT g_panelDropMsg = 0;         // "the menu closed without asking" -- the warm
 #define APEXWM_STATE_TIMER 3     // watches the facts that can change while the panel is open (see NotifyStateChanges)
 // ⚠️ 4 IS RETIRED (it was APEXWM_TRAY_CLICK_TIMER), on the same terms this file retires IPC numbers: a timer id is a
 // number on a wire that no longer exists, and reusing it for something else is how "the flyout opened twice" becomes
-// a mystery. The timer went away with the double click -- see the note where the ids used to be defined.
+// a mystery. The single-click decision has a new timer below rather than reclaiming that number.
 #define APEXWM_FLYOUT_TIMER 5     // TEST-ONLY: shows the quick panel once at start-up (see FlyoutSelfTest)
+#define APEXWM_TRAY_SINGLE_TIMER 6
+#define APEXWM_TRAY_DBL_GUARD_TIMER 7
 
 // ---------------------------------------------------------------------------
 // SETTINGS ARE WRITTEN SOON AFTER THEY CHANGE, not only on the way out.
@@ -716,10 +718,14 @@ void Tick(void *)
 // use and nothing downstream has to know about codepages. (The plugin's notes record the same trap.)
 // ⚠️ THE `IDM_*` COMMAND IDS ARE GONE WITH THE MENU. There is no `CreatePopupMenu` in this file any more: the tray's
 // four commands are the flyout's footer buttons, and they travel as a `FooterAction` rather than as a menu id (see
-// `QuickPanelCommand` below). The `APEXWM_TRAY_CLICK_TIMER` is gone too, and for the same reason -- it existed only
-// to tell a single click from the first half of a double click, and there is no longer a second meaning to tell it
-// from.
+// `QuickPanelCommand` below). The old `APEXWM_TRAY_CLICK_TIMER` number stays retired; the single/double decision now
+// uses the two explicitly named timer ids below.
 #define APEXWM_TRAY (WM_APP + 1)
+
+// The shell may send the first WM_LBUTTONUP before it sends WM_LBUTTONDBLCLK, even with NOTIFYICON_VERSION_4.
+// Hold the single-click action until one double-click interval has passed; a real double click cancels it.
+bool g_traySinglePending = false;
+bool g_trayConsumeLeftUp = false;
 
 // "TaskbarCreated" is broadcast by the shell when Explorer starts or restarts. It has no fixed message
 // number, so it is registered at run time; the zero returned if that fails is harmless because the message
@@ -1249,6 +1255,23 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
       WatchFeatures();
       return 0;
     }
+    if (wp == APEXWM_TRAY_SINGLE_TIMER)
+    {
+      KillTimer(h, APEXWM_TRAY_SINGLE_TIMER);
+      if (g_traySinglePending)
+      {
+        g_traySinglePending = false;
+        LogLine("tray: single click confirmed");
+        host::QuickPanelToggle();
+      }
+      return 0;
+    }
+    if (wp == APEXWM_TRAY_DBL_GUARD_TIMER)
+    {
+      KillTimer(h, APEXWM_TRAY_DBL_GUARD_TIMER);
+      g_trayConsumeLeftUp = false;
+      return 0;
+    }
     // TEST-ONLY (APEX_QUICKPANEL_ONCE): one show, then one hide, then nothing. See QuickPanelSelfTest.
     if (wp == APEXWM_FLYOUT_TIMER)
     {
@@ -1274,19 +1297,10 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     // ⚠️⚠️ A SINGLE CLICK OPENS THE FLYOUT; A DOUBLE CLICK OPENS THE SETTINGS. The user asked for the second one
     // back after it was removed: "原来双击托盘可以直接打开设置的动作没了，这个要补回去".
     //
-    // ⚠️ AND THE WAY IT WAS REMOVED IS THE REASON IT IS CHEAP TO PUT BACK. The old version needed a TIMER -- a single
-    // click had to be held back for one `GetDoubleClickTime()` because "panel or settings?" could not be answered
-    // until the timeout had passed. That wait is gone and does NOT come back here, because the two gestures are no
-    // longer alternatives to be guessed at: Windows tells us which one happened.
-    //
-    // ⚠️ WHAT MAKES THAT TRUE IS `NOTIFYICON_VERSION_4` (see TrayAdd). Under the older protocol the shell delivers a
-    // double click as TWO `WM_LBUTTONUP`s and no `WM_LBUTTONDBLCLK` at all, so the panel would open and there would be
-    // no second event to tell us it had been a double -- which is exactly the situation the timer used to paper over.
-    //
-    // ⚠️ SO THE FIRST CLICK'S PANEL IS PUT AWAY BEFORE THE SETTINGS OPEN, and that is the honest handling of a gesture
-    // that has already been half-acted-on: the user's last act was a double click, and what they should be looking at
-    // is the settings window, not a flyout left over from the first half of it. `QuickPanelHide` rather than Toggle --
-    // the panel is up, and this is not a second press of the same button.
+    // ⚠️ `NOTIFYICON_VERSION_4` gives us a real WM_LBUTTONDBLCLK, but that alone is not enough on this machine: the
+    // first WM_LBUTTONUP still arrives first, and acting on it opens the flyout before the double click is known.
+    // That is the visible flash. So the single-click action is held for GetDoubleClickTime(); the real double-click
+    // event cancels it, hides any panel that was already open, and opens settings without toggling.
     //
     // ⚠️⚠️ AND THE SEQUENCE IS LOGGED, BECAUSE IT WAS ASSUMED RATHER THAN CHECKED. What the shell actually delivers --
     // whether the first half of a double click arrives as `WM_LBUTTONUP` (opening the panel, which this then has to
@@ -1319,6 +1333,13 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 
     if (LOWORD(lp) == WM_LBUTTONDBLCLK)
     {
+      KillTimer(h, APEXWM_TRAY_SINGLE_TIMER);
+      g_traySinglePending = false;
+      // Some shell versions still deliver the second WM_LBUTTONUP after this event. Swallow that release so it
+      // cannot arm the single-click timer again and reopen the flyout after the settings window appears.
+      g_trayConsumeLeftUp = true;
+      KillTimer(h, APEXWM_TRAY_DBL_GUARD_TIMER);
+      SetTimer(h, APEXWM_TRAY_DBL_GUARD_TIMER, GetDoubleClickTime(), nullptr);
       host::QuickPanelHide("the user double clicked the tray -- settings, not the flyout");
       LogLine("tray: double click -> settings");
       OpenSettings();
@@ -1349,13 +1370,32 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     // ⚠️ IT IS DELIBERATELY *NOT* FORWARDED TO THE TOGGLE. Handling it the same way would double-toggle every right
     // click even on systems that send only one of the two, and the release is the message that carries the user's
     // intent (it is the one the shell documents for tray activation).
-    if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_LBUTTONUP)
+    if (LOWORD(lp) == WM_RBUTTONUP)
     {
+      KillTimer(h, APEXWM_TRAY_SINGLE_TIMER);
+      KillTimer(h, APEXWM_TRAY_DBL_GUARD_TIMER);
+      g_traySinglePending = false;
+      g_trayConsumeLeftUp = false;
       // ⚠️ AND A SECOND CLICK CLOSES IT, WHICH IS WHAT A TRAY ICON IS EXPECTED TO DO. Without this the button
       // would open the panel and then be unable to put it away -- toggling is the whole behaviour of a tray
       // button, and QuickPanelToggle is where the "did the user just dismiss it by clicking away" guard lives
       // (see kDismissGuardMs), so this is one call rather than a state machine here.
       host::QuickPanelToggle();
+      return 0;
+    }
+    if (LOWORD(lp) == WM_LBUTTONUP)
+    {
+      if (g_trayConsumeLeftUp)
+      {
+        g_trayConsumeLeftUp = false;
+        KillTimer(h, APEXWM_TRAY_DBL_GUARD_TIMER);
+        LogLine("tray: swallowed the release after a double click");
+        return 0;
+      }
+      // NOTIFYICON_VERSION_4 still sends the first release before WM_LBUTTONDBLCLK on this machine. Hold the
+      // single-click action until one system double-click interval has elapsed; the double-click branch cancels it.
+      g_traySinglePending = true;
+      SetTimer(h, APEXWM_TRAY_SINGLE_TIMER, GetDoubleClickTime(), nullptr);
       return 0;
     }
     // ⚠️ THE CONTEXT MENU MESSAGE IS CONSUMED AND IGNORED, and it must return 0 rather than fall through: letting it
