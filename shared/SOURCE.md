@@ -29,7 +29,7 @@ model is finished ("模型已经近乎完美，不太需要更新，有的就是
 |---|---|---|
 | `model.h` | 178 lines | `ff6fecfe0105c0f338ada982412866c5` |
 | `anim3_core.h` | 226 lines | `8d2231cef1e3d70860ea30290198d40e` |
-| `anim161_core.h` | 1123 lines | `d785d9371295448461a033bb1efd179e` |
+| `anim161_core.h` | 1143 lines | `6b16d7f056c5fde03621e42b738589dd` |
 
 `device.h` was **not** copied: it is the plugin's own device/touchpad-tracking header and the feature here
 does not use it (the Apex host gets modifier state from the OS hook instead).
