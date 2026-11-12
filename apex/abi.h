@@ -104,7 +104,7 @@
 //         and no event fires. A list of candidates whose FIRST entry can never be taken is a control that is
 //         broken for exactly one of its items, and it reports nothing when it happens.
 //
-// 23 -> 24: TWO PAGE SHAPES FOR APPPROXY'S CONNECTION SETTINGS.
+// 23 -> 24: TWO PAGE SHAPES FOR NETWORKHUB'S CONNECTION SETTINGS.
 //         * `status` -- a READ-ONLY STATUS CARD at the top of a feature's page. It carries one sentence in each
 //           language and a level (`ok`, `warn`, `error`). "The service is installed" is not the question the user
 //           is asking; "the last connection succeeded" is.
@@ -116,8 +116,8 @@
 //         * `lines` -- up to five short bilingual rows below the fixed status sentence; and
 //         * `live` -- the feature says these rows describe something outside the page, so the panel re-reads
 //           the document once a second while it is visible.
-//         AppProxy uses its fixed first line for service state and the five rows for recent program -> target
-//         connections. A page that ignored these keys would still show the status sentence, but the recent
+//         The retired NetworkHub used its fixed first line for service state and five rows for recent targets.
+//         A page that ignored these keys would still show the status sentence, but the recent
 //         connections would never appear or refresh.
 //
 //         ⚠️ A KEY A PAGE ACTS ON, like `noAdd`, `waiting`, `quick` and `live` before it -- and the usual

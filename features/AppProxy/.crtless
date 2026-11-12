@@ -1,4 +1,0 @@
-This feature removes its injected payload's dependencies on a C runtime.
-Its main DLL is built without the MinGW CRT startup chain as well, because
-the default startup failed before DllMain in the same environment where the
-payload must be loaded into unrelated programs.

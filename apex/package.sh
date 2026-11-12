@@ -28,7 +28,7 @@
 # will not contain it, and the read-back below lists what shipped).
 #
 # ⚠️ AND IT IS CHECKED AFTER IT IS BUILT (see the read-back), not trusted -- the same way the settings-file rule is.
-PUBLIC_FEATURES="AppProxy AutoIME KeepAwake MediaControl SmoothWheel"
+PUBLIC_FEATURES="AutoIME KeepAwake MediaControl SmoothWheel"
 # ⚠️ THE PRIVATE ONES ARE STILL BUILT AND STILL DEPLOYED to the author's own copy -- they are simply not shipped.
 # Build-time exclusion would be a second, invisible difference between "what I run" and "what I test"; this is one
 # decision in one place, at the moment of packaging.

@@ -315,7 +315,7 @@ for FEAT in "$ROOT"/features/*/; do
   # -------------------------------------------------------------------------
   # OPTIONAL PAYLOADS
   #
-  # A feature may need a second DLL that is loaded INSIDE another program (today AppProxy's Winsock hook).
+  # A feature may need a second DLL that is loaded INSIDE another program; the build supports that shape.
   # The convention is `payload/<name>.cpp` -> `Plugins/<id>/<name>.payload`.
   #
   # ⚠️ THE EXTENSION IS NOT .DLL ON PURPOSE. Several gates iterate every `Plugins/*/*.dll` and call the
@@ -449,7 +449,7 @@ for FEAT in "$ROOT"/features/*/; do
   if [ -f "$FEAT/.crtless" ]; then
     # ⚠️ A FEATURE THAT MUST WORK IN OTHER PROGRAMS CAN OPT OUT OF THE MINGW CRT STARTUP CHAIN. The marker
     # belongs to the feature; no feature is named here. Such a feature supplies DllMain and avoids dynamic
-    # global initialisers. AppProxy needs this for its injected payload and uses the same discipline in its
+    # global initialisers. A feature with an injected payload needs the same discipline in its
     # main DLL, since a startup path that fails before DllMain is indistinguishable from a rejected feature.
     MAIN_EXTRA=(-fno-exceptions -fno-rtti -fno-threadsafe-statics -nostartfiles -Wl,--entry,DllMain)
   fi

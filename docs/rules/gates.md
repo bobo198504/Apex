@@ -31,7 +31,6 @@ bash test/run_all.sh --assembly   # 构建层 + 装配层：交付前跑一次
 | `check_app_release` | **小模型：窗口多长**（单个 = Glide，滚动中 = Glide + 固定 200ms）**＋滚动开始那一帧不许有突变**（跳的回归） |
 | `check_feature_chart` | **功能自己的控件文档**：JSON 结构合法 + 每个滑块都真的动曲线（跑真实 DLL） |
 | `check_feature_ime` | **AutoIME 的匹配引擎**：规则、顺序、锚定（跑真实测试，夹具是你的 9 条规则） |
-| `check_feature_appproxy` | **AppProxy**：页面/配置往返 + 真正拦截 `connect` 和异步 `ConnectEx`，HTTP CONNECT 与 SOCKS5 各跑一遍 |
 | `check_feature_keepawake` | **KeepAwake**：两个开关独立、名单开关真的在拦、发给系统的请求位精确（0x80000001/3/2/0）、**关掉时请求被清掉**、各插件名单互不干扰 |
 | `check_feature_mediacontrol` | **MediaControl**：每屏一行亮度、熄屏真的是一块盖住那块屏的窗口（连着、没锁屏、可撤销）、每个应用的音量、两个具名分组；⚠️ **它是构建层里唯一会短暂盖黑一块屏的门**（`APEX_MC_NO_DARK=1` 可跳过那一段） |
 | `check_apex_palette` | **面板配色**：明暗两条路（auto / 钉住）声明同一套；层次顺序对；对比度够；比被否掉的那版淡 |

@@ -87,7 +87,6 @@ run_gate check_app_tail        # the payout shape
 run_gate check_app_release     # how long a window lasts (the small model before the delivery layer)
 run_gate check_feature_chart   # the feature's own controls document: valid JSON, and every slider moves it
 run_gate check_feature_device  # which DEVICE sent the wheel: the classifier, and that a touchpad is left alone
-run_gate check_feature_appproxy # AppProxy: settings + a real intercepted TCP connection through HTTP and SOCKS5
 run_gate check_feature_ime     # AutoIME's matching engine: the rules, the order, the anchoring
 run_gate check_feature_keepawake  # KeepAwake: two independent switches, a gated list, and the power requests it makes
 run_gate check_feature_volumelock # VolumeLock: ONE device's volume, at the moment it appears, and nothing else touched

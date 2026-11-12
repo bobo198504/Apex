@@ -16,7 +16,6 @@
 | `KeepAwake` | 保持唤醒 / Keep Awake | **完成**（第三个功能，2026-09-19） |
 | `MediaControl` | 媒体控制 / Media Control | **完成**（第四个功能；每屏亮度与熄屏、每个应用的音量。§3.13） |
 | `VolumeLock` | 设备音量 / Volume Lock | **完成**（第五个功能，2026-10-08；指定设备一出现就把音量设到固定值。§3.15） |
-| `AppProxy` | 应用代理 / App Proxy | **完成**（第六个功能；第一版：普通 64 位程序的 TCP，SOCKS5 / HTTP CONNECT。§3.16） |
 
 **加一个功能 = 只写一个文件夹**（§3.8）：`features\<id>\` 里实现 `apex/abi.h` 的 `ApexFeature`，
 `build.sh` 自动收，**面板一行都不用改**——功能用 `settingsJson()` 描述自己的控件，页面照着画。
@@ -86,16 +85,16 @@
 | type | 是什么 | 备注 |
 |---|---|---|
 | `bool` | 开关 | |
-| `status` | 只读状态卡（固定状态句 + 最多五行实时列表 + `ok/warn/error`） | ABI 23 → 25；AppProxy 用它显示服务和最近五个程序连接目标 |
+| `status` | 只读状态卡（固定状态句 + 最多五行实时列表 + `ok/warn/error`） | ABI 23 → 25；这些能力仍保留在契约里，当前功能不使用 |
 | `range` | 滑块 | 带 `def` 的话，**双击复位到它** |
 | `list` | 字符串列表 | 用户增删；**归属和校验都是功能自己的**（见下） |
 | `curve` | 0..1 折线 | 可选；不发就没有曲线，不算错 |
 
 `group` 在 `layout:"rows"` 下另有可选的 `fieldsWrap`：一行项目的字段很多时，每条字段改为独立一行。
-AppProxy 的代理配置有“类型、服务器、端口、用户名、密码”五项，全部塞在同一行会超出窗口，所以打开这个键。
+这个键在已移除的 NetworkHub 上用于“类型、服务器、端口、用户名、密码”五项，保留为页面形状的实测记录。
 
 `status` 可选 `lines`：`[{"textZh":"firefox.exe → 1.2.3.4:443","textEn":"..."}]`，显示在固定状态句下面；
-可选 `live:true` 让面板在该卡可见时每秒重读一次。AppProxy 固定发五行，空位由功能自己给本地化占位句，
+可选 `live:true` 让面板在该卡可见时每秒重读一次。已移除的 NetworkHub 曾固定发五行，空位给本地化占位句，
 所以卡片始终是“第一行服务状态 + 五行最近连接”。
 
 **ABI 是 C 的**：没有 C++ 类型、没有异常、没有跨编译器的 vtable。
@@ -1706,25 +1705,30 @@ EarPods (not connected)
 - ⚠️ **而且这一次还暴露了另一个问题**：我为了"验证门会红"去改**生产源码**，
   这本身就是错的 —— **反向验证应该改一个副本、或者改门的输入，而不是改正在用的文件**。
 
-## 3.16 ★ AppProxy：指定程序的 TCP 走 SOCKS5 / HTTP CONNECT（第一版，2026-11-09）
+## 3.16 ⚠️ NetworkHub（**已于 2026-11-12 移除，本节保留为实测记录**）
+
+用户最终改用 ProxyBridge 做指定程序代理。NetworkHub 的 WinDivert 逐包接管会拖慢整机网络和输入 IO；
+无服务模式又无法可靠接管 Edge/ChatGPT 这类 Chromium/AppContainer 程序。源码、部署、服务、防火墙规则和
+构建入口均已移除。下面的内容只说明为什么这条路线被放弃，不代表当前仍有该功能。
 
 用户的要求是「给指定的应用指定代理网络，就是做网络数据定向转发」。第一版按用户批准的边界实现：
 **普通 64 位桌面程序的 TCP、同权限、用户态注入，不装驱动、不写注册表、不改变便携布局。**
 
 ⚠️ **2026-11-09 后续升级（用户批准驱动例外）**：Edge/Chromium 会拒绝未签名 DLL 注入，用户态路线
-无法达到同类软件的效果。AppProxy 2.0 改为：用户自行安装 WinDivert，Apex 不复制其 DLL/SYS；插件页
-通过 UAC 安装/卸载独立的 `ApexAppProxy` 系统服务。服务引用用户填写的 WinDivert 目录，在驱动层按
-PID/规则把新 TCP SYN 重定向到本机 relay，并拦截所选应用的 UDP 443。旧用户态 Hook 保留为驱动服务
+无法达到同类软件的效果。NetworkHub 3.0 改为：用户自行安装 WinDivert，Apex 不复制其 DLL/SYS；插件页
+通过 UAC 安装/卸载独立的 `ApexNetworkHub` 系统服务。服务引用用户填写的 WinDivert 目录，在驱动层按
+PID/规则把新 TCP SYN 重定向到本机 relay；SOCKS5 代理还会用 `UDP ASSOCIATE` 转发 UDP 443（QUIC）。
+旧用户态 Hook 保留为驱动服务
 未运行时的兼容后备。
 
 ### 3.16.1 功能文件夹里的组件
 
-- `AppProxy.dll` 是功能本体：页面、`AppProxy.ini`、进程扫描、注入和状态日志。
-- `payload/AppProxyHook.cpp` 编成 `AppProxyHook.payload`，被加载进目标程序，替换 Winsock 的
+- `NetworkHub.dll` 是功能本体：页面、`NetworkHub.ini`、进程扫描、注入和状态日志。
+- `payload/NetworkHubHook.cpp` 编成 `NetworkHubHook.payload`，被加载进目标程序，替换 Winsock 的
   `connect` / `WSAConnect` IAT 项。扩展名不是 `.dll`，因为 `Plugins/*/*.dll` 会被其他门当作功能 DLL
   加载；载荷没有 `ApexFeatureEntry`，它不是功能。
-- 每次 Apex 启动都把固定的 `AppProxyHook.payload` 复制成一份
-  `AppProxyHook.runtime-<pid>-<tick>.payload`，并把文件名写进配置的 `session=`。目标进程映射的是会话副本，
+- 每次 Apex 启动都把固定的 `NetworkHubHook.payload` 复制成一份
+  `NetworkHubHook.runtime-<pid>-<tick>.payload`，并把文件名写进配置的 `session=`。目标进程映射的是会话副本，
   所以部署可以覆盖固定源文件；同时旧 Apex 留下的载荷看到 `session` 不匹配会永久停止接管，不会在新宿主
   启动后被重新激活。无法创建会话副本时，本功能宁可不注入，也不退回固定文件。
 - 代理配置是一张 `profile` 表；应用规则带一个代理名。因此每个应用可以选不同代理，旧版单代理文件读取时进入
@@ -1735,11 +1739,16 @@ PID/规则把新 TCP SYN 重定向到本机 relay，并拦截所选应用的 UDP
 - 载荷使用 `-nostdlib`，最终只导入 `KERNEL32.dll` 和 `WS2_32.dll`。它没有 stdio、C++ 异常或自己的 CRT
   启动链，避免目标程序和 Apex 的编译器运行库不同。
 - 本功能还带 `.crtless`：主 DLL 自己提供 `DllMain`，避免在受限加载环境里默认 CRT 在进入 `DllMain` 前失败。
-- `AppProxyService.exe` 是独立系统服务/安装控制程序。它不以静态导入方式携带 WinDivert，而是运行时
+- `NetworkHubService.exe` 是独立系统服务/安装控制程序。它不以静态导入方式携带 WinDivert，而是运行时
   从用户配置的目录加载 `WinDivert.dll`；找不到时只在状态里报告，用户态后备仍可工作。
-- 安装/修复服务时会同时添加一条**只允许 `AppProxyService.exe` 入站**的 Windows 防火墙规则
-  `Apex App Proxy relay`；卸载服务时同名规则一起删除。没有这条规则时，WinDivert 已经把连接改写到
+- 安装/修复服务时会同时添加一条**只允许 `NetworkHubService.exe` 入站**的 Windows 防火墙规则
+  `Apex Network Hub relay`；卸载服务时同名规则一起删除。没有这条规则时，WinDivert 已经把连接改写到
   本机 relay，但 Windows 会静默丢掉入站包，页面表现为“已接管、成功 0”。
+- 服务只作为旧版内核转发兼容件保留；安装时使用**按需启动**，不再随 Windows 自动启动。正常使用的
+  转发路径是本机节点和应用注入，不依赖该服务。
+- **本机节点**是功能 DLL 自己拥有的独立入口：默认关闭，开启后只监听 `127.0.0.1:<port>`，同时接受
+  HTTP CONNECT 和 SOCKS5，并按选择的 profile 连接上游。它不依赖 WinDivert 或系统服务；Clash 等支持
+  本机代理的程序可以直接把它当作节点。第一版只转发 TCP，上游失败时拒绝连接，不静默直连。
 
 ### 3.16.2 连接怎么被改写
 
@@ -1757,27 +1766,47 @@ HTTP 响应按**一个字节**读到 `\r\n\r\n`，因为代理允许把隧道里
 ### 3.16.3 进程覆盖方式与已知边界
 
 - 先找目标进程的窗口线程，用 `WH_GETMESSAGE` 让系统加载载荷；没有窗口时退回 `CreateRemoteThread +
-  LoadLibraryA`。注入成功以目标进程模块表里真的出现 `AppProxyHook.payload` 为准。
+  LoadLibraryA`。注入成功以目标进程模块表里真的出现 `NetworkHubHook.payload` 为准。
 - 名单按**受限进程树**判断：先看进程自己；不同名的子进程只有 `msedgewebview2.exe` 可以沿父链继承。
   这覆盖 Chromium/WebView2 的网络进程，又不会把应用启动的终端、编辑器、node 等普通子工具全部算进去。
 - `connect/WSAConnect` 在应用 socket 上先完成代理握手；`ConnectEx` 保留异步语义——先把本次连接接到
   目标进程自己的环回桥，原函数照常完成 overlapped I/O，桥再连代理、完成握手并双向转发。
 - 只接受**同权限的 64 位普通进程**。32 位进程需要 32 位载荷；提权/受保护进程需要提权；两者都会被拒绝并写日志。
-- 第一版只处理 TCP。为阻止 QUIC 继续直连，页面默认开关会拒绝目标端口 443 的 UDP；其它 UDP 与 DNS 不在范围内，
-  页面底部的说明必须保留，
-  因为它描述的是真实缺口，不是可以忽略的实现细节。
+- TCP 完整转发。SOCKS5 代理另有 `UDP ASSOCIATE`：每个代理配置保持一条 TCP 控制连接，QUIC 包按 RFC 1928
+  封装到代理的 UDP relay，回包再解封成“原目标 → 应用”的 UDP 包。HTTP CONNECT 不提供 UDP，但它常常与 SOCKS5
+  共用同一主机和端口，所以 HTTP 配置会尝试用同端口的 SOCKS5 建立 UDP 关联；失败时才丢弃 UDP 443，让应用
+  回退到 TCP。每个目标先尝试 UDP；短时间没有收到回包时，对该目标改为返回 ICMP 端口不可达，让浏览器立即
+  回退到已可用的 TCP 连接。其它 UDP 与 DNS 仍不在转发范围内，页面底部的说明必须保留。
 - 驱动服务遇到已选应用的 IPv6 TCP SYN 时会丢弃它，让浏览器/Happy Eyeballs 回退到 IPv4；回退后的 IPv4 TCP
   再按规则转到本机 relay。这样 Firefox 不会因为优先直连 IPv6 而绕过代理。纯 IPv6 目标仍不在第一版范围内。
 - relay 跟随的是 ProxyBridge 验证过的做法：新 SYN 建流后，后续每个包都改写到 relay，回包再换回原目标；
   只改写 SYN 会让 TCP 握手无法继续。服务页的 `status` 卡固定第一行显示服务状态，下面五行由服务状态文件里的
   `recent_1`…`recent_5` 驱动，显示最近成功转发的“程序 → 目标:端口”，相同程序与目标会去重并提到最上面。
+- ⚠️ **3.1.2 的热路径修复（2026-11-12）**：服务曾经在每一个选中应用的 QUIC 数据包上重新查系统 UDP 表、
+  扫进程树、扫进程名并线性遍历 512 条 UDP 流；视频这种每秒数百到上千包会把用户态收包线程拖成网络拥挤。
+  现在 TCP / UDP 流都走固定容量的哈希定位，UDP 只在首包做一次进程与规则分类，后续包直接复用
+  profile、程序和强制 TCP 状态；失效条目的有效期也在查找时真正生效并刷新。状态文件改由维护线程每秒写一次，
+  不再在包路径里反复检查。判据不是“代码看起来更快”，而是同一视频/下载负载下包循环不再做系统级进程查询。
+  **3.1.3** 再把 WinDivert 接收从一包一次 `Recv` 改成最多 64 包的 `RecvEx` 批量读取，减少高流量下
+  内核与用户态之间的上下文切换；旧 DLL 没有 `RecvEx` 时仍回退到逐包路径。
+  **3.1.4** 改掉“主句柄截获全机所有 TCP”的根本问题：主句柄现在只看新建 SYN、UDP 443 和 DNS 回包；
+  命中目标应用后，才为这条 TCP 连接单独打开一个只匹配该本地端口的 WinDivert 句柄。未选中的应用
+  （例如 Firefox）后续数据不再进入 NetworkHubService，也不会被用户态重新注入。
+  **3.2.0 的结论（2026-11-12，实测）**：即使按连接分开句柄，这台机器上 NetworkHubService 仍会拖住
+  系统网络和输入 IO；结束服务进程后立刻恢复。因此正常模式不再启动系统服务，面板也不再暴露安装/启动
+  服务的入口。转发改由两条无系统服务路径承担：本机 HTTP/SOCKS5 节点，以及向普通应用注入的
+  `NetworkHubHook.payload`。遵守系统代理的程序直接交给 Clash。内核服务只留作旧的按需兼容件，
+  当前停用并禁止自动启动；在换成签名的 WFP 驱动之前，不再把它当作常规方案。
+  **3.2.1** 修正无服务模式下的会话判断：目标程序里由上一位 Apex 注入的旧载荷不应因为 runtime 文件名
+  变化就永久直连。现在载荷只认当前 Apex 的 enabled 事件与当前配置文件；Apex 重启后，已经打开的 Edge /
+  ChatGPT 无需跟着重启也能继续按最新规则转发。旧载荷不再使用“会话名不等就拒绝”的理由。
 - IAT 在注入时扫描；消息钩子的回调会周期性补扫后来加载的模块。没有消息循环、且在注入后才动态加载
   Winsock 的程序可能仍漏掉。
-- 代理密码按便携规则明文写进 `AppProxy.ini`，页面标签明确写出这一点。
+- 代理密码按便携规则明文写进 `NetworkHub.ini`，页面标签明确写出这一点。
 
 ### 3.16.4 门：必须证明“真的改道”，不能只证明页面能画
 
-`test/check_feature_appproxy.sh` 分两段：
+`test/check_feature_networkhub.sh` 分两段：
 
 1. 真 DLL 过假宿主，设置、校验、通配符规范化、配置文件往返，并用 `node` 真解析页面 JSON；
 2. 探针先直连本地目标服务器（必须得到 `DIRECT`），再加载载荷，分别用 `connect` 和异步 `ConnectEx`
