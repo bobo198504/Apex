@@ -43,7 +43,7 @@ using apex::wallpaper::Variant;
 namespace {
 
 const char *kId = "Wallpaper";
-const char *kVersion = "1.1.28";
+const char *kVersion = "1.2.0";
 
 constexpr int kMaxDisplays = 12;
 constexpr int kMaxMonitorSettings = 24;
@@ -55,6 +55,8 @@ constexpr int kMaxLog = 256 * 1024;
 constexpr DWORD kCycleMs = 500;
 constexpr DWORD kDisplayPollMs = 1000;
 constexpr DWORD kExternalChangeGraceMs = 1000;
+// The switching implementation is intentionally kept for a future upgrade, but it is not active and has no UI.
+constexpr bool kSwitchingEnabled = false;
 
 const char *kScheduleClock = "clock";
 const char *kScheduleSolar = "solar";
@@ -508,7 +510,7 @@ bool ValidSchedule(const char *value)
                    !strcmp(value, kScheduleInterval));
 }
 
-Schedule ParseSchedule(const char *text)
+[[maybe_unused]] Schedule ParseSchedule(const char *text)
 {
   if (!strcmp(text, kScheduleClock))
     return Schedule::Clock;
@@ -1792,7 +1794,9 @@ bool BuildPlan(const Snapshot &s, Plan *plan, char *whyZh, int whyZhSize, char *
       apex::wallpaper::SolarTimes(s.latitude, s.longitude, now.wYear, now.wMonth, now.wDay,
                                   LocalOffsetMinutes(), &sunrise, &sunset, &alwaysDay);
   const bool solarDay = solarOk && apex::wallpaper::IsSolarDay(minute, sunrise, sunset, alwaysDay);
-  if (!strcmp(cfg.schedule, kScheduleInterval))
+  if (!kSwitchingEnabled)
+    plan->variant = Variant::Day;
+  else if (!strcmp(cfg.schedule, kScheduleInterval))
   {
     plan->variant = Variant::Interval;
   }
@@ -3193,6 +3197,7 @@ DWORD WINAPI Worker(void *)
       ReadCurrentLockScreen();
       lastLockPoll = nowTick;
     }
+    if (kSwitchingEnabled)
     {
       EnterCriticalSection(&g_lock);
       const bool needLocation =
@@ -3317,8 +3322,9 @@ void AddSelectOption(char *out, int cap, int &off, bool &first, const char *valu
   AppendText(out, cap, off, "}");
 }
 
-void AddTextField(char *out, int cap, int &off, const char *id, const char *zh, const char *en,
-                  const char *value, const char *placeholderZh, const char *placeholderEn)
+[[maybe_unused]] void AddTextField(char *out, int cap, int &off, const char *id, const char *zh,
+                                   const char *en, const char *value, const char *placeholderZh,
+                                   const char *placeholderEn)
 {
   AppendText(out, cap, off, "{\"id\":");
   AppendJsonString(out, cap, off, id);
@@ -3376,7 +3382,7 @@ void AddImagePickerField(char *out, int cap, int &off, const char *id)
              "\"labelZh\":\"\",\"labelEn\":\"\"}");
 }
 
-void AddRangeField(char *out, int cap, int &off, const Settings &s)
+[[maybe_unused]] void AddRangeField(char *out, int cap, int &off, const Settings &s)
 {
   AppendText(out, cap, off,
              "{\"id\":\"interval_minutes\",\"type\":\"range\",\"min\":1,\"max\":1440,\"step\":1,"
@@ -3440,33 +3446,10 @@ int SettingsJson(char *out, int outSize)
   AppendJsonString(out, outSize, off, s.currentLockThumbnail);
   AppendText(out, outSize, off, "}}]}");
 
-  AppendText(out, outSize, off, ",{\"id\":\"switching\",\"type\":\"group\",\"layout\":\"rows\",\"noAdd\":true,\"fieldsWrap\":true,\"labelZh\":\"切换规则\",\"labelEn\":\"Switching\",\"fields\":[");
-  AppendText(out, outSize, off, "{\"id\":\"schedule\",\"type\":\"select\",\"labelZh\":\"切换方式\",\"labelEn\":\"Mode\",\"options\":[");
-  bool first = true;
-  AddSelectOption(out, outSize, off, first, kScheduleClock, "时间段", "Time periods");
-  AddSelectOption(out, outSize, off, first, kScheduleSolar, "日出日落", "Sunrise / sunset");
-  AddSelectOption(out, outSize, off, first, kScheduleInterval, "切换间隔", "Interval");
-  AppendText(out, outSize, off, "]},");
-  AddTextField(out, outSize, off, "day_start", "日间开始", "Day starts", "", "07:00", "07:00");
-  AppendText(out, outSize, off, ",");
-  AddTextField(out, outSize, off, "night_start", "夜间开始", "Night starts", "", "19:00", "19:00");
-  AppendText(out, outSize, off, ",");
-  AddRangeField(out, outSize, off, s.s);
-  char dayStart[8] = {0}, nightStart[8] = {0};
-  _snprintf(dayStart, sizeof(dayStart), "%02d:%02d", s.s.dayStart / 60, s.s.dayStart % 60);
-  _snprintf(nightStart, sizeof(nightStart), "%02d:%02d", s.s.nightStart / 60, s.s.nightStart % 60);
-  AppendText(out, outSize, off, "],\"items\":[{\"titleZh\":\"当前规则\",\"titleEn\":\"Current rule\",\"locked\":true,\"values\":{\"schedule\":");
-  AppendJsonString(out, outSize, off, s.s.schedule);
-  AppendText(out, outSize, off, ",\"day_start\":");
-  AppendJsonString(out, outSize, off, dayStart);
-  AppendText(out, outSize, off, ",\"night_start\":");
-  AppendJsonString(out, outSize, off, nightStart);
-  AppendText(out, outSize, off, ",\"interval_minutes\":%d}}]}", s.s.intervalMinutes);
-
   AppendText(out, outSize, off,
              "],\"settingsFile\":\"Wallpaper.ini\","
-             "\"summaryZh\":\"逐屏壁纸、锁屏与自动切换\","
-             "\"summaryEn\":\"Per-display wallpaper, lock screen, and switching\"}");
+             "\"summaryZh\":\"逐屏壁纸与锁屏设置\","
+             "\"summaryEn\":\"Per-display wallpaper and lock-screen settings\"}");
   if (off >= outSize)
     return 0;
   return off;

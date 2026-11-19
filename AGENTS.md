@@ -324,7 +324,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | MediaControl | `const char *kVersion = "1.1.0";` | `features/MediaControl/feature_mediacontrol.cpp` |
 | VolumeLock | **没有字段**，只有一句注释 `// VERSION: 1.0.0` | `features/VolumeLock/feature_volumelock.cpp` |
 | ComputeManager | `const char *kVersion = "1.8.2";` | `features/ComputeManager/feature_computemanager.cpp` |
-| Wallpaper | `const char *kVersion = "1.1.17";` | `features/Wallpaper/feature_wallpaper.cpp` |
+| Wallpaper | `const char *kVersion = "1.2.0";` | `features/Wallpaper/feature_wallpaper.cpp` |
 
 ⚠️ **`VolumeLock` 那一行是已知缺陷**：它没有真正的版本字段，所以面板上那个位置是**空的**。
 将来动这个功能时要顺手补一个字段（照 KeepAwake 的写法），而不是继续改注释。

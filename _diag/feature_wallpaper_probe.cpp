@@ -431,6 +431,9 @@ int main(int argc, char **argv)
   Check(strstr(document, "\"id\":\"library\"") == nullptr &&
             strstr(document, "wallpaper_dir") == nullptr,
         "the removed wallpaper folder controls are absent");
+  Check(strstr(document, "\"id\":\"switching\"") == nullptr &&
+            strstr(document, "\"schedule\"") == nullptr,
+        "the retained switching implementation is not exposed in the page");
   Check(strstr(document, "\"id\":\"monitors\"") != nullptr, "the per-monitor controls are described");
   Check(strstr(document, "\"live\":true") != nullptr,
         "the monitor state is marked live so system changes reach the page");

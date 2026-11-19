@@ -58,7 +58,6 @@ node -e '
   const doc = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   const params = doc.params || [];
   const lock = params.find((p) => p.type === "group" && p.id === "lock");
-  const switching = params.find((p) => p.type === "group" && p.id === "switching");
   const monitors = params.find((p) => p.type === "group" && p.id === "monitors");
   if (params.some((p) => p.id === "wallpaper_status" || p.type === "status")) process.exit(2);
   if (!monitors || monitors.fieldsWrap || monitors.live !== true ||
@@ -72,11 +71,14 @@ node -e '
       Number(monitors.items[0].values.locked) !== 1) process.exit(18);
   if (monitors.items.some((item) =>
         !String((item.values || {}).preview || "").startsWith("data:image/jpeg;base64,"))) process.exit(19);
-  if (!switching || switching.fields.length !== 4) process.exit(9);
+  if (params.some((p) => p.id === "switching" || p.id === "schedule" ||
+      p.id === "day_start" || p.id === "night_start" ||
+      p.id === "interval_minutes")) process.exit(9);
   if (params.some((p) => p.id === "library" || p.id === "wallpaper_dir")) process.exit(10);
   if (!monitors || !Array.isArray(monitors.items) || monitors.items.length < 1) process.exit(5);
   const text = JSON.stringify(doc);
-  if (!text.includes("sunset") && !text.includes("日出日落")) process.exit(6);
+  if (text.includes("sunset") || text.includes("日出日落") ||
+      text.includes("switching") || text.includes("自动切换")) process.exit(6);
   if (!text.includes("\"type\":\"file\"") || !text.includes("\"hidePath\":true")) process.exit(11);
   if (text.includes("alternate_file") || text.includes("\"type\":\"pan\"") ||
       text.includes("theme_follow") || text.includes("lock_follow")) process.exit(13);
@@ -136,4 +138,4 @@ if [ $fail -ne 0 ]; then
   echo "FAILED: Wallpaper's system capability, rules, or settings contract is broken"
   exit 1
 fi
-echo "OK: display identities, hidden path pickers, plugin-owned copies, thumbnails, modes, lock screen, and auto location"
+echo "OK: display identities, hidden path pickers, plugin-owned copies, thumbnails, modes, lock screen, and hidden switching"
