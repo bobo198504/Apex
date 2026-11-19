@@ -30,7 +30,7 @@ fail=0
 # to disagree with the script. If both read one variable, a change to that variable would move both halves together and
 # the gate would agree with any mistake.
 PRIVATE="VolumeLock"
-PUBLIC="AutoIME KeepAwake MediaControl SmoothWheel"
+PUBLIC="AutoIME KeepAwake MediaControl SmoothWheel ComputeManager Wallpaper"
 
 echo "== 1. the package can be built, and says what it did =="
 if [ ! -f "$SRC/apex.exe" ]; then

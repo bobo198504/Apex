@@ -5,6 +5,36 @@
 `*` 和 `+` 会变成同一种圆点，符号的区分就没了）。只写"改了什么"。
 -->
 
+## 1.10.0
+
+## 更新内容
+
+```
++ 版本号：主程序 1.10.0
+* 新增「算力管家」：多厂商余额、用量与峰谷规则，进程触发桌面挂件
+* 新增「壁纸设置」：逐屏壁纸、缩略图、五种显示方式与锁屏
++ 通用设置新增任务栏显示区：统一显示开关、位置、字号、颜色和顺序
++ 任务栏显示支持紧凑单行，以及桌面左右任务栏的纵向旋转布局
++ 快速面板、任务栏显示与基础设置分组显示
+# 修复任务栏选择“左”时会覆盖左对齐的系统图标，切回居中后恢复
+# 修复设置面板在后台被节流后实时预览不更新
+# 修复实时页面仅缩略图变化时整页重建
+```
+
+## What's changed
+
+```
++ Version: the host is 1.10.0
+* Added Compute Manager: balances, usage, and peak/valley rules for multiple providers, with a process-triggered desktop widget
+* Added Wallpaper: per-display wallpapers, thumbnails, five fit modes, and lock screen
++ General settings now include taskbar display areas: one master switch, position, font size, colour, and order
++ Taskbar display supports a compact single line and vertical rotation for side-mounted taskbars
++ Quick panel, taskbar display, and basic settings are grouped into separate cards
+# Fixed the taskbar’s left position covering left-aligned system icons, with automatic recovery when the taskbar returns to centred icons
+# Fixed live previews not updating after the settings panel was throttled in the background
+# Fixed live pages rebuilding entirely when only a thumbnail changed
+```
+
 ## 1.7.0
 
 ## 更新内容
