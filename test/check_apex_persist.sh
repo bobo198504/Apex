@@ -147,7 +147,18 @@ if (!j.host || typeof j.host !== "object") bad.push("no host");
 if (typeof j.host.lang !== "string" || typeof j.host.theme !== "string") bad.push("host.lang/theme");
 if (typeof j.host.quickCompact === "undefined" || typeof j.host.quickOwn === "undefined")
   bad.push("the quick-panel switches");
+if (typeof j.host.taskbarEnabled === "undefined" ||
+    (j.host.taskbarPosition !== "left" && j.host.taskbarPosition !== "right") ||
+    ["top", "bottom", "left", "right"].indexOf(j.host.taskbarEdge) < 0 ||
+    !Number.isInteger(j.host.taskbarFontSize) ||
+    typeof j.host.taskbarTextColor !== "string")
+  bad.push("the taskbar-display settings");
 if (!Array.isArray(j.features)) bad.push("features is not an array");
+if (!Array.isArray(j.taskbarAreas)) bad.push("taskbarAreas is not an array");
+else for (const e of j.taskbarAreas)
+  if (!e || typeof e.key !== "string" || !e.key ||
+      typeof e.nameZh !== "string" || typeof e.nameEn !== "string")
+    bad.push("a taskbar area without a key or a name");
 // ⚠️ `quickOrder` IS CHECKED AS AN ARRAY OF PANES WITH A KEY AND A NAME, not merely as "present": the General
 // page draws its reorder list straight from it, so a string, a missing key or a nameless row would be a broken
 // row rather than a lost key.

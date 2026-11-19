@@ -15,6 +15,7 @@
 #include "hostconfig.h"
 #include "loader.h"
 #include "paths.h"
+#include "../common/taskbar_layout.h"
 
 #include <shellapi.h>
 #include <stdio.h>
@@ -29,6 +30,23 @@ namespace host {
 // include, so there is no second list to keep in step.
 
 namespace {
+
+const char *CurrentTaskbarEdgeName()
+{
+  HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+  RECT taskbarRect = {};
+  if (!taskbar || !GetWindowRect(taskbar, &taskbarRect))
+    return "bottom";
+  MONITORINFO monitor = {};
+  monitor.cbSize = sizeof(monitor);
+  if (!GetMonitorInfoW(MonitorFromWindow(taskbar, MONITOR_DEFAULTTONEAREST), &monitor))
+    return "bottom";
+  const apex::taskbar::Rect bar = {
+      taskbarRect.left, taskbarRect.top, taskbarRect.right, taskbarRect.bottom};
+  const apex::taskbar::Rect screen = {
+      monitor.rcMonitor.left, monitor.rcMonitor.top, monitor.rcMonitor.right, monitor.rcMonitor.bottom};
+  return apex::taskbar::EdgeName(apex::taskbar::ClassifyEdge(bar, screen));
+}
 
 // ---------------------------------------------------------------------------
 // A FILE NAME FROM THE PAGE, TURNED INTO A PATH INSIDE THE FEATURE'S OWN FOLDER -- OR NOTHING.
@@ -350,6 +368,49 @@ void ApplySetHost(const Fields &f)
     else
       SettingsLog("  quickown value not understood");
   }
+  else if (strcmp(f.key, "taskbarenabled") == 0)
+  {
+    bool b;
+    if (ParseBool(f.value, &b))
+    {
+      cfg->taskbarEnabled = b;
+      SettingsTouch();
+    }
+    else
+      SettingsLog("  taskbarenabled value not understood");
+  }
+  else if (strcmp(f.key, "taskbarposition") == 0)
+  {
+    if (!_stricmp(f.value, "left") || !_stricmp(f.value, "right"))
+    {
+      cfg->taskbarPosition = _stricmp(f.value, "left") == 0 ? 0 : 1;
+      SettingsTouch();
+    }
+    else
+      SettingsLog("  taskbarposition value not understood");
+  }
+  else if (strcmp(f.key, "taskbarfontsize") == 0)
+  {
+    int size = 0;
+    if (apex::taskbar::ParseFontSize(f.value, &size))
+    {
+      cfg->taskbarFontSize = size;
+      SettingsTouch();
+    }
+    else
+      SettingsLog("  taskbarfontsize value not understood");
+  }
+  else if (strcmp(f.key, "taskbartextcolor") == 0)
+  {
+    char color[8] = {0};
+    if (apex::taskbar::NormaliseColor(f.value, color, (int)sizeof(color)))
+    {
+      _snprintf(cfg->taskbarTextColor, sizeof(cfg->taskbarTextColor), "%s", color);
+      SettingsTouch();
+    }
+    else
+      SettingsLog("  taskbartextcolor value not understood");
+  }
   // THE ORDER OF THE PANES IN THE QUICK PANEL (see `quickOrder` in hostconfig.h). The page sends the keys it is
   // SHOWING, in their new order, newline-separated -- a drag is one message, not one per row it passed.
   // ⚠️ AN EMPTY VALUE IS NOT "CLEAR THE ORDER": it names nothing, so every saved key is kept, in the order it
@@ -360,6 +421,12 @@ void ApplySetHost(const Fields &f)
   {
     cfg->QuickOrderSetFromKeys(f.value);
     SettingsLog("  quick panel order: %s", f.value[0] ? f.value : "(unchanged -- nothing was named)");
+    SettingsTouch();
+  }
+  else if (strcmp(f.key, "taskbarorder") == 0)
+  {
+    cfg->TaskbarOrderSetFromKeys(f.value);
+    SettingsLog("  taskbar display order: %s", f.value[0] ? f.value : "(unchanged -- nothing was named)");
     SettingsTouch();
   }
   else
@@ -453,6 +520,12 @@ int SettingsBuildSnapshot(char *out, int outSize)
   // second page would be the settings window with the sidebar taken away.
   j.Fmt(",\"quickCompact\":%d", cfg->quickCompact ? 1 : 0);
   j.Fmt(",\"quickOwn\":%d", cfg->quickOwn ? 1 : 0);
+  j.Fmt(",\"taskbarEnabled\":%d,\"taskbarPosition\":", cfg->taskbarEnabled ? 1 : 0);
+  j.Str(cfg->taskbarPosition ? "right" : "left");
+  j.Raw(",\"taskbarEdge\":");
+  j.Str(CurrentTaskbarEdgeName());
+  j.Fmt(",\"taskbarFontSize\":%d,\"taskbarTextColor\":", cfg->taskbarFontSize);
+  j.Str(cfg->taskbarTextColor);
   // No "enabled": the host has no master switch any more. A feature's own on/off travels per feature, in
   // the list below, where the panel already draws it on that feature's page.
   //
@@ -508,6 +581,25 @@ int SettingsBuildSnapshot(char *out, int outSize)
   // "the Apex host is not running" while the host answered every message. That is the failure this file's own
   // note at the top of the snapshot warns about ("there is no gate that parses the snapshot"), and it was found
   // by asking the real host for a snapshot and parsing it by hand. check_apex_persist.sh now does that in earnest.
+  j.Raw("],");
+
+  j.Raw("\"taskbarAreas\":[");
+  {
+    static TaskbarArea areas[kMaxTaskbarAreas];
+    const int count = TaskbarAreas(areas, kMaxTaskbarAreas);
+    for (int k = 0; k < count; ++k)
+    {
+      if (k)
+        j.Raw(",");
+      j.Raw("{\"key\":");
+      j.Str(areas[k].key);
+      j.Raw(",\"nameZh\":");
+      j.Str(areas[k].nameZh);
+      j.Raw(",\"nameEn\":");
+      j.Str(areas[k].nameEn);
+      j.Raw("}");
+    }
+  }
   j.Raw("],");
 
   j.Raw("\"features\":[");

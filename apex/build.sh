@@ -99,6 +99,9 @@ NeedsLink() {
 
 # The include directories a translation unit under apex/ can reach: the project's own headers and the model.
 HDR_DIRS=("$ROOT/apex" "$ROOT/common" "$ROOT/shared")
+# Features may include only their own headers, common/, shared/, and apex/abi.h. Watching all of
+# apex/ made an unrelated host-header edit rebuild every independent plugin.
+FEATURE_HDR_DIRS=("$ROOT/common" "$ROOT/shared" "$ROOT/apex/abi.h")
 
 # Compile $1 -> $OBJ/$1.o unless it is up to date. Says which it did, so a build with nothing to do is visibly
 # doing nothing rather than silently skipping.
@@ -144,12 +147,24 @@ done
 #
 # ⚠️ AND THE AWK PROGRAM CARRIES NO COMMENT WITH AN APOSTROPHE: it is inside a single-quoted shell string, so
 # "the file's contents" ended the string and bash tried to run `<style>` as a command. The note lives out here.
-awk -v css="$PANEL_CSS" -v js="$PANEL_JS" '
-  /__APEX_PANEL_CSS__/ { while ((getline line < css) > 0) print line; next }
-  /__APEX_PANEL_JS__/  { while ((getline line < js)  > 0) print line; next }
-  { print }
-' "$PANEL_SHELL" > "$PANEL_BUILT" || { echo "   FAIL: the panel could not be assembled"; exit 1; }
-echo "   panel: $(( $(wc -c < "$PANEL_SHELL") )) + $(( $(wc -c < "$PANEL_CSS") )) + $(( $(wc -c < "$PANEL_JS") )) -> $(( $(wc -c < "$PANEL_BUILT") )) bytes"
+PANEL_NEEDED=0
+if [ ! -f "$PANEL_BUILT" ]; then
+  PANEL_NEEDED=1
+else
+  for part in "$PANEL_SHELL" "$PANEL_CSS" "$PANEL_JS"; do
+    [ "$part" -nt "$PANEL_BUILT" ] && PANEL_NEEDED=1
+  done
+fi
+if [ "$PANEL_NEEDED" = "1" ]; then
+  awk -v css="$PANEL_CSS" -v js="$PANEL_JS" '
+    /__APEX_PANEL_CSS__/ { while ((getline line < css) > 0) print line; next }
+    /__APEX_PANEL_JS__/  { while ((getline line < js)  > 0) print line; next }
+    { print }
+  ' "$PANEL_SHELL" > "$PANEL_BUILT" || { echo "   FAIL: the panel could not be assembled"; exit 1; }
+  echo "   panel: $(( $(wc -c < "$PANEL_SHELL") )) + $(( $(wc -c < "$PANEL_CSS") )) + $(( $(wc -c < "$PANEL_JS") )) -> $(( $(wc -c < "$PANEL_BUILT") )) bytes"
+else
+  echo "   panel  (up to date)"
+fi
 #
 # Rebuilt only when something they pull in is newer: the two .ico files are 374 KB each and the page is 45 KB.
 # (A .rc cannot be asked what it includes, so the condition is "any of these files changed".)
@@ -331,7 +346,7 @@ for FEAT in "$ROOT"/features/*/; do
     PAYLOAD_OUT="$DEST/$PAYLOAD_NAME.payload"
     mkdir -p "$DEST"
     if [ -f "$PAYLOAD_OUT" ] && [ "$PAYLOAD_OUT" -nt "$PAYLOAD_SRC" ] &&
-       ! AnyHeaderNewerThan "$PAYLOAD_OUT" "$FEAT" "${HDR_DIRS[@]}"; then
+       ! AnyHeaderNewerThan "$PAYLOAD_OUT" "$FEAT" "${FEATURE_HDR_DIRS[@]}"; then
       echo "   $ID -> Plugins/$ID/$PAYLOAD_NAME.payload  (up to date)"
     else
       echo "   $ID -> Plugins/$ID/$PAYLOAD_NAME.payload"
@@ -354,7 +369,7 @@ for FEAT in "$ROOT"/features/*/; do
     SERVICE_OUT="$DEST/$SERVICE_NAME.exe"
     mkdir -p "$DEST"
     if [ -f "$SERVICE_OUT" ] && [ "$SERVICE_OUT" -nt "$SERVICE_SRC" ] &&
-       ! AnyHeaderNewerThan "$SERVICE_OUT" "$FEAT" "${HDR_DIRS[@]}"; then
+       ! AnyHeaderNewerThan "$SERVICE_OUT" "$FEAT" "${FEATURE_HDR_DIRS[@]}"; then
       echo "   $ID -> Plugins/$ID/$SERVICE_NAME.exe  (up to date)"
     else
       echo "   $ID -> Plugins/$ID/$SERVICE_NAME.exe"
@@ -403,6 +418,19 @@ for FEAT in "$ROOT"/features/*/; do
       # the folder name. Read it rather than assuming the two match.
       LIBNAME=$(awk -F'"' '/^\[lib\]/{l=1} l && /^name/{print $2; exit}' "$FEAT/Cargo.toml")
       [ -n "$LIBNAME" ] || LIBNAME="$ID"
+      RUST_OUT="$FEAT/target/release/$LIBNAME.dll"
+      RUST_DEST="$DEST/$LIBNAME.dll"
+      RUST_TARGET_DIR="${FEAT%/}/target"
+      if [ -f "$RUST_OUT" ] && [ -f "$RUST_DEST" ] &&
+         ! find "$FEAT" -path "$RUST_TARGET_DIR" -prune -o -type f -newer "$RUST_OUT" -print -quit | grep -q .; then
+        if cmp -s "$RUST_OUT" "$RUST_DEST"; then
+          echo "   $ID -> Plugins/$ID/$LIBNAME.dll  (up to date)"
+        else
+          cp -f "$RUST_OUT" "$RUST_DEST" || exit 1
+          echo "   $ID -> Plugins/$ID/$LIBNAME.dll  (refreshed from cargo cache)"
+        fi
+        continue
+      fi
       echo "   $ID -> Plugins/$ID/$LIBNAME.dll   (cargo)"
       # ⚠️ THE PATH CHANGE IS SCOPED TO THIS ONE COMMAND, IN A SUBSHELL. An earlier version exported it for
       # the rest of the script, and the C++ feature compiled after this one then failed with "g++: command not
@@ -424,10 +452,9 @@ for FEAT in "$ROOT"/features/*/; do
 
   SRC="$CPPS"
   mkdir -p "$DEST"
-  # A feature rebuilds when its own source, its own headers, or anything under the include directories changed.
-  # It does not depend on all of apex/*.h (it only includes abi.h), but checking the whole set is what makes this
-  # one test rather than a dependency walk -- and over-compiling one small file is cheaper than a missed one.
-  if [ -f "$DEST/$ID.dll" ] && [ "$DEST/$ID.dll" -nt "$SRC" ] && ! AnyHeaderNewerThan "$DEST/$ID.dll" "$FEAT" "${HDR_DIRS[@]}"; then
+  # A feature rebuilds when its own files, common/, shared/, or the ABI header changed. Host-private headers
+  # are deliberately not in this list: touching loader.h must not rebuild unrelated feature DLLs.
+  if [ -f "$DEST/$ID.dll" ] && [ "$DEST/$ID.dll" -nt "$SRC" ] && ! AnyHeaderNewerThan "$DEST/$ID.dll" "$FEAT" "${FEATURE_HDR_DIRS[@]}"; then
     echo "   $ID -> Plugins/$ID/$ID.dll  (up to date)"
     continue
   fi
@@ -454,7 +481,8 @@ for FEAT in "$ROOT"/features/*/; do
     MAIN_EXTRA=(-fno-exceptions -fno-rtti -fno-threadsafe-statics -nostartfiles -Wl,--entry,DllMain)
   fi
   g++ "${FEATURE_FLAGS[@]}" "${MAIN_EXTRA[@]}" -shared -I"$FEAT" "$SRC" -o "$DEST/$ID.dll" \
-      -luser32 -lgdi32 -lole32 -ladvapi32 -ldxva2 -lwbemuuid -loleaut32 -luuid -lshell32
+      -luser32 -lgdi32 -lgdiplus -lole32 -ladvapi32 -ldxva2 -lwbemuuid -loleaut32 -luuid -lshell32 \
+      -lwinhttp
 done
 
 echo

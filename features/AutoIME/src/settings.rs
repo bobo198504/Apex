@@ -385,24 +385,29 @@ pub fn settings_json(out: *mut c_char, out_size: c_int) -> c_int {
     let doc = json!({
         "params": [
             {
-                "id": "switch_method", "type": "select",
-                "labelZh": "切换方式", "labelEn": "Switch method",
-                "value": match cfg.switch_method {
-                    model::SwitchMethod::Simulate => "simulate",
-                    model::SwitchMethod::Ime => "ime",
-                },
-                "options": [
-                    {"value": "ime", "labelZh": "输入法底层切换（推荐）", "labelEn": "IME open state (recommended)"},
-                    {"value": "simulate", "labelZh": "模拟按键", "labelEn": "Simulate keystrokes"}
+                "id": "switch_row", "type": "row",
+                "controls": [
+                    {
+                        "id": "switch_method", "type": "select",
+                        "labelZh": "切换方式", "labelEn": "Switch method",
+                        "value": match cfg.switch_method {
+                            model::SwitchMethod::Simulate => "simulate",
+                            model::SwitchMethod::Ime => "ime",
+                        },
+                        "options": [
+                            {"value": "ime", "labelZh": "输入法底层切换（推荐）", "labelEn": "IME open state (recommended)"},
+                            {"value": "simulate", "labelZh": "模拟按键", "labelEn": "Simulate keystrokes"}
+                        ]
+                    },
+                    {
+                        "id": "ime_toggle_hotkey", "type": "hotkey",
+                        "labelZh": "切换热键", "labelEn": "Toggle hotkey",
+                        "value": cfg.ime_toggle_hotkey,
+                        // ⚠️ THE HINT SAYS WHAT TO DO, because a control nobody can guess is a control nobody uses: it is
+                        // not a text box any more, it is "click it and press the keys".
+                        "placeholderZh": "点击后按下新的快捷键", "placeholderEn": "Click, then press the keys"
+                    }
                 ]
-            },
-            {
-                "id": "ime_toggle_hotkey", "type": "hotkey",
-                "labelZh": "切换热键", "labelEn": "Toggle hotkey",
-                "value": cfg.ime_toggle_hotkey,
-                // ⚠️ THE HINT SAYS WHAT TO DO, because a control nobody can guess is a control nobody uses: it is
-                // not a text box any more, it is "click it and press the keys".
-                "placeholderZh": "点击后按下新的快捷键", "placeholderEn": "Click, then press the keys"
             },
             {
                 "id": "rules", "type": "group",

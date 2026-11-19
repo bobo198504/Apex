@@ -92,9 +92,14 @@ APEX_RELEASE=1 bash "$ROOT/apex/build.sh" >/dev/null || { echo "   FAIL: the bui
 # bytes in the install" is exactly what a delivery is. It also gives the Lertaro rule for free -- only the files
 # that differ are copied (see step 3).
 #
-# ⚠️ WHEN IN DOUBT, EVERYTHING RUNS. `apex.exe` contains the host -- the hook, the tray, the IPC server, the
-# config writing -- and a feature DLL changes what the host decides about the wheel, so either of those means
-# the full assembly layer. Only ONE case is narrow: nothing but the panel changed.
+# ⚠️ THE NARROW CASES ARE PART OF THE PRODUCT RULE: "每个插件都是独立的，最多是主程序有关联可以重跑一下." A single
+# EXISTING feature DLL runs only that feature's build gate and only the assembly gates that actually exercise its
+# host seam (SmoothWheel -> wheel/REAPER, AutoIME -> edit/save, MediaControl -> flyout). ComputeManager, KeepAwake,
+# VolumeLock and Wallpaper have no assembly-layer seam, so their feature-only delta never takes the user's Apex away.
+#
+# USER RULE (2026-11-16): if the host did not change, deploy the plugin directly. One EXISTING feature artefact
+# means that feature's own gate only; no full assembly run and no other plugin gates.
+# WHEN IN DOUBT, EVERYTHING RUNS: `apex.exe`, multiple features, a NEW feature, or an ambiguous delta means all.
 # ---------------------------------------------------------------------------
 ChangedArtefacts() {
   local rel f d id
@@ -114,14 +119,39 @@ ChangedArtefacts() {
 
 CHANGED="$(ChangedArtefacts)"
 # `--full` forces the whole suite (a release-shaped delivery, or when a change is not obviously local).
+BUILD_SET=all
 if [ "$FULL" -eq 1 ]; then
   GATE_SET=all
 elif [ -z "$CHANGED" ]; then
   GATE_SET=none
-elif [ "$CHANGED" = "apex-settings.exe" ]; then
+  BUILD_SET=none
+elif [ "$CHANGED" = "apex-settings.exe" ] || [ "$CHANGED" = "WebView2Loader.dll" ]; then
   GATE_SET=panel
+  BUILD_SET=panel
 else
-  GATE_SET=all
+  changed_lines=$(printf '%s\n' "$CHANGED" | awk 'NF { n++ } END { print n+0 }')
+  feature_ids=$(printf '%s\n' "$CHANGED" | sed -n 's#^Plugins/\([^/]*\)/.*#\1#p' | sort -u)
+  feature_count=$(printf '%s\n' "$feature_ids" | awk 'NF { n++ } END { print n+0 }')
+  plugin_lines=$(printf '%s\n' "$CHANGED" | grep -c '^Plugins/[^/]*/' || true)
+  feature_id=$(printf '%s\n' "$feature_ids" | sed -n '1p')
+  new_feature=0
+  while IFS= read -r rel; do
+    case "$rel" in
+      Plugins/*) [ -f "$TARGET/$rel" ] || new_feature=1 ;;
+    esac
+  done <<EOF
+$CHANGED
+EOF
+  if [ "$changed_lines" = "$plugin_lines" ] && [ "$feature_count" = "1" ] && [ "$new_feature" = "0" ]; then
+    BUILD_SET="feature:$feature_id"
+    case "$feature_id" in
+      AutoIME|SmoothWheel|MediaControl) GATE_SET="feature:$feature_id" ;;
+      *) GATE_SET=none ;;
+    esac
+  else
+    GATE_SET=all
+    BUILD_SET=all
+  fi
 fi
 
 echo
@@ -132,9 +162,16 @@ else
   echo "$CHANGED" | sed 's/^/   /'
 fi
 case "$GATE_SET" in
-  none)  echo "   -> nothing to verify or copy" ;;
+  none)
+    if [ "$BUILD_SET" = "none" ]; then
+      echo "   -> nothing to verify or copy"
+    else
+      echo "   -> only an independent feature changed: its build-layer gate runs; no host assembly gate"
+    fi
+    ;;
   panel) echo "   -> only the panel changed: the panel gates${GATED:+, and only those, run}" ;;
-  *)     echo "   -> the host or a feature changed: the whole assembly layer runs" ;;
+  feature:*) echo "   -> only $feature_id changed: its own gates run, not every plugin's" ;;
+  *)     echo "   -> the host or several modules changed: the whole assembly layer runs" ;;
 esac
 if [ "$GATED" -eq 0 ]; then
   echo "   (no --gated: this run only copies; whatever the gates did was decided by the caller)"
@@ -144,7 +181,7 @@ fi
 # runs -- a delivery that hides the one thing that can stop it is a delivery nobody can trust.
 if [ "$GATED" -eq 1 ]; then
   echo "== 1b. the gates, with the field taken for the whole delivery =="
-  if ! APEX_KEEP_FIELD=1 bash "$ROOT/test/run_all.sh" --assembly --set "$GATE_SET"; then
+  if ! APEX_KEEP_FIELD=1 bash "$ROOT/test/run_all.sh" --assembly --set "$GATE_SET" --build-set "$BUILD_SET"; then
     echo "   FAIL: the gates did not pass -- nothing was copied, and the running Apex was put back"
     exit 1
   fi
@@ -173,7 +210,7 @@ echo "   ok  $(ls "$OUT"/Plugins | tr '\n' ' ')"
 # ⚠️ `${FILES_ONLY:-0}`: this check sits BEFORE the line that defines it, and `set -u` makes reading it early a
 # hard error -- which it did, on the first run of this path (the deploy died with "unbound variable" instead of
 # saying there was nothing to do, and left a confusing exit code behind).
-if [ "$GATE_SET" = "none" ] && [ "${FILES_ONLY:-0}" != "1" ]; then
+if [ "$GATE_SET" = "none" ] && [ "$BUILD_SET" = "none" ] && [ "${FILES_ONLY:-0}" != "1" ]; then
   echo
   echo "NOTHING TO DELIVER: the built program is identical to $TARGET"
   exit 0

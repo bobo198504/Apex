@@ -3701,6 +3701,7 @@ static const ApexFeature kFeature = {
     nullptr, // onWheel
     nullptr, // tick
     McFlags,
+    nullptr, // taskbarItems
 };
 
 extern "C" __declspec(dllexport) const ApexFeature *__cdecl ApexFeatureEntry(void)

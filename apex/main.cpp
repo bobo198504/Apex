@@ -280,6 +280,10 @@ int HostFeatureDir(char *out, int outSize)
 // Defined further down, beside the other ABI wrappers. Declared here because InitHostApi installs it and
 // comes first -- the same reason the tray helpers are declared before their definitions.
 int HostFeatureEnabled(const char *id);
+int HostTaskbarEnabled();
+int HostTaskbarPosition();
+int HostTaskbarFontSize();
+const char *HostTaskbarTextColor();
 
 // RAII for the id: every call into a feature brackets it with this, so an early return inside the feature
 // cannot leave the host pointing at the wrong one.
@@ -492,6 +496,10 @@ void InitHostApi()
   g_hostApi.activeEngines = HostActiveEngines;
   g_hostApi.featureEnabled = HostFeatureEnabled;
   g_hostApi.hostUser = nullptr;
+  g_hostApi.taskbarEnabled = HostTaskbarEnabled;
+  g_hostApi.taskbarPosition = HostTaskbarPosition;
+  g_hostApi.taskbarFontSize = HostTaskbarFontSize;
+  g_hostApi.taskbarTextColor = HostTaskbarTextColor;
 }
 
 // IS THIS FEATURE SWITCHED ON? The question a feature with its own threads has to ask, because the host's
@@ -517,6 +525,26 @@ int HostFeatureEnabled(const char *id)
       return g_cfg.FeatureOff(f.api->id) ? 0 : 1;
   }
   return 0;
+}
+
+int HostTaskbarEnabled()
+{
+  return g_cfg.taskbarEnabled ? 1 : 0;
+}
+
+int HostTaskbarPosition()
+{
+  return g_cfg.taskbarPosition ? 1 : 0;
+}
+
+int HostTaskbarFontSize()
+{
+  return g_cfg.taskbarFontSize;
+}
+
+const char *HostTaskbarTextColor()
+{
+  return g_cfg.taskbarTextColor;
 }
 
 
@@ -1722,6 +1750,70 @@ int QuickBlocks(QuickBlock *out, int max)
         out[written] = found[b];
       ++written;
     }
+  return written;
+}
+
+int TaskbarAreas(TaskbarArea *out, int max)
+{
+  HostConfig *cfg = SettingsConfig();
+  Loader *ld = SettingsLoader();
+  if (!cfg || !ld)
+    return 0;
+
+  static TaskbarArea found[kMaxTaskbarAreas];
+  static ApexTaskbarArea raw[8];
+  int total = 0;
+  bool orderChanged = false;
+  for (int i = 0; i < ld->Count(); ++i)
+  {
+    const LoadedFeature &f = ld->At(i);
+    if (!f.ok || !f.api || !f.api->id || !f.api->taskbarItems || cfg->FeatureOff(f.api->id))
+      continue;
+    ZeroMemory(raw, sizeof(raw));
+    SetCurrentFeature(f.api->id);
+    const int n = f.api->taskbarItems(raw, (int)(sizeof(raw) / sizeof(raw[0])));
+    SetCurrentFeature(nullptr);
+    const int taken = std::max(0, std::min(n, (int)(sizeof(raw) / sizeof(raw[0]))));
+    for (int k = 0; k < taken; ++k)
+    {
+      if (!raw[k].key[0] || total >= kMaxTaskbarAreas)
+        continue;
+      bool duplicate = false;
+      for (int b = 0; b < total; ++b)
+        duplicate = duplicate || !strcmp(found[b].key, raw[k].key);
+      if (duplicate)
+        continue;
+      found[total].slot = i;
+      _snprintf(found[total].key, sizeof(found[total].key), "%s", raw[k].key);
+      _snprintf(found[total].nameZh, sizeof(found[total].nameZh), "%s", raw[k].nameZh);
+      _snprintf(found[total].nameEn, sizeof(found[total].nameEn), "%s", raw[k].nameEn);
+      orderChanged = cfg->TaskbarOrderAppend(found[total].key) || orderChanged;
+      ++total;
+    }
+  }
+
+  int written = 0;
+  static bool used[kMaxTaskbarAreas];
+  ZeroMemory(used, sizeof(used));
+  for (int k = 0; k < cfg->taskbarOrderN; ++k)
+    for (int a = 0; a < total; ++a)
+      if (!used[a] && !strcmp(found[a].key, cfg->taskbarOrder[k]))
+      {
+        used[a] = true;
+        if (out && written < max)
+          out[written] = found[a];
+        ++written;
+        break;
+      }
+  for (int a = 0; a < total; ++a)
+    if (!used[a])
+    {
+      if (out && written < max)
+        out[written] = found[a];
+      ++written;
+    }
+  if (orderChanged)
+    SettingsTouch();
   return written;
 }
 

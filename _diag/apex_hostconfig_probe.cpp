@@ -150,6 +150,11 @@ int main(void)
     a.FeatureSetOff("AuditStub", true);
     a.QuickOrderAppend("KeepAwake|保持唤醒");
     a.QuickOrderAppend("MediaControl|亮度");
+    a.taskbarEnabled = false;
+    a.taskbarPosition = 0;
+    a.taskbarFontSize = 15;
+    _snprintf(a.taskbarTextColor, sizeof(a.taskbarTextColor), "#12ABCD");
+    a.TaskbarOrderAppend("ComputeManager");
 
     char text[4096] = {0};
     FormatHostConfig(a, text, (int)sizeof(text));
@@ -157,7 +162,9 @@ int main(void)
     b.lang = Lang::kEn; // a DIFFERENT start, so a value that fails to parse cannot pass by coincidence
     Check(ParseHostConfig(text, b), "what FormatHostConfig writes, ParseHostConfig reads", "");
 
-    Check(b.lang == Lang::kZh && b.theme == Theme::kDark && b.autostart && !b.quickCompact && b.quickOwn,
+    Check(b.lang == Lang::kZh && b.theme == Theme::kDark && b.autostart && !b.quickCompact && b.quickOwn &&
+              !b.taskbarEnabled && b.taskbarPosition == 0 && b.taskbarFontSize == 15 &&
+              !strcmp(b.taskbarTextColor, "#12ABCD"),
           "  every setting survives the round trip", "");
     Check(b.FeatureOff("AuditStub") && !b.FeatureOff("SmoothWheel"),
           "  including which features are switched off", "");
@@ -167,19 +174,25 @@ int main(void)
           "  and the quick panel's order, in its order", got);
     Check(HasText(text, "quickorder=KeepAwake|保持唤醒"),
           "  and it is written one key per line, verbatim, as documented", "");
+    Check(b.taskbarOrderN == 1 && strcmp(b.taskbarOrder[0], "ComputeManager") == 0,
+          "  and the taskbar area and side survive the round trip", "");
   }
 
   // ---- UNKNOWN KEYS AND MANGLED VALUES STILL LEAVE THE DEFAULTS ALONE ----
   {
     HostConfig c;
-    Check(ParseHostConfig("# a comment\nnothing=1\nquickown=maybe\nquickorder=\n", c),
+    Check(ParseHostConfig("# a comment\nnothing=1\nquickown=maybe\nquickorder=\n"
+                          "taskbarfontsize=21\ntaskbartextcolor=red\n",
+                          c),
           "a file with an unknown key and a mangled value still parses", "");
     // ⚠️ "THE DEFAULTS UNTOUCHED" IS SPELT AS "STILL EQUAL TO A FRESH HostConfig", NOT AS `true`. The defaults
     // themselves changed on 2026-10-07 (both quick-panel halves are off on a fresh install), and a check that
     // hard-coded the old value would have failed for the right reason and then been "fixed" by weakening it --
     // which is how a check stops being about the thing it was written for.
     const HostConfig defaults;
-    Check(c.quickOwn == defaults.quickOwn && c.quickCompact == defaults.quickCompact && c.quickOrderN == 0,
+    Check(c.quickOwn == defaults.quickOwn && c.quickCompact == defaults.quickCompact &&
+              c.taskbarFontSize == defaults.taskbarFontSize &&
+              !strcmp(c.taskbarTextColor, defaults.taskbarTextColor) && c.quickOrderN == 0,
           "  with the defaults untouched", "");
   }
 

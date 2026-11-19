@@ -29,6 +29,10 @@ pub struct ApexHost {
     pub activeEngines: Option<unsafe extern "C" fn(*mut ApexEngine, c_int) -> c_int>,
     pub featureEnabled: Option<unsafe extern "C" fn(*const c_char) -> c_int>,
     pub hostUser: *mut c_void,
+    pub taskbarEnabled: Option<unsafe extern "C" fn() -> c_int>,
+    pub taskbarPosition: Option<unsafe extern "C" fn() -> c_int>,
+    pub taskbarFontSize: Option<unsafe extern "C" fn() -> c_int>,
+    pub taskbarTextColor: Option<unsafe extern "C" fn() -> *const c_char>,
 }
 
 /// `APEX_ENGINE_*` from apex/abi.h -- which external program has its own smoothing running, for
@@ -125,6 +129,13 @@ pub const APEX_QUICK_ICON_MUTE: c_int = 1;
 #[allow(dead_code)]
 pub const APEX_QUICK_ICON_DISPLAY: c_int = 2;
 
+#[repr(C)]
+pub struct ApexTaskbarArea {
+    pub key: [c_char; 128],
+    pub nameZh: [c_char; 64],
+    pub nameEn: [c_char; 64],
+}
+
 /// `APEX_QUICK_TOGGLE` / `_SLIDER` / `_KNOB` from apex/abi.h -- the three shapes the panel can draw.
 ///
 /// ⚠️ THESE HAVE NO READER IN THIS CRATE AND THEY STAY ANYWAY, for the same reason `APEX_FEATURE_ACTIVE` does
@@ -158,6 +169,7 @@ pub struct ApexFeature {
     pub onWheel: Option<unsafe extern "C" fn(*const ApexWheelEvent) -> c_int>,
     pub tick: Option<unsafe extern "C" fn(c_double) -> c_double>,
     pub flags: Option<unsafe extern "C" fn() -> c_uint>,
+    pub taskbarItems: Option<unsafe extern "C" fn(*mut ApexTaskbarArea, c_int) -> c_int>,
 }
 
 /// `APEX_ABI_VERSION` from apex/abi.h. ⚠️ BUMP THIS WHENEVER THE C SIDE DOES.
@@ -215,7 +227,7 @@ pub struct ApexFeature {
 /// does not load.
 /// ⚠️ 24 -> 25: `status` gained optional `lines` (bilingual recent-connection rows) and `live` (re-read the
 /// document while the status card is visible). Another page-facing change, another exact-match bump.
-pub const APEX_ABI_VERSION: c_uint = 25;
+pub const APEX_ABI_VERSION: c_uint = 29;
 
 pub const APEX_FEATURE_ENABLED: c_uint = 1;
 

@@ -37,7 +37,7 @@ show(){ printf "   %7d ms  %s\n" "$1" "$2"; }
 
 echo "=== 构建：什么都没改 ==="
 s=$(now); bash apex/build.sh >/dev/null 2>&1; e=$(now); show "$(ms "$s" "$e")" "bash apex/build.sh"
-echo "   (⚠️ 两个 exe 每次都重新链接 —— 见 gates.md / build-loop.md；这就是它不为 0 的原因)"
+echo "   (now nothing should compile or link; remaining time is shell/file checks and Git-bash startup)"
 
 echo
 echo "=== 构建：改一个文件（touch 只改时间戳，不改内容） ==="
@@ -56,7 +56,7 @@ echo "=== 门：逐扇计时（**只跑构建层**） ==="
 # while only measuring. The first version did exactly that. The boundary is the `if [ "$ASSEMBLY" != "1" ]`
 # line, so that is where the scan stops.
 total=0
-for g in $(awk '/^if \[ "\$ASSEMBLY"/{exit} /^run_gate/{print $2}' test/run_all.sh); do
+for g in $(awk '/^if \[ "\$ASSEMBLY"/{exit} /^run_(build_)?gate[[:space:]]/{print $2}' test/run_all.sh); do
   script="test/$g.sh"
   [ -f "$script" ] || continue
   s=$(now); bash "$script" >/dev/null 2>&1; rc=$?; e=$(now)

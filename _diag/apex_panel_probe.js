@@ -89,6 +89,18 @@ function mkEl(id) {
       else this.children.splice(at, 0, n);
       return n;
     },
+    replaceChild(n, old) {
+      if (n.parentNode && n.parentNode !== this) {
+        const was = n.parentNode.children.indexOf(n);
+        if (was >= 0) n.parentNode.children.splice(was, 1);
+      }
+      const at = this.children.indexOf(old);
+      if (at < 0) return n;
+      old.parentNode = null;
+      n.parentNode = this;
+      this.children.splice(at, 1, n);
+      return old;
+    },
     // ⚠️ HANDLERS ARE KEPT, NOT SWALLOWED. This was `addEventListener() {}` -- a stub that accepts a listener
     // and forgets it, which means the probe could not tell a wired-up page from one with no listeners at all.
     // The General entry lived for a while with its text and its selected class being set on every render and
@@ -176,7 +188,7 @@ global.clearTimeout = (id) => {
 // ⚠️ AND INTERVALS ARE RECORDED TOO, WHICH THEY WERE NOT: this was `setInterval = () => 0`, a callback the page
 // hands over and never sees again -- the same gap the note above describes for `setTimeout`, and it hid the two
 // watches that ask the host again by THEMSELVES: the capture wait (200 ms) and a live group (apex/abi.h `live`,
-// ABI 17 -> 18, 1000 ms). Nothing fires unless a check asks, and `clearInterval` really removes one, so "the page
+  // ABI 17 -> 18, 500 ms). Nothing fires unless a check asks, and `clearInterval` really removes one, so "the page
 // started watching" and "the page stopped" are both visible from here.
 let intervalSeq = 0;
 const intervals = new Map();
@@ -200,6 +212,12 @@ try {
   eval(js + ";globalThis.__p = {S:S, renderFeature:renderFeature, renderGeneral:renderGeneral, " +
          "renderNav:renderNav, loadFeature:loadFeature, " +
          "snapshot:window.__apexSnapshot, controls:window.__apexControls, t:t, " +
+         "askControls:askControls, " +
+         "refreshFeatureOnShow:refreshFeatureOnShow, " +
+         "pendingDescribes:pendingDescribes, " +
+         "onlyPreviewValuesChanged:onlyPreviewValuesChanged, " +
+         "previewStrippedJson:previewStrippedJson, " +
+         "updatePreviewsInPlace:updatePreviewsInPlace, " +
          "applyTheme:applyTheme, syncNativeTheme:syncNativeTheme, " +
          "activity:window.__apexActivity, stateChanged:window.__apexStateChanged, " +
          "stopLiveGroups:stopLiveGroups, " +
@@ -295,7 +313,9 @@ P.snapshot(JSON.stringify({
   // produces is a probe describing a page that no longer exists. The feature's own `off`/`enabled` below are a
   // different thing and are still sent.
   host: { lang: "zh", theme: "dark", skip: ["game.exe"], systemLight: 0,
-          systemLang: "zh-CN", systemIsChinese: 1 },
+          systemLang: "zh-CN", systemIsChinese: 1,
+          taskbarEnabled: 1, taskbarPosition: "right", taskbarEdge: "bottom",
+          taskbarFontSize: 12, taskbarTextColor: "auto" },
   features: [{ slot: 0, ok: 1, id: "SmoothWheel", nameZh: "丝滑滚动", nameEn: "Silky Scroll",
                version: "1.0.0", off: 0, enabled: 1 }],
 }));
@@ -305,6 +325,80 @@ check("  and the banner is hidden, not left over from boot",
 check("  and it resolved the language to Chinese", P.S.lang === "zh", P.S.lang);
 check("  and it applied the saved theme", P.S.theme === "dark", P.S.theme);
 check("  and it listed the feature in the sidebar", elements["nav"].children.length === 1);
+
+// ---- THE TASKBAR POSITION WORDS FOLLOW THE TASKBAR'S EDGE --------------------------------
+//
+// The setting stores one stable 0/1 choice. On a bottom/top taskbar it reads left/right; when the taskbar is
+// moved to either side of the desktop, the same choice must read top/bottom. This is the page's half of that
+// rule; the feature receives the same 0/1 answer and rotates its own text.
+{
+  const sentBeforeTaskbarChecks = sent.slice();
+  function collectRadioWords(node, out, depth) {
+    if (!node || (depth || 0) > 10) return out;
+    if ((node.className || "").split(" ").indexOf("radiooption") >= 0) {
+      function textOf(n) {
+        return (n.textContent || "") + (n.children || []).map(textOf).join("");
+      }
+      out.push(textOf(node));
+    }
+    (node.children || []).forEach((c) => collectRadioWords(c, out, (depth || 0) + 1));
+    return out;
+  }
+
+  P.S.snap.host.taskbarPosition = "left";
+  P.S.snap.host.taskbarEdge = "left";
+  elements["body"].children.length = 0;
+  P.renderGeneral();
+  const sideWords = collectRadioWords(elements["body"], [], 0);
+  check("a side taskbar turns the position choices into top/bottom",
+        sideWords.indexOf("上") >= 0 && sideWords.indexOf("下") >= 0 &&
+          sideWords.indexOf("左") < 0 && sideWords.indexOf("右") < 0,
+        sideWords.join(","));
+
+  P.S.snap.host.taskbarEdge = "bottom";
+  elements["body"].children.length = 0;
+  P.renderGeneral();
+  const flatWords = collectRadioWords(elements["body"], [], 0);
+  check("  and a top/bottom taskbar keeps the original left/right words",
+        flatWords.indexOf("左") >= 0 && flatWords.indexOf("右") >= 0,
+        flatWords.join(","));
+
+  function walk(node, pred, out, depth) {
+    if (!node || (depth || 0) > 12) return out;
+    if (pred(node)) out.push(node);
+    (node.children || []).forEach((c) => walk(c, pred, out, (depth || 0) + 1));
+    return out;
+  }
+  const sizeInput = walk(elements["body"], (n) => n.type === "number" && n.min === "9", [], 0)[0];
+  sent.length = 0;
+  if (sizeInput) {
+    sizeInput.value = "15";
+    sizeInput.fire("change");
+  }
+  check("the General taskbar block owns the shared font size",
+        !!sizeInput && sent.some((m) => m.cmd === "setHost" &&
+          m.key === "taskbarfontsize" && m.value === "15"),
+        JSON.stringify(sent));
+
+  const colorInput = walk(elements["body"], (n) => n.type === "color", [], 0)[0];
+  sent.length = 0;
+  if (colorInput) {
+    colorInput.value = "#12abcd";
+    colorInput.fire("change");
+  }
+  check("  and owns the shared taskbar text colour",
+        !!colorInput && sent.some((m) => m.cmd === "setHost" &&
+          m.key === "taskbartextcolor" && m.value === "#12ABCD"),
+        JSON.stringify(sent));
+
+  const generalCards = (elements["body"].children || []).filter(
+    (n) => (n.className || "").split(" ").indexOf("card") >= 0 &&
+      (n.className || "").split(" ").indexOf("gen") >= 0);
+  check("  with General, quick panel and taskbar displayed as separate cards",
+        generalCards.length === 3, "cards=" + generalCards.length);
+  sent.length = 0;
+  sent.push(...sentBeforeTaskbarChecks);
+}
 
 // ---- THE STATE DOT: always there, at the right, one of three colours ----
 //
@@ -693,7 +787,7 @@ check("both pages render without throwing", rendered, renderError);
         lines.length === 5 && String(lines[0].textContent).indexOf("firefox.exe") >= 0,
         "rows=" + lines.length);
   check("  and a live status card re-reads itself",
-        intervalsOf(1000).length === 1, "live timers=" + intervalsOf(1000).length);
+        intervalsOf(500).length === 1, "live timers=" + intervalsOf(500).length);
   P.stopLiveGroups();
 }
 
@@ -1100,25 +1194,34 @@ check("both pages render without throwing", rendered, renderError);
   }
   const lockedRow = rowList && rowList.children[0];
   const plainRow = rowList && rowList.children[1];
+  const lockedActions = findBy(lockedRow, (n) => (n.className || "").split(" ").indexOf("rowactions") >= 0);
+  const plainActions = findBy(plainRow, (n) => (n.className || "").split(" ").indexOf("rowactions") >= 0);
   // ⚠️ THE LOCKED ROW IS THE FEATURE'S OWN (KeepAwake's 系统全局): it keeps its switches and loses its remove
   // button. "It cannot be deleted" is only true if the page does not offer the button -- the feature refuses the
   // op as well, and both halves are checked, but this is the half the user sees.
   check("  the feature's LOCKED row has its switches and NO usable remove button",
-        !!lockedRow && countByClass(lockedRow, "sw", 0) === 2 && buttonsIn(lockedRow) === 0,
-        "buttons=" + (lockedRow ? buttonsIn(lockedRow) : "?"));
+        !!lockedRow && countByClass(lockedRow, "sw", 0) === 2 && !!lockedActions && buttonsIn(lockedActions) === 0,
+        "buttons=" + (lockedActions ? buttonsIn(lockedActions) : "?"));
   // ⚠️ AND WHAT TOOK THE BUTTON'S PLACE IS NOT A BUTTON THE USER CAN PRESS. The ghost exists to hold the column
   // width (so every row's switches line up); if it were ever wired to the remove op, the locked row would be
   // deletable from the page while every count of "usable buttons" still said zero.
   {
-    const ghost = lockedRow ? (lockedRow.children || []).filter(isGhost)[0] : null;
+    const ghost = lockedActions ? (lockedActions.children || []).filter(isGhost)[0] : null;
     const wired = ghost ? ((ghost._on || {}).click || []).length : -1;
     check("    the spacer that took its place is invisible and has no handler",
           !!ghost && ghost._attr["aria-hidden"] === "true" && wired === 0,
           "ghost=" + (ghost ? "yes, handlers=" + wired : "MISSING -- the switches cannot line up"));
   }
   check("  and a normal row has exactly one remove button",
-        !!plainRow && countByClass(plainRow, "sw", 0) === 2 && buttonsIn(plainRow) === 1,
-        "buttons=" + (plainRow ? buttonsIn(plainRow) : "?"));
+        !!plainRow && countByClass(plainRow, "sw", 0) === 2 && !!plainActions && buttonsIn(plainActions) === 1,
+        "buttons=" + (plainActions ? buttonsIn(plainActions) : "?"));
+  {
+    const order = ((plainActions && plainActions.children) || []).map((n) =>
+      (n.className || "").split(" ")[0] || n.id);
+    check("    every enable switch sits before its remove button",
+          order.length === 3 && order[0] === "swcell" && order[1] === "swcell" && order[2] === "#button",
+          "actions: " + order.join(" "));
+  }
 
   // ⚠️ THE ADD BOX STANDS OUTSIDE THE CARD, ABOVE IT, AND THAT IS THE USER'S ARRANGEMENT: asked which of three
   // places the add row should go, they chose "列表卡片的上方（卡片外）" -- so the card is purely the list and the
@@ -1345,6 +1448,56 @@ check("both pages render without throwing", rendered, renderError);
     check("a rows group that declares an action still draws its bar", !!bar, "bar=" + !!bar);
     check("  with the action's own button in it (it used to be discarded with the bar)",
           !!bar && countByClass(bar, "action", 0) === 1, "actions=" + (bar ? countByClass(bar, "action", 0) : "?"));
+    const actionBtn = findBy(bar, (n) => n.id === "#button" &&
+      (n.className || "").split(" ").indexOf("action") >= 0);
+    check("  the feature action has a real button", !!actionBtn,
+          actionBtn ? "disabled=" + !!actionBtn.disabled : "not found");
+    sent.length = 0;
+    if (actionBtn) actionBtn.fire("click");
+    const actionCall = sent.filter((x) => x.cmd === "listOp")[0];
+    check("  a non-capture action is sent as its own listOp, not AutoIME's capture",
+          !!actionCall && actionCall.op === "refresh",
+          actionCall ? actionCall.op : "nothing was sent");
+    const hint = findBy(b, (n) => (n.className || "").split(" ").indexOf("hintbox") >= 0);
+    check("  and it does not print the AutoIME edit-before-capture message",
+          !!hint && String(hint.textContent) === "", hint ? JSON.stringify(hint.textContent) : "no hint box");
+    // A live group can change a field without rebuilding its own DOM. This is what lets a provider preset
+    // stay on screen while the model picker beside it remains available.
+    const liveDoc = JSON.stringify({ params: [{
+      id: "accounts", type: "group", labelZh: "接口与模型", labelEn: "APIs and models",
+      layout: "rows", live: true, addHintZh: "例如 DeepSeek", addHintEn: "e.g. DeepSeek",
+      fields: [{ id: "preset", type: "select", labelZh: "厂商", labelEn: "Provider",
+                 options: [{ value: "custom", labelZh: "自定义", labelEn: "Custom" },
+                           { value: "deepseek", labelZh: "DeepSeek", labelEn: "DeepSeek" }] }],
+      items: [{ title: "DeepSeek", values: { preset: "custom" } }]
+    }] });
+    const liveBody = renderGroup(liveDoc);
+    const liveSelect = findBy(liveBody, (n) => n.id === "#select");
+    sent.length = 0;
+    if (liveSelect) { liveSelect.value = "deepseek"; liveSelect.fire("change"); }
+    const liveCall = sent.filter((x) => x.cmd === "setControl")[0];
+    check("  a live group sends a select change without rebuilding the dropdown",
+          !!liveCall && liveCall.path === "accounts[0].preset" && liveCall.value === "deepseek" &&
+          !sent.some((x) => x.cmd === "describe"),
+          liveCall ? liveCall.path + "=" + liveCall.value : "nothing was sent");
+    const submodelDoc = JSON.stringify({ params: [{
+      id: "accounts", type: "group", labelZh: "接口与模型", labelEn: "APIs and models",
+      layout: "rows", fieldsWrap: true, live: true, noAdd: true,
+      fields: [{ id: "models", type: "list", labelZh: "子模型", labelEn: "Sub-models" }],
+      items: [{ title: "DeepSeek", values: { models: ["deepseek-chat"] } }]
+    }] });
+    const submodelBody = renderGroup(submodelDoc);
+    const submodelList = findBy(submodelBody, (n) => (n.className || "").split(" ").indexOf("grouplist") >= 0);
+    const submodelInput = findBy(submodelList, (n) => n.id === "#input" && n.type === "text");
+    const submodelAdd = findBy(submodelList, (n) => n.id === "#button" && n.className === "addbtn");
+    sent.length = 0;
+    if (submodelInput && submodelAdd) { submodelInput.value = "deepseek-reasoner"; submodelAdd.fire("click"); }
+    const submodelCall = sent.filter((x) => x.cmd === "listOp")[0];
+    check("  a sub-model list adds through its own nested listOp path",
+          !!submodelCall && submodelCall.id === "accounts[0].models" &&
+          submodelCall.op === "add" && submodelCall.value === "deepseek-reasoner",
+          submodelCall ? submodelCall.id + "=" + submodelCall.value : "nothing was sent");
+    renderGroup(quickGroupDoc({ actions: true }));
     // ... and the switch still belongs to the HEADING: the user asked for it beside 音量, which is a heading, not
     // beside the refresh button.
     const head = headIn(b);
@@ -1385,16 +1538,16 @@ check("both pages render without throwing", rendered, renderError);
   {
     renderGroup(liveGroupDoc(true));
     check("a group that says its rows are LIVE makes the page re-read it by itself",
-          intervalsOf(1000).length === 1, "live timers=" + intervalsOf(1000).length);
+          intervalsOf(500).length === 1, "live timers=" + intervalsOf(500).length);
     // ⚠️ SLOWER THAN THE CAPTURE WAIT ON PURPOSE: that one is chasing a click the user just made and ends by
     // itself; this one runs for as long as the page is open.
-    check("  at one second, not at the capture wait's 200 ms",
-          intervalsOf(1000).length === 1 && intervalsOf(200).length === 0, "");
+    check("  at 500 ms, not at the capture wait's 200 ms",
+          intervalsOf(500).length === 1 && intervalsOf(200).length === 0, "");
 
     // ... and an answer that has not changed asks for nothing else: one tick sends one `describe`, and the page
     // does not redraw from it (that guard is elsewhere -- see `__apexControls`).
     sent.length = 0;
-    intervalsOf(1000)[0].fn();
+    intervalsOf(500)[0].fn();
     // (Its answer, delivered here so the queue below is balanced: every tick below is followed by the answer to
     //  THAT tick, and the last check asks the question the ordinary way.)
     P.controls(liveGroupDoc(true));
@@ -1409,7 +1562,7 @@ check("both pages render without throwing", rendered, renderError);
     // it does not touch `children` and a redraw shows up as nodes APPENDED to #body (see the note at line 773).
     {
       const before = elements["body"].children.length;
-      intervalsOf(1000)[0].fn();                 // the quiet ask
+      intervalsOf(500)[0].fn();                  // the quiet ask
       P.controls(liveGroupDoc(true));            // ... and exactly the same document comes back
       check("  an unchanged answer to a live check does not rebuild the page",
             elements["body"].children.length === before,
@@ -1433,7 +1586,7 @@ check("both pages render without throwing", rendered, renderError);
     // for the rest of the session.
     sent.length = 0;
     P.S.view = 7;
-    intervalsOf(1000)[0].fn();
+    intervalsOf(500)[0].fn();
     check("  and a page the user has left asks nothing at all",
           sent.filter((x) => x.cmd === "describe").length === 0, JSON.stringify(sent));
     P.S.view = 0;
@@ -1443,11 +1596,11 @@ check("both pages render without throwing", rendered, renderError);
     P.S.view = 9;
     P.loadFeature(0);
     check("  and navigating away clears the timer, so nothing wakes up once a second for ever",
-          intervalsOf(1000).length === 0, "live timers=" + intervalsOf(1000).length);
+          intervalsOf(500).length === 0, "live timers=" + intervalsOf(500).length);
 
     // A group that does NOT say it is live costs no timer at all.
     renderGroup(liveGroupDoc(false));
-    check("a group that does not say so is not re-read at all", intervalsOf(1000).length === 0, "");
+    check("a group that does not say so is not re-read at all", intervalsOf(500).length === 0, "");
 
     // Put the page back the way the rest of the probe expects it (see the note on the shared container above).
     renderGroup(rowsGroupDoc());
@@ -1670,6 +1823,159 @@ check("both pages render without throwing", rendered, renderError);
         sent.slice(before2).every((m) => m.cmd !== "pageError"),
         sent.slice(before2).map((m) => m.cmd).join(","));
   sent.length = before2; // leave the stream as this block found it
+}
+
+// ---- file pickers and draggable span positions (ABI 26) -----------------------------------------
+{
+  const doc = JSON.stringify({
+    params: [{
+      id: "monitors", type: "group", layout: "rows", noAdd: true, live: true, fieldsWrap: true,
+      labelZh: "显示器", labelEn: "Displays",
+      fields: [
+        { id: "style", type: "select", labelZh: "显示方式", labelEn: "Mode",
+          options: [
+            { value: "fill", labelZh: "填充", labelEn: "Fill" },
+            { value: "fit", labelZh: "适应", labelEn: "Fit" }
+          ] },
+        { id: "base_file", type: "file", kind: "image", labelZh: "当前图", labelEn: "Current image" },
+        { id: "thumb_file", type: "file", kind: "image", hidePath: true, previewId: "preview",
+          buttonZh: "选择壁纸", buttonEn: "Choose wallpaper", labelZh: "缩略图", labelEn: "Thumbnail" },
+        { id: "pan", type: "pan", labelZh: "跨区位置", labelEn: "Span position" }
+      ],
+      items: [{ titleZh: "显示器 1", titleEn: "Display 1", locked: true,
+                values: { base_file: "C:\\Pictures\\a.jpg", thumb_file: "C:\\Pictures\\b.png",
+                          preview: "data:image/jpeg;base64,AAAA", pan: "50,50" } }]
+    }]
+  });
+  P.controls(doc);
+  P.S.controls = JSON.parse(JSON.stringify(P.S.controls));
+  elements["body"].children.length = 0;
+  P.S.view = 0;
+  P.S.drawnSlot = "0";
+  P.S.drawnJson = doc;
+  P.renderFeature(0);
+
+  function panelNode(node, pred, depth) {
+    if (!node || (depth || 0) > 10) return null;
+    if (pred(node)) return node;
+    for (const c of (node.children || [])) {
+      const hit = panelNode(c, pred, (depth || 0) + 1);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  const browses = [];
+  (function collectBrowses(node) {
+    if (!node) return;
+    if ((node.className || "") === "browse") browses.push(node);
+    (node.children || []).forEach(collectBrowses);
+  })(elements["body"]);
+  const browse = browses[browses.length - 1];
+  sent.length = 0;
+  if (browse) browse.fire("click");
+  const choose = sent.filter((m) => m.cmd === "chooseFile");
+  check("a file field draws the native Browse action", !!browse && choose.length === 1 &&
+        choose[0].kind === "image", JSON.stringify(choose[0] || null));
+
+  sent.length = 0;
+  window.__apexFileChosen("C:\\Pictures\\chosen.png");
+  const picked = sent.filter((m) => m.cmd === "setControl");
+  check("  the chosen path travels through the hidden field's own setControl path",
+        picked.length === 1 && picked[0].path === "monitors[0].thumb_file" &&
+          picked[0].value === "C:\\Pictures\\chosen.png",
+        JSON.stringify(picked[0] || null));
+  check("    and choosing a file schedules a forced refresh after the control message",
+        timers.length > 0 && !sent.some((m) => m.cmd === "describe"),
+        JSON.stringify(sent));
+  runTimers();
+  check("      which then asks for the current preview and forces one draw",
+        sent.some((m) => m.cmd === "describe" && String(m.slot) === String(P.S.view)) &&
+          P.pendingDescribes.some((q) => q.forceDraw === true),
+        JSON.stringify({ sent: sent, pending: P.pendingDescribes }));
+  const thumb = panelNode(elements["body"], (n) => (n.className || "") === "wallthumb");
+  check("  a hidden-path picker draws the supplied thumbnail",
+        !!thumb && thumb.src === "data:image/jpeg;base64,AAAA",
+        thumb ? thumb.src : "no thumbnail");
+  const thumbRow = panelNode(elements["body"],
+    (n) => (n.className || "").split(" ").indexOf("thumbrow") >= 0);
+  check("  its preview gets its own line instead of squeezing the name controls",
+        !!thumbRow && html.indexOf(".rowlist .skiprow > .row.thumbrow") >= 0 &&
+          html.indexOf(".row.thumbrow .ctl") >= 0,
+        thumbRow ? thumbRow.className : "no .thumbrow");
+  const compactSelect = panelNode(elements["body"],
+    (n) => n.id === "#select" && (n.className || "").split(" ").indexOf("compact") >= 0);
+  check("  a two-character option set gets a compact dropdown",
+        !!compactSelect && html.indexOf("select.compact") >= 0,
+        compactSelect ? compactSelect.className : "no .compact select");
+
+  // A live answer whose only visible difference is the preview must update that image and nothing else. Before
+  // this path existed, the whole feature page was cleared and rebuilt once a second while a rendered wallpaper
+  // changed, which made selects flicker and made the thumbnail appear to jump between generations.
+  const pageRoot = elements["body"].children[0];
+  const pageCount = elements["body"].children.length;
+  const changed = JSON.parse(doc);
+  changed.params[0].items[0].values.preview = "data:image/jpeg;base64,BBBB";
+  changed.params[0].items[0].values.thumb_file = "C:\\Pictures\\chosen-2.png";
+  check("    the preview-only comparison sees just the image change",
+        P.onlyPreviewValuesChanged(doc, changed),
+        "old=" + P.previewStrippedJson(JSON.parse(doc)).length +
+          " new=" + P.previewStrippedJson(changed).length);
+  const patched = P.updatePreviewsInPlace(changed);
+  const patchedThumb = panelNode(elements["body"], (n) => (n.className || "") === "wallthumb");
+  check("    and its DOM patch finds the rendered thumbnail",
+        patched && !!patchedThumb && patchedThumb.src === "data:image/jpeg;base64,BBBB",
+        patchedThumb ? patchedThumb.src : "no thumbnail");
+  if (patchedThumb) patchedThumb.src = "data:image/jpeg;base64,AAAA";
+  P.S.drawnSlot = "0";
+  P.S.drawnJson = doc;
+  P.pendingDescribes.length = 0;
+  P.askControls(0, true);
+  check("    the live re-read is marked quiet for the page on screen",
+        !!P.pendingDescribes[0] && P.pendingDescribes[0].quiet === true &&
+          String(P.pendingDescribes[0].slot) === String(P.S.view),
+        JSON.stringify(P.pendingDescribes[0] || null));
+  P.controls(JSON.stringify(changed));
+  const thumbAfter = panelNode(elements["body"], (n) => (n.className || "") === "wallthumb");
+  check("  a live preview-only answer does not rebuild the feature page",
+        elements["body"].children[0] === pageRoot &&
+          elements["body"].children.length === pageCount,
+        "same page root, children=" + elements["body"].children.length + "/" + pageCount);
+  check("    and it updates only the thumbnail image",
+        !!thumbAfter && thumbAfter.src === "data:image/jpeg;base64,BBBB",
+        thumbAfter ? thumbAfter.src : "no thumbnail");
+
+  // The live request can lose its quiet marker when another re-read is already queued. Preview-only patching is
+  // still safe in that case; depending on the marker made a new thumbnail wait until the user left and reopened
+  // the feature page.
+  P.pendingDescribes.length = 0;
+  const changedAgain = JSON.parse(JSON.stringify(changed));
+  changedAgain.params[0].items[0].values.preview = "data:image/jpeg;base64,CCCC";
+  P.S.drawnJson = JSON.stringify(changed);
+  P.controls(JSON.stringify(changedAgain));
+  const thumbAgain = panelNode(elements["body"], (n) => (n.className || "") === "wallthumb");
+  check("  a preview-only answer does not need the quiet marker to patch in place",
+        elements["body"].children[0] === pageRoot &&
+          elements["body"].children.length === pageCount &&
+          !!thumbAgain && thumbAgain.src === "data:image/jpeg;base64,CCCC",
+        "src=" + (thumbAgain ? thumbAgain.src : "no thumbnail") +
+          " children=" + elements["body"].children.length + "/" + pageCount);
+
+  sent.length = 0;
+  P.pendingDescribes.length = 0;
+  const refreshedOnShow = P.refreshFeatureOnShow();
+  check("  returning to the panel immediately re-reads the current feature page",
+        refreshedOnShow && sent.some((m) => m.cmd === "describe") &&
+          P.pendingDescribes.length === 1,
+        JSON.stringify(sent));
+
+  const pan = panelNode(elements["body"], (n) => (n.className || "") === "panbox");
+  sent.length = 0;
+  if (pan) pan.fire("keydown", { key: "ArrowRight", shiftKey: false });
+  const moved = sent.filter((m) => m.cmd === "setControl");
+  check("a pan field is draggable/keyboard-adjustable and reports x,y",
+        !!pan && moved.length === 1 && moved[0].path === "monitors[0].pan" &&
+          moved[0].value === "51.0,50.0",
+        JSON.stringify(moved[0] || null));
 }
 
 // ---- a BAD document must be reported, not swallowed ----

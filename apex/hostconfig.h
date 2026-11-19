@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include "../common/taskbar_layout.h"
 
 namespace apex {
 
@@ -128,6 +129,14 @@ struct HostConfig
   bool quickCompact = false;
   bool quickOwn = false;
 
+  // THE GENERAL PAGE'S TASKBAR DISPLAY SETTINGS (ABI 27 -> 28). `taskbarEnabled` defaults on so upgrading does
+  // not make an existing taskbar contribution vanish; `taskbarPosition` is 0 left / 1 right and defaults to the
+  // right, where the first ComputeManager implementation already lived.
+  bool taskbarEnabled = true;
+  int taskbarPosition = 1;
+  int taskbarFontSize = 12;
+  char taskbarTextColor[8] = "auto";
+
   // ---- THE ORDER THE FEATURES' OWN CONTROLS APPEAR IN, IN THE FLYOUT -----------------------------
   //
   // The user's request: "设置通用里，把快速面板功能单独给一个小面板，在两个总开关下面实时给出当前有映射在快速面板
@@ -149,6 +158,73 @@ struct HostConfig
   // of the flyout exists at all.
   char quickOrder[kMaxList][kMaxName * 2] = {{0}};
   int quickOrderN = 0;
+
+  // THE ORDER OF PLUGIN-CONTRIBUTED TASKBAR AREAS. A key is the feature's own stable area key. Turning an area
+  // off removes it from the live list but never deletes its key here, so turning it back on restores its place.
+  char taskbarOrder[kMaxList][128] = {{0}};
+  int taskbarOrderN = 0;
+
+  bool TaskbarOrderAppend(const char *key)
+  {
+    if (!key || !*key || taskbarOrderN >= kMaxList)
+      return false;
+    for (int i = 0; i < taskbarOrderN; ++i)
+      if (_stricmp(taskbarOrder[i], key) == 0)
+        return false;
+    _snprintf(taskbarOrder[taskbarOrderN], sizeof(taskbarOrder[taskbarOrderN]), "%s", key);
+    if (taskbarOrder[taskbarOrderN][0])
+    {
+      ++taskbarOrderN;
+      return true;
+    }
+    return false;
+  }
+
+  void TaskbarOrderSetFromKeys(const char *text)
+  {
+    char kept[kMaxList][128] = {{0}};
+    int keptN = 0;
+    const char *p = text ? text : "";
+    while (*p && keptN < kMaxList)
+    {
+      const char *end = p;
+      while (*end && *end != ',' && *end != '\n' && *end != '\r')
+        ++end;
+      char one[128] = {0};
+      int n = 0;
+      for (const char *q = p; q < end && n < (int)sizeof(one) - 1; ++q)
+        one[n++] = *q;
+      one[n] = 0;
+      char *s = one;
+      while (*s == ' ' || *s == '\t')
+        ++s;
+      char *e = s + strlen(s);
+      while (e > s && (e[-1] == ' ' || e[-1] == '\t'))
+        *--e = 0;
+      if (*s)
+      {
+        bool dup = false;
+        for (int i = 0; i < keptN; ++i)
+          if (_stricmp(kept[i], s) == 0)
+            dup = true;
+        if (!dup)
+          _snprintf(kept[keptN++], sizeof(kept[0]), "%s", s);
+      }
+      p = *end ? end + 1 : end;
+    }
+    for (int i = 0; i < taskbarOrderN && keptN < kMaxList; ++i)
+    {
+      bool named = false;
+      for (int k = 0; k < keptN; ++k)
+        if (_stricmp(kept[k], taskbarOrder[i]) == 0)
+          named = true;
+      if (!named)
+        _snprintf(kept[keptN++], sizeof(kept[0]), "%s", taskbarOrder[i]);
+    }
+    taskbarOrderN = keptN;
+    for (int i = 0; i < keptN; ++i)
+      _snprintf(taskbarOrder[i], sizeof(taskbarOrder[i]), "%s", kept[i]);
+  }
 
   // ONE KEY FROM THE FILE (`quickorder=<key>`, repeated -- see ParseHostConfig). A repeated key is ignored: the
   // first mention is the order, and a second one has nothing to say.
@@ -599,11 +675,38 @@ inline bool ParseHostConfig(const char *text, HostConfig &c)
       if (ParseBool(val, &b))
         c.quickOwn = b;
     }
+    else if (strcmp(key, "taskbarenabled") == 0)
+    {
+      bool b;
+      if (ParseBool(val, &b))
+        c.taskbarEnabled = b;
+    }
+    else if (strcmp(key, "taskbarposition") == 0)
+    {
+      if (!_stricmp(val, "left"))
+        c.taskbarPosition = 0;
+      else if (!_stricmp(val, "right"))
+        c.taskbarPosition = 1;
+    }
+    else if (strcmp(key, "taskbarfontsize") == 0)
+    {
+      int size = 0;
+      if (apex::taskbar::ParseFontSize(val, &size))
+        c.taskbarFontSize = size;
+    }
+    else if (strcmp(key, "taskbartextcolor") == 0)
+    {
+      char color[8] = {0};
+      if (apex::taskbar::NormaliseColor(val, color, (int)sizeof(color)))
+        _snprintf(c.taskbarTextColor, sizeof(c.taskbarTextColor), "%s", color);
+    }
     // ONE LINE PER ID, IN ORDER -- the same shape as `off=`. ⚠️ THE FILE SPELLS IT ONE ID PER LINE and the PANEL
     // sends the whole order as one comma-separated value (see ApplySetHost), so the two callers use the two
     // methods below rather than one method guessing which shape it was handed.
     else if (strcmp(key, "quickorder") == 0)
       c.QuickOrderAppend(val);
+    else if (strcmp(key, "taskbarorder") == 0)
+      c.TaskbarOrderAppend(val);
   }
   return true;
 }
@@ -624,15 +727,27 @@ inline void FormatHostConfig(const HostConfig &c, char *out, int outSize)
                    "# autostart : 1 to start with Windows (default 0)\n"
                    "# quickcompact : 1 to show every feature's on/off switch in the quick panel (default 0)\n"
                    "# quickown     : 1 to show the controls the features asked for there (default 0)\n"
+                   "# taskbarenabled : 1 to show plugin-contributed areas on the taskbar (default 1)\n"
+                   "# taskbarposition: left | right (default right)\n"
+                   "# taskbarfontsize: 9..16 px, shared by every taskbar display area (default 12)\n"
+                   "# taskbartextcolor: auto | #RRGGBB (default auto)\n"
+                   "# taskbarorder   : a taskbar area key, repeated in display order\n"
                    "# quickorder   : a feature id, in the order its controls should appear in the quick panel;\n"
                    "#                repeat the line for more. Anything not named comes after, in load order.\n"
                    "lang=%s\n"
                    "theme=%s\n"
                    "autostart=%d\n"
                    "quickcompact=%d\n"
-                   "quickown=%d\n",
+                   "quickown=%d\n"
+                   "taskbarenabled=%d\n"
+                   "taskbarposition=%s\n"
+                   "taskbarfontsize=%d\n"
+                   "taskbartextcolor=%s\n",
                    LangName(c.lang), ThemeName(c.theme), c.autostart ? 1 : 0, c.quickCompact ? 1 : 0,
-                   c.quickOwn ? 1 : 0);
+                   c.quickOwn ? 1 : 0, c.taskbarEnabled ? 1 : 0, c.taskbarPosition ? "right" : "left",
+                   c.taskbarFontSize, c.taskbarTextColor);
+  for (int i = 0; i < c.taskbarOrderN && off < outSize - 144; ++i)
+    off += _snprintf(out + off, outSize - off, "taskbarorder=%s\n", c.taskbarOrder[i]);
   for (int i = 0; i < c.quickOrderN && off < outSize - (kMaxName + 16); ++i)
     off += _snprintf(out + off, outSize - off, "quickorder=%s\n", c.quickOrder[i]);
   for (int i = 0; i < c.offN && off < outSize - (kMaxName + 8); ++i)

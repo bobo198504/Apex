@@ -32,6 +32,8 @@ bash test/run_all.sh --assembly   # 构建层 + 装配层：交付前跑一次
 | `check_feature_chart` | **功能自己的控件文档**：JSON 结构合法 + 每个滑块都真的动曲线（跑真实 DLL） |
 | `check_feature_ime` | **AutoIME 的匹配引擎**：规则、顺序、锚定（跑真实测试，夹具是你的 9 条规则） |
 | `check_feature_keepawake` | **KeepAwake**：两个开关独立、名单开关真的在拦、发给系统的请求位精确（0x80000001/3/2/0）、**关掉时请求被清掉**、各插件名单互不干扰 |
+| `check_feature_computemanager` | **ComputeManager**：跨午夜峰谷、计数重置、嵌套 JSON 路径、12 个接口的 64 KB 文档上限、API Key 脱敏与文件归属（跑真实 DLL，使用 `build/` 私有目录） |
+| `check_feature_wallpaper` | **Wallpaper**：硬件显示器 ID、单屏单图、插件内图片副本、缩略图 data URI、五种显示方式、时间段/日出日落/间隔、可选目录、网络定位 JSON、锁屏接口和唯一文件名渲染；跑真实 DLL 但 `APEX_WALLPAPER_NO_APPLY=1`，不改系统壁纸 |
 | `check_feature_mediacontrol` | **MediaControl**：每屏一行亮度、熄屏真的是一块盖住那块屏的窗口（连着、没锁屏、可撤销）、每个应用的音量、两个具名分组；⚠️ **它是构建层里唯一会短暂盖黑一块屏的门**（`APEX_MC_NO_DARK=1` 可跳过那一段） |
 | `check_apex_palette` | **面板配色**：明暗两条路（auto / 钉住）声明同一套；层次顺序对；对比度够；比被否掉的那版淡 |
 | `check_apex_menutheme` | **托盘菜单能不能跟着外观走**：探测本机的 uxtheme 序号（`SetPreferredAppMode` 是**未文档化的 135**，会随 Windows 版本挪动）＋ 宿主**真的调用了它**、且**两条改主题的路径都到得了** ＋ 菜单有三个值且当前那个打了勾（见 `docs/rules/ui-look.md` §3.7.0） |
@@ -39,6 +41,22 @@ bash test/run_all.sh --assembly   # 构建层 + 装配层：交付前跑一次
 | `check_apex_quickpanel` | **快速面板**：几何/命中/数值/淡入淡出（纯逻辑）＋**插件必须被用户映射过才给控件**（跑真实 DLL）＋**渲染成图逐像素验"没有外层大板、缝是空气"**（见 §3.12） |
 | `check_apex_deploy` | **部署只换程序，不碰用户数据**（见 5.0.2）＋退役功能会被删掉 |
 | `check_apex_modular` | **边界**：宿主与面板里一个功能名都没有；功能 include 宿主私有头必须编译失败；进程规则；工具链；**输入设备安全**（见 5.0 / 5.0.1 / 5.0.3） |
+
+### 5.0.0.1 ★ 门按插件选择，不按"功能多了就全跑"
+
+用户定的部署规则：**「每个插件都是独立的，最多是主程序有关联可以重跑一下。」**
+
+- 只改一个已有独立 DLL：`test/run_all.sh --build-set feature:<id>` 只跑该功能自己的构建门；
+  `apex/deploy.sh --gated` 会从产物 delta 自动识别这个情况，不再重跑其它插件。
+- 只有该功能确实经过宿主链路时才跑对应装配门：SmoothWheel -> 滚轮/REAPER，AutoIME -> 编辑保存，
+  MediaControl -> 快速面板。ComputeManager、KeepAwake、VolumeLock、Wallpaper 没有装配层专属链路，只跑自己的构建门，
+  不会为了验证一个插件而停掉用户正在运行的 Apex。
+- **用户确认的直部署规则（2026-11-16）**：没有改主程序时直接部署插件。判据是 `apex.exe`、
+  `apex-settings.exe`、面板资源、ABI、`common/`、`shared/` 都没变，且 delta 只有一个已有功能的
+  DLL/payload/service。此时只验证该插件、只停一次以替换插件，不跑宿主装配门，也不重跑其它插件。
+  必要时可直接 `bash apex/deploy.sh`（插件门已经跑过时），或 `bash apex/deploy.sh --gated`（让部署脚本跑该插件门）。
+- 宿主 `apex.exe`、多个功能、**新增功能**或无法判断 delta 时才扩大到全套。新增功能还会经过打包、模块边界等结构门。
+- 所有被跳过的门必须打印 `SKIP (not in the '<set>' set)`；不允许静默少跑。
 | `check_apex_docs` | **AGENTS.md 还读得完吗**：不超 48 KB；索引里提到的分册都在；没有没人索引的分册；关键章节一条都没丢（见文件末尾的「AGENTS.md 的体积」） |
 | `check_model_sync` | **shared\ 与插件 src\ 是否仍然一致**（项目接缝） |
 
@@ -317,6 +335,11 @@ SmoothWheel 的设置和捕获历史。
     而"一条都没分割的整串"打印出来**逐字相同**。同一轮里 `check_apex_persist.sh`（数文件行数）抓住了它。
     → 探针里现在多一句 `quickOrderN == 2`，并写在注释里。**判据**：只要断言里出现"拼接/序列化后的文本"，
     旁边就得有一句**数量或形状**的断言（见 `docs/rules/quickpanel.md` 那一节的完整链条）。
+12. **⚠️⚠️ 按窗口类找窗口，还必须按进程认领（2026-11-16 实测）**。`check_feature_computemanager` 曾在本机
+    稳定误报"桌面挂件不存在"：用户正在运行的 Apex 和探针各有一个 `ApexComputeManagerOverlay`，前者可见、
+    后者隐藏；`FindWindowW` 只按类名返回其中一个，结果取决于桌面上另有哪一份 Apex。
+    **修法是 `EnumWindows` 后先比对 `GetCurrentProcessId()`，再比对窗口类**。这不是产品 ABI 问题，也不是
+    用 A/W 版本能解决的：**窗口类只说明它是什么，不说明它是谁的。**
 
 
 
@@ -538,6 +561,11 @@ ABI 说的是 `init` 之后功能的状态才算建好，而 KeepAwake 和 Media
 `_diag/trayrect_probe.cpp` 直接量到了这一点：一个只做"建窗口 + 加图标 + 问矩形"的最小程序，在受限上下文里
 `NIM_ADD refused (5)`。托盘加不上 → 依赖托盘的门全红（icons 读托盘行、flyout 要 shell 报图标矩形、
 persist 要托盘图标做"脏退出"标记、endtoend 的滚轮链路也在同一批启动里）。
+
+⚠️ 同一受限上下文里，**任何静态导入 `USER32.dll` 的独立探针**都可能在进入 `main` 前以 `0xc0000142`
+弹系统错误框（实测连旧的 `apex_owners.exe` 也如此）。这不是探针代码的失败；工作区内跑这类门要在非沙箱的
+交互式会话执行。探针本身仍应调用 `SetErrorMode(...NOGPFAULTERRORBOX...)`，并把构建产物路径带上 PID，
+避免并行重编同一个 exe 造成假故障。
 
 ⚠️⚠️ **这不是代码缺陷，判据是"用户那份能跑"**：`D:\App protable\Apex\apex.log` 里
 `tray icon added` 与 `wheel hook installed` **都正常**，部署实例的哈希与 `build/apex/apex.exe` **逐字节一致**。

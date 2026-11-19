@@ -233,10 +233,24 @@ int main(int argc, char **argv)
   // OPTIONAL fourth argument: the folder this feature is told it owns (see the host stub above).
   if (argc >= 4)
     _snprintf(g_dir, sizeof(g_dir), "%s", argv[3]);
-  HMODULE mod = LoadLibraryA(dll);
+  // Match apex/loader_win.cpp: the DLL's own directory must be searched for
+  // dependent libraries before falling back to the legacy loader.
+  // Git Bash supplies the path with forward slashes.  Normalize it before
+  // using the directory-scoped loader flags; the host always passes a
+  // Windows path from FindFirstFile/JoinPath.
+  char winPath[512] = {0};
+  _snprintf(winPath, sizeof(winPath), "%s", dll);
+  for (char *p = winPath; *p; ++p)
+    if (*p == '/')
+      *p = '\\';
+  HMODULE mod = LoadLibraryExA(winPath, nullptr,
+                                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+                                LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+  if (!mod)
+    mod = LoadLibraryA(winPath);
   if (!mod)
   {
-    printf("cannot load %s (err %lu)\n", dll, GetLastError());
+    printf("cannot load %s (err %lu)\n", winPath, GetLastError());
     return 2;
   }
   EntryFn entry = (EntryFn)(void *)GetProcAddress(mod, "ApexFeatureEntry");

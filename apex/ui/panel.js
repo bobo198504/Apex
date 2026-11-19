@@ -27,6 +27,18 @@ var TEXT = {
     quickOrder: "快速面板里的功能",
     quickOrderHint: "拖动调整顺序",
     quickOrderEmpty: "还没有功能映射到快速面板（在插件页里打开它自己的「快速面板」开关）",    auto: "跟随系统",
+    taskbarDisplay: "任务栏显示",
+    taskbarAppearance: "文字样式",
+    position: "位置",
+    left: "左",
+    right: "右",
+    fontSize: "字号",
+    color: "颜色",
+    taskbarAreas: "任务栏显示区",
+    taskbarAreasEmpty: "还没有插件贡献任务栏显示区",
+    top: "上",
+    bottom: "下",
+    show: "显示",
     light: "浅色",
     dark: "深色",
     add: "添加",
@@ -69,6 +81,18 @@ var TEXT = {
     quickOrder: "Features in the quick panel",
     quickOrderHint: "Drag to reorder",
     quickOrderEmpty: "No feature is mapped into the quick panel yet (open its own \"Quick panel\" switch on its page)",
+    taskbarDisplay: "Taskbar display",
+    taskbarAppearance: "Text style",
+    position: "Position",
+    left: "Left",
+    right: "Right",
+    fontSize: "Size",
+    color: "Colour",
+    taskbarAreas: "Taskbar areas",
+    taskbarAreasEmpty: "No plugin is contributing a taskbar area yet",
+    top: "Top",
+    bottom: "Bottom",
+    show: "Show",
     auto: "Follow system",
     light: "Light",
     dark: "Dark",
@@ -205,12 +229,23 @@ window.__apexControls = function (json) {
     redrawCurveInPlace();
     return;
   }
+  // A LIVE ANSWER WHOSE ONLY VISIBLE CHANGE IS A PREVIEW IMAGE UPDATES THAT IMAGE IN PLACE. Rebuilding the whole
+  // feature page for a new thumbnail is both visually noisy and destructive: controls, scroll position and focus
+  // all disappear and come back. The document still replaces S.controls, but the DOM outside the preview is untouched.
+  if (!q.forceDraw && S.controls && String(S.drawnSlot) === String(forSlot) &&
+      S.drawnJson && onlyPreviewValuesChanged(S.drawnJson, S.controls)) {
+    if (updatePreviewsInPlace(S.controls)) {
+      S.drawnJson = json;
+      return;
+    }
+  }
   // ⚠️ AND A LIVE GROUP'S OWN RE-READ, WHEN NOTHING HAS CHANGED, IS NOT DRAWN AT ALL (see `askControls` for why
   // the reason matters): it asks once a second for as long as the page is open, and rebuilding the page on every
   // identical answer would take the focus out of whatever the user is typing -- once a second -- for nothing.
   // ⚠️ THE COMPARISON IS AGAINST WHAT WAS LAST DRAWN (`S.drawnJson`), not against a flag set when the question
   // was asked: only the drawing side knows what the page is really holding.
-  if (q.quiet && S.controls && String(S.drawnSlot) === String(forSlot) && json === S.drawnJson) return;
+  if (!q.forceDraw && q.quiet && S.controls && String(S.drawnSlot) === String(forSlot) &&
+      json === S.drawnJson) return;
   // ⚠️ ⚠️ THE WAIT IS SETTLED BEFORE THE DRAW, AND THE ORDER IS THE FIX FOR A BUG I WROTE INTO THIS FILE.
   //
   // The draw is where an arm can happen by itself: `groupCard` ends with `ArmCapture` for a rule the feature has
@@ -318,7 +353,7 @@ function switchRow(label, checked, onToggle, disabled) {
 // The page owns the shape and the colour; the feature owns the answer. A status card is deliberately NOT a
 // control: there is nothing to click and nothing is sent back. Its one job is to make "connected and the last
 // proxy hop worked" distinguishable from "the service exists but no connection has succeeded".
-function statusCard(p) {
+function statusCard(p, slot) {
   var level = String(p.level || "warn").toLowerCase();
   if (level !== "ok" && level !== "error") level = "warn";
   var card = el("div", "card statuscard " + level);
@@ -342,6 +377,15 @@ function statusCard(p) {
     body.appendChild(list);
   }
   card.appendChild(body);
+  if (p.toggleId) {
+    var cell = el("span", "swcell status-toggle");
+    var swLabel = S.lang === "zh" ? (p.toggleLabelZh || "") : (p.toggleLabelEn || "");
+    if (swLabel) cell.appendChild(el("span", "swtxt", swLabel));
+    cell.appendChild(switchBox(!!p.toggleValue, function (v) {
+      sendControl(slot, p.toggleId, v ? "1" : "0");
+    }));
+    card.appendChild(cell);
+  }
   return card;
 }
 
@@ -549,6 +593,15 @@ function selectRowCtl(p, slot, disabled, path, sink) {
     if (o.value === p.value) op.selected = true;
     sel.appendChild(op);
   });
+  // A dropdown whose options are all two characters does not need the 130 px floor written for sentences. This
+  // is decided from the labels in the CURRENT language, not from a feature name: "填充/适应/拉伸" becomes compact,
+  // while "中文/English" stays wide.
+  var longestOption = 0;
+  (p.options || []).forEach(function (o) {
+    var text = String(S.lang === "zh" ? (o.labelZh || o.value) : (o.labelEn || o.value));
+    if (text.length > longestOption) longestOption = text.length;
+  });
+  if (longestOption > 0 && longestOption <= 2) sel.className += " compact";
   sel.disabled = !!disabled;
   // ⚠️⚠️ THE OPTIONAL CONFIRM BUTTON (apex/abi.h, ABI 22 -> 23): `applyZh`/`applyEn` -- present means "the
   // choice is committed by pressing this", absent means the old behaviour, where the highlighted option IS the
@@ -607,6 +660,43 @@ function selectRowCtl(p, slot, disabled, path, sink) {
 //
 // Enter is wired explicitly: without it a one-field form needs a click elsewhere to commit, which reads as
 // "the change did not take".
+function colorControl(p, slot, disabled, path, sink) {
+  var wrap = el("div", "colorpair");
+  var storedValue = p.value === undefined || p.value === null ? "" : String(p.value);
+  var inp = el("input");
+  inp.type = "color";
+  var picked = /^#[0-9a-fA-F]{6}$/.test(storedValue)
+    ? storedValue.toUpperCase()
+    : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "#BCBFC4"
+      : "#4C5056");
+  inp.value = picked;
+  inp.title = S.lang === "zh" ? "选择文字颜色" : "Choose text colour";
+  inp.disabled = !!disabled;
+  var colourLast = storedValue;
+  var autoValue = p.autoValue || "auto";
+  var auto = el("button", "colorauto" + (storedValue === autoValue ? " on" : ""),
+    S.lang === "zh" ? (p.autoLabelZh || "自动") : (p.autoLabelEn || "Auto"));
+  auto.disabled = !!disabled;
+  auto.title = S.lang === "zh" ? "跟随系统明暗" : "Follow the system theme";
+  inp.addEventListener("change", function () {
+    var next = String(inp.value).toUpperCase();
+    if (next === colourLast) return;
+    colourLast = next;
+    auto.className = "colorauto";
+    if (sink) sink(next); else sendControl(slot, path, next);
+  });
+  auto.addEventListener("click", function () {
+    if (colourLast === autoValue) return;
+    colourLast = autoValue;
+    auto.className = "colorauto on";
+    if (sink) sink(autoValue); else sendControl(slot, path, autoValue);
+  });
+  wrap.appendChild(inp);
+  wrap.appendChild(auto);
+  return wrap;
+}
+
 function textRow(p, slot, disabled, path, sink, lead) {
   var row = el("div", "row");
   // ⚠️ AN EMPTY LABEL DRAWS NOTHING. A feature may put a field where a label would go and give it no name of its
@@ -619,9 +709,19 @@ function textRow(p, slot, disabled, path, sink, lead) {
   // ⚠️ `lead` IS THE CHECKBOX OF A CONDITION (see the `toggle` note in apex/abi.h): the value and "use this
   // value" are one decision, so they are one row -- otherwise every rule would be twice as tall.
   if (lead) ctl.appendChild(lead);
+  var storedValue = p.value === undefined || p.value === null ? "" : String(p.value);
   var inp = el("input");
+  // A colour field is still the `text` control in the ABI: its value remains a string
+  // (`auto` or `#RRGGBB`), while this optional rendering hint gives it the OS colour
+  // chooser. The feature still performs validation, so an old page simply falls back
+  // to the ordinary text box and cannot bypass the feature's rules.
+  if (p.input === "color") {
+    ctl.appendChild(colorControl(p, slot, disabled, path, sink));
+    row.appendChild(ctl);
+    return row;
+  }
   inp.type = "text";
-  inp.value = p.value === undefined || p.value === null ? "" : String(p.value);
+  inp.value = storedValue;
   inp.placeholder = S.lang === "zh" ? (p.placeholderZh || "") : (p.placeholderEn || "");
   inp.disabled = !!disabled;
   var last = inp.value;
@@ -635,6 +735,344 @@ function textRow(p, slot, disabled, path, sink, lead) {
     if (e.key === "Enter") { commit(); inp.blur(); }
   });
   ctl.appendChild(inp);
+  row.appendChild(ctl);
+  return row;
+}
+
+// A GENERIC ROW OF SMALL CONTROL GROUPS. Each child is an ordinary control description
+// with its own id; this only changes their arrangement. It is used where two short
+// settings belong to one decision and stacking them would waste a whole line.
+function inlineControl(p, slot, disabled) {
+  if (p.type === "hotkey") {
+    var hot = hotkeyRow(p, slot, disabled, p.id);
+    hot.className += " inline-hotkey";
+    return hot;
+  }
+  var item = el("div", "inlineitem");
+  var label = S.lang === "zh" ? (p.labelZh || "") : (p.labelEn || "");
+  if (label) item.appendChild(el("span", "inlinelabel", label));
+  if (p.type === "bool") {
+    item.appendChild(switchBox(!!p.value, function (v) {
+      sendControl(slot, p.id, v ? "1" : "0");
+    }, disabled, label || p.id));
+    return item;
+  }
+  if (p.type === "select") {
+    var sel = el("select", p.compact ? "compact" : null);
+    (p.options || []).forEach(function (o) {
+      var op = el("option", null, S.lang === "zh" ? (o.labelZh || o.value) : (o.labelEn || o.value));
+      op.value = o.value;
+      if (o.value === p.value) op.selected = true;
+      sel.appendChild(op);
+    });
+    sel.disabled = !!disabled;
+    var last = p.value === undefined || p.value === null ? "" : String(p.value);
+    sel.addEventListener("change", function () {
+      if (sel.value === last) return;
+      last = sel.value;
+      sendControl(slot, p.id, sel.value);
+    });
+    item.appendChild(sel);
+    return item;
+  }
+  if (p.type === "text" && p.input === "color") {
+    item.appendChild(colorControl(p, slot, disabled, p.id));
+    return item;
+  }
+  if (p.type === "text") {
+    var inp = el("input");
+    inp.type = p.input === "number" ? "number" : "text";
+    if (p.input === "number") {
+      inp.min = p.min;
+      inp.max = p.max;
+      inp.step = p.step || 1;
+      inp.className = "inline-number";
+    }
+    inp.value = p.value === undefined || p.value === null ? "" : String(p.value);
+    inp.placeholder = S.lang === "zh" ? (p.placeholderZh || "") : (p.placeholderEn || "");
+    inp.disabled = !!disabled;
+    var textLast = inp.value;
+    function commitText() {
+      if (inp.value === textLast) return;
+      textLast = inp.value;
+      sendControl(slot, p.id, inp.value);
+    }
+    inp.addEventListener("change", commitText);
+    inp.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { commitText(); inp.blur(); }
+    });
+    item.appendChild(inp);
+    var suffix = S.lang === "zh" ? (p.suffixZh || "") : (p.suffixEn || "");
+    if (suffix) item.appendChild(el("span", "inlineunit", suffix));
+    return item;
+  }
+  return item;
+}
+
+function inlineRow(p, slot, disabled) {
+  var row = el("div", "row inline");
+  var ctl = el("div", "ctl");
+  (p.controls || []).forEach(function (child) {
+    ctl.appendChild(inlineControl(child, slot, disabled));
+  });
+  row.appendChild(ctl);
+  return row;
+}
+
+// A FILE OR FOLDER PATH WITH THE PANEL'S OWN BROWSE BUTTON (`file` in apex/abi.h, ABI 26).
+//
+// The page never reads the file: it only carries the path string the native dialog returns, and then sends it
+// through the SAME setControl path a typed value uses. That keeps validation and storage in the feature.
+var pendingFileTarget = null;
+window.__apexFileChosen = function (path) {
+  var target = pendingFileTarget;
+  pendingFileTarget = null;
+  if (!target || !path) return;
+  if (target.sink) {
+    target.sink(path);
+    // hostCall is asynchronous: a same-turn describe can race the setControl that updates the feature's preview.
+    // Ask after that message has been handled, and force one drawing pass so a newly-created image node is used.
+    setTimeout(function () { refreshControls(target.slot, true); }, 150);
+  } else {
+    sendControl(target.slot, target.path, path);
+  }
+};
+
+function fileRow(p, slot, disabled, path, sink, lead) {
+  var row = el("div", "row filepath");
+  if (p.hidePath) row.className += " thumbrow";
+  var lbl = S.lang === "zh" ? p.labelZh : p.labelEn;
+  if (lbl) row.appendChild(el("label", null, lbl));
+  var ctl = el("div", "ctl");
+  if (lead) ctl.appendChild(lead);
+  var inp = null;
+  if (p.hidePath) {
+    var preview = el("div", "wallpreview");
+    preview.setAttribute("data-preview-key", p.previewKey || path);
+    var image = p.image ? String(p.image) : "";
+    var img = el("img", "wallthumb");
+    var placeholder = el("span", "wallplaceholder",
+      S.lang === "zh" ? "尚未读取到缩略图" : "No thumbnail yet");
+    if (image) img.src = image;
+    img.style.display = image ? "block" : "none";
+    placeholder.style.display = image ? "none" : "flex";
+    preview.appendChild(img);
+    preview.appendChild(placeholder);
+    ctl.appendChild(preview);
+  } else {
+    inp = el("input");
+    inp.type = "text";
+    inp.value = p.value === undefined || p.value === null ? "" : String(p.value);
+    inp.placeholder = S.lang === "zh" ? (p.placeholderZh || "") : (p.placeholderEn || "");
+    inp.disabled = !!disabled;
+    var last = inp.value;
+    function commit() {
+      if (inp.value === last) return;
+      last = inp.value;
+      if (sink) sink(inp.value);
+      else sendControl(slot, path, inp.value);
+    }
+    inp.addEventListener("change", commit);
+    inp.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        commit();
+        inp.blur();
+      }
+    });
+    ctl.appendChild(inp);
+  }
+  var browseLabel = S.lang === "zh"
+    ? (p.buttonZh || "浏览…")
+    : (p.buttonEn || "Browse…");
+  var browse = el("button", "browse", browseLabel);
+  browse.disabled = !!disabled;
+  browse.addEventListener("click", function () {
+    pendingFileTarget = { slot: slot, path: path, sink: sink || null };
+    hostCall("chooseFile", { kind: p.kind || "image" });
+  });
+  ctl.appendChild(browse);
+  row.appendChild(ctl);
+  return row;
+}
+
+// EVERY PREVIEW VALUE THE DOCUMENT CAN ADDRESS. A file field names its preview with `previewId` (apex/abi.h);
+// the key is the field's own path, which is also what its rendered preview wrapper carries as an attribute.
+function eachPreviewValue(doc, fn) {
+  var params = (doc && doc.params) || [];
+  params.forEach(function (p, pi) {
+    if (!p || p.type !== "group") return;
+    var previewFields = (p.fields || []).filter(function (f) { return f && f.previewId; });
+    if (!previewFields.length) return;
+    (p.items || []).forEach(function (item, index) {
+      if (!item || !item.values) return;
+      previewFields.forEach(function (field) {
+        fn(String(p.id || ("group" + pi)) + "[" + index + "]." + field.id,
+           item.values[field.previewId], item, field);
+      });
+    });
+  });
+}
+
+function eachHiddenFileValue(doc, fn) {
+  var params = (doc && doc.params) || [];
+  params.forEach(function (p, pi) {
+    if (!p || p.type !== "group") return;
+    var hiddenFields = (p.fields || []).filter(function (f) { return f && f.hidePath; });
+    if (!hiddenFields.length) return;
+    (p.items || []).forEach(function (item, index) {
+      if (!item || !item.values) return;
+      hiddenFields.forEach(function (field) {
+        fn(String(p.id || ("group" + pi)) + "[" + index + "]." + field.id,
+           item.values[field.id], item, field);
+      });
+    });
+  });
+}
+
+/// The document with every preview value replaced by a constant. Two documents with the same stripped form have
+/// no visible difference except images, so a live delivery can patch those images without touching the page.
+function previewStrippedJson(doc) {
+  var copy = JSON.parse(JSON.stringify(doc));
+  eachPreviewValue(copy, function (key, value, item, field) {
+    item.values[field.previewId] = "\u0000preview";
+  });
+  eachHiddenFileValue(copy, function (key, value, item, field) {
+    item.values[field.id] = "\u0000hidden-file";
+  });
+  return JSON.stringify(copy);
+}
+
+function onlyPreviewValuesChanged(oldJson, nextDoc) {
+  try {
+    return previewStrippedJson(JSON.parse(oldJson)) === previewStrippedJson(nextDoc);
+  } catch (e) {
+    return false;
+  }
+}
+
+/// Update only `.wallthumb` / `.wallplaceholder` inside the preview wrappers. Returns false when any expected
+/// preview cannot be found, in which case the caller falls back to a full render rather than leaving stale data.
+function updatePreviewsInPlace(doc) {
+  var wanted = Object.create(null);
+  var expected = 0;
+  eachPreviewValue(doc, function (key, value) {
+    wanted[key] = value === undefined || value === null ? "" : String(value);
+    ++expected;
+  });
+  if (!expected) return false;
+
+  var matched = 0;
+  function childByClass(node, cls) {
+    var kids = (node && node.children) || [];
+    for (var i = 0; i < kids.length; ++i)
+      if ((kids[i].className || "").split(" ").indexOf(cls) >= 0) return kids[i];
+    return null;
+  }
+  function walk(node) {
+    if (!node) return;
+    var key = node.getAttribute ? node.getAttribute("data-preview-key") : null;
+    if (key && Object.prototype.hasOwnProperty.call(wanted, key)) {
+      var img = childByClass(node, "wallthumb");
+      var placeholder = childByClass(node, "wallplaceholder");
+      if (!img || !placeholder) return;
+      var image = wanted[key];
+      if (image) {
+        if (img.src !== image) {
+          var fresh = el("img", "wallthumb");
+          fresh.src = image;
+          fresh.style.display = "block";
+          if (node.replaceChild) node.replaceChild(fresh, img);
+          else img.src = image;
+        } else {
+          img.style.display = "block";
+        }
+        placeholder.style.display = "none";
+      } else {
+        img.style.display = "none";
+        placeholder.style.display = "flex";
+      }
+      ++matched;
+    }
+    ((node && node.children) || []).forEach(walk);
+  }
+  walk($("body"));
+  return matched === expected;
+}
+
+// A TWO-DIMENSIONAL DRAGGABLE POSITION (`pan` in apex/abi.h, ABI 26). The value is "x,y", both 0..100.
+function panRow(p, slot, disabled, path, sink, lead) {
+  var row = el("div", "row panrow");
+  var lbl = S.lang === "zh" ? p.labelZh : p.labelEn;
+  if (lbl) row.appendChild(el("label", null, lbl));
+  var ctl = el("div", "ctl");
+  if (lead) ctl.appendChild(lead);
+  var parts = String(p.value === undefined || p.value === null ? "50,50" : p.value).split(",");
+  var x = Number(parts[0]);
+  var y = Number(parts[1]);
+  if (!isFinite(x)) x = 50;
+  if (!isFinite(y)) y = 50;
+  x = Math.max(0, Math.min(100, x));
+  y = Math.max(0, Math.min(100, y));
+  var box = el("div", "panbox");
+  box.tabIndex = 0;
+  box.title = S.lang === "zh" ? "拖动方块调整壁纸位置；方向键可微调" : "Drag to position the wallpaper; arrow keys nudge";
+  var dot = el("div", "pandot");
+  box.appendChild(dot);
+  function show() {
+    dot.style.left = x + "%";
+    dot.style.top = y + "%";
+  }
+  function commit() {
+    var text = x.toFixed(1) + "," + y.toFixed(1);
+    if (sink) sink(text);
+    else sendControl(slot, path, text);
+  }
+  function fromEvent(e) {
+    if (disabled || !box.getBoundingClientRect) return;
+    var r = box.getBoundingClientRect();
+    if (!r || r.width <= 0 || r.height <= 0) return;
+    x = Math.max(0, Math.min(100, (e.clientX - r.left) * 100 / r.width));
+    y = Math.max(0, Math.min(100, (e.clientY - r.top) * 100 / r.height));
+    show();
+  }
+  var dragging = false;
+  box.addEventListener("pointerdown", function (e) {
+    if (disabled) return;
+    if (e.preventDefault) e.preventDefault();
+    dragging = true;
+    if (box.setPointerCapture && e.pointerId !== undefined) {
+      try { box.setPointerCapture(e.pointerId); } catch (ignore) {}
+    }
+    fromEvent(e);
+    if (box.focus) box.focus();
+  });
+  box.addEventListener("pointermove", function (e) {
+    if (!dragging) return;
+    if (e.preventDefault) e.preventDefault();
+    fromEvent(e);
+  });
+  function finish(e) {
+    if (!dragging) return;
+    dragging = false;
+    if (e && e.preventDefault) e.preventDefault();
+    commit();
+  }
+  box.addEventListener("pointerup", finish);
+  box.addEventListener("pointercancel", finish);
+  box.addEventListener("keydown", function (e) {
+    if (disabled) return;
+    var step = e.shiftKey ? 5 : 1;
+    if (e.key === "ArrowLeft") x = Math.max(0, x - step);
+    else if (e.key === "ArrowRight") x = Math.min(100, x + step);
+    else if (e.key === "ArrowUp") y = Math.max(0, y - step);
+    else if (e.key === "ArrowDown") y = Math.min(100, y + step);
+    else return;
+    if (e.preventDefault) e.preventDefault();
+    show();
+    commit();
+  });
+  show();
+  ctl.appendChild(box);
   row.appendChild(ctl);
   return row;
 }
@@ -675,8 +1113,9 @@ var pendingDescribes = [];
 ///   * a LIVE GROUP's own re-read (apex/abi.h `live`), once a second, forever -- quiet = true. There the identical
 ///     answer is the COMMON case, and drawing it would rebuild the page (and take the focus out of whatever the
 ///     user is typing) once a second for nothing.
-function askControls(slot, quiet) {
-  pendingDescribes.push({ slot: String(slot), curveOnly: false, quiet: !!quiet });
+function askControls(slot, quiet, forceDraw) {
+  pendingDescribes.push({ slot: String(slot), curveOnly: false, quiet: !!quiet,
+                          forceDraw: !!forceDraw });
   hostCall("describe", { slot: slot });
 }
 
@@ -939,7 +1378,7 @@ function groupCard(p, slot, disabled) {
   // else. The user's report of it: "「亮度」「熄屏快捷键」「音量」对应的小标题右侧有个数字，是用来计数的？那个不需要，可以
   // 去掉." KeepAwake's program list and AutoIME's rules keep theirs -- for those the number is the answer to a real
   // question ("have I added anything yet").
-  if (!p.noAdd) {
+  if (!p.noAdd && !p.hideCount) {
     var mine = 0;
     items.forEach(function (it) { if (!it.locked) ++mine; });
     head.appendChild(el("div", "rownote", String(mine)));
@@ -1058,7 +1497,20 @@ function groupCard(p, slot, disabled) {
     // Ctrl+Alt+Q are the same act" without a second control to find. The feature sends the key (`key` on the
     // action), so the panel never has to know which feature happens to have a hotkey.
     if (a.key) b.appendChild(el("span", "keycap", a.key));
-    b.addEventListener("click", function () { ArmCapture(slot, p, p.id); });
+    b.addEventListener("click", function () {
+      // A CAPTURE IS ONE ACTION AMONG MANY, NOT THE SHAPE OF EVERY GROUP ACTION. The original wiring sent
+      // every declared action through ArmCapture; that made ComputeManager's「立即刷新」show AutoIME's
+      // "先点编辑再捕获" message. Only the action that explicitly says `capture` owns that flow; all other
+      // feature actions are ordinary `listOp`s and are passed through unchanged.
+      if (a.op === "capture") {
+        ArmCapture(slot, p, p.id);
+        return;
+      }
+      var sel = (S.grpSel && S.grpSel[p.id]);
+      if (typeof sel !== "number") sel = 0;
+      hostCall("listOp", { slot: slot, id: p.id, op: a.op, value: "", index: sel });
+      refreshControls(slot);
+    });
     bar.appendChild(b);
     // ⚠️ AND AN ACTION COUNTS AS A REASON FOR THE BAR TO EXIST, WHICH IT DID NOT (found 2026-09-23 while moving
     // the quick-panel switch). `barItems` is what decides whether a rows group's bar is drawn at all (see the end
@@ -1362,6 +1814,7 @@ function groupCard(p, slot, disabled) {
         if (toggles.indexOf(fld.id) >= 0) return; // drawn as a switch further along this same line
         r.appendChild(groupField(p, fld, item, i, slot, disabled, null));
       });
+      var rowActions = el("div", "rowactions");
       toggles.forEach(function (fid) {
         var tf = fieldOf(p, fid);
         var on = !!Number(itemValue(p, item, fid));
@@ -1373,7 +1826,7 @@ function groupCard(p, slot, disabled) {
           sendControl(slot, p.id + "[" + i + "]." + fid, v ? "1" : "0");
         }, disabled, tf ? (S.lang === "zh" ? tf.labelZh : tf.labelEn) : fid);
         cell.appendChild(box);
-        r.appendChild(cell);
+        rowActions.appendChild(cell);
       });
       if (!locked) {
         var rm = el("button", null, t("remove"));
@@ -1383,7 +1836,7 @@ function groupCard(p, slot, disabled) {
           hostCall("listOp", { slot: slot, id: p.id, op: "remove", index: i });
           refreshControls(slot);
         });
-        r.appendChild(rm);
+        rowActions.appendChild(rm);
       } else {
         // ⚠️ THE SPACE A REMOVE BUTTON WOULD TAKE IS RESERVED, AND THAT IS THE WHOLE POINT OF THIS ELEMENT.
         // A locked row has no button, so without this its switches sit one button-width to the right of every
@@ -1394,8 +1847,9 @@ function groupCard(p, slot, disabled) {
         var ghost = el("button", "ghost", t("remove"));
         ghost.setAttribute("aria-hidden", "true");
         ghost.tabIndex = -1;
-        r.appendChild(ghost);
+        rowActions.appendChild(ghost);
       }
+      r.appendChild(rowActions);
       rowBox.appendChild(r);
     });
     card.appendChild(rowBox);
@@ -1537,6 +1991,73 @@ function moveItem(p, slot, from, to) {
   refreshControls(slot);
 }
 
+// A LIST INSIDE ONE GROUP ITEM. The ABI allows list controls as group fields; this is the editor for them.
+// The path is the group item plus the field (`accounts[2].models`), so the feature can own and validate the
+// contents without the page learning what a model name means.
+function groupListField(p, fld, item, i, slot, disabled) {
+  var wrap = el("div", "row grouplist" + (fld.separated ? " separated" : ""));
+  var values = itemValue(p, item, fld.id);
+  if (!Array.isArray(values)) values = [];
+  var head = el("div", "grouplisthead");
+  if (fld.labelZh || fld.labelEn) {
+    var text = S.lang === "zh" ? fld.labelZh : fld.labelEn;
+    var colon = S.lang === "zh" ? "：" : ":";
+    head.appendChild(el("span", "grouplistlabel",
+      text + (text.slice(-1) === "：" || text.slice(-1) === ":" ? "" : colon)));
+  }
+  var ctl = el("div", "ctl");
+  if (fld.fetchOp) {
+    var fetch = el("button", "addbtn",
+                   S.lang === "zh" ? (fld.fetchLabelZh || "从厂商获取") : (fld.fetchLabelEn || "Fetch from provider"));
+    fetch.disabled = !!disabled;
+    fetch.addEventListener("click", function () {
+      hostCall("listOp", { slot: slot, id: p.id + "[" + i + "]." + fld.id, op: fld.fetchOp });
+      refreshControls(slot);
+    });
+    head.appendChild(fetch);
+  }
+  var add = el("div", "addrow inline-add");
+  var inp = el("input");
+  inp.type = "text";
+  inp.placeholder = S.lang === "zh" ? (fld.placeholderZh || "添加模型") : (fld.placeholderEn || "Add model");
+  inp.disabled = !!disabled;
+  var btn = el("button", "addbtn", t("add"));
+  btn.disabled = !!disabled;
+  function addOne() {
+    var v = inp.value.trim();
+    if (!v) return;
+    inp.value = "";
+    hostCall("listOp", { slot: slot, id: p.id + "[" + i + "]." + fld.id, op: "add", value: v });
+    refreshControls(slot);
+  }
+  btn.addEventListener("click", addOne);
+  inp.addEventListener("keydown", function (e) { if (e.key === "Enter") addOne(); });
+  add.appendChild(inp);
+  add.appendChild(btn);
+  if (fld.inlineItems) head.appendChild(add);
+
+  var list = el("div", "rowlist" + (fld.inlineItems ? " inline-items" : ""));
+  values.forEach(function (v, j) {
+    var row = el("div", (fld.inlineItems ? "modelchip" : "skiprow") +
+                       (j === values.length - 1 ? " last" : ""));
+    row.appendChild(el("div", "nm", String(v)));
+    var rm = el("button", null,
+      S.lang === "zh" ? (fld.removeLabelZh || t("remove")) : (fld.removeLabelEn || t("remove")));
+    rm.disabled = !!disabled;
+    rm.addEventListener("click", function () {
+      hostCall("listOp", { slot: slot, id: p.id + "[" + i + "]." + fld.id, op: "remove", index: j });
+      refreshControls(slot);
+    });
+    row.appendChild(rm);
+    list.appendChild(row);
+  });
+  ctl.appendChild(list);
+  if (!fld.inlineItems) ctl.appendChild(add);
+  wrap.appendChild(head);
+  wrap.appendChild(ctl);
+  return wrap;
+}
+
 // ONE FIELD OF ONE ITEM, in whichever layout asked for it, so a field is built the same way in both.
 function groupField(p, fld, item, i, slot, disabled, sink) {
   // ⚠️ A MISSING FIELD IS EMPTY, NOT AN ERROR. The feature may have added a field since the item was stored,
@@ -1544,6 +2065,8 @@ function groupField(p, fld, item, i, slot, disabled, sink) {
   // Drawing it empty and letting the feature decide what an empty value means is the recoverable direction.
   var one = itemValue(p, item, fld.id);
   var path = p.id + "[" + i + "]." + fld.id;
+  if (fld.type === "list")
+    return groupListField(p, fld, item, i, slot, disabled);
 
   // ⚠️ `sink` IS HOW THE EDIT/SAVE WORKFLOW WORKS WITHOUT EVERY ROW KNOWING ABOUT IT. While a rule is being
   // EDITED the page keeps a DRAFT -- the same shape the standalone program uses -- so a change is held here
@@ -1555,6 +2078,24 @@ function groupField(p, fld, item, i, slot, disabled, sink) {
   // would have nothing left to cancel, because the change would already be in config.json.
   function put(text) {
     if (sink) { sink(i, fld.id, text); return; }
+    // A setting that changes which OTHER fields exist is committed without rebuilding this page. Rebuilding
+    // synchronously closes the dropdown the user just touched. The value will be reflected on the next
+    // deliberate re-read (another control, or the model-fetch action).
+    if (fld.deferRefresh) {
+      hostCall("setControl", { slot: slot, path: path, value: text });
+      return;
+    }
+    // A live group is already re-read once a second. Refreshing synchronously here rebuilds the whole
+    // page immediately after a dropdown changes, which closes the provider picker before the user can
+    // move to the model picker. Send the value and let the feature's live snapshot correct it.
+    if (p.live) {
+      // The control already shows the user's choice. Keep the last-drawn document in step too, so the next live
+      // answer differs only by its preview image and can take the preview-only path above.
+      if (item && item.values) item.values[fld.id] = text;
+      S.drawnJson = JSON.stringify(S.controls);
+      hostCall("setControl", { slot: slot, path: path, value: text });
+      return;
+    }
     sendControl(slot, path, text);
   }
   // ⚠️ AND THE CHECKBOX THAT GOVERNS IT (apex/abi.h, `toggle`): "各参数原先是有个复选框，打钩了才生效." It is a
@@ -1606,6 +2147,18 @@ function groupField(p, fld, item, i, slot, disabled, sink) {
   if (fld.type === "hotkey") {
     var hp = shallowCopy(fld); hp.value = one;
     return hotkeyRow(hp, slot, disabled, path);
+  }
+  if (fld.type === "file") {
+    var fp = shallowCopy(fld);
+    fp.value = one;
+    fp.previewKey = path;
+    if (fld.previewId) fp.image = itemValue(p, item, fld.previewId);
+    return fileRow(fp, slot, disabled, path, function (v) { put(v); }, lead);
+  }
+  if (fld.type === "pan") {
+    var pp = shallowCopy(fld);
+    pp.value = one;
+    return panRow(pp, slot, disabled, path, function (v) { put(v); }, lead);
   }
   // Everything else in a group is TEXT.
   var tp = shallowCopy(fld); tp.value = one;
@@ -1707,9 +2260,28 @@ function queueCurve(slot) {
 // ASK FOR THIS FEATURE'S CONTROLS AGAIN. Used after an edit whose RESULT the page cannot predict -- a list
 // row the feature may have normalised or refused (see ApexFeature::listOp). The answer replaces S.controls
 // and redraws; asking is cheaper than guessing wrong and being contradicted on the next refresh.
-function refreshControls(slot) {
-  askControls(slot);
+function refreshControls(slot, forceDraw) {
+  askControls(slot, false, forceDraw);
 }
+
+// WebView timers are throttled while the panel is hidden behind another app (for example Windows Settings).
+// Re-read the visible feature as soon as the panel is shown/focused again, so the first thing the user sees is
+// current rather than waiting for the next background timer tick.
+var lastShowRefresh = 0;
+function refreshFeatureOnShow() {
+  if (!S.snap || S.connected !== true || S.view === "general" || !S.controls) return false;
+  var now = Date.now();
+  if (now - lastShowRefresh < 250) return false;
+  lastShowRefresh = now;
+  askControls(S.view);
+  return true;
+}
+
+window.addEventListener("focus", refreshFeatureOnShow);
+window.addEventListener("pageshow", refreshFeatureOnShow);
+document.addEventListener("visibilitychange", function () {
+  if (!document.hidden) refreshFeatureOnShow();
+});
 
 // THE MOTION CURVE: the shape of the motion, plus a ball that runs along it when a wheel turns.
 //
@@ -2084,7 +2656,9 @@ function syncWaitWatch(slot, json) {
 //
 // ⚠️ AND IT COSTS ALMOST NOTHING WHEN NOTHING CHANGES: an answer identical to the last one is not redrawn (the
 // guard at the top of `__apexControls`), so an idle page on a live group is one small round trip a second.
-var kLiveGroupMs = 1000;
+// 500 ms matches Wallpaper's own display/thumbnail check. Quiet answers and preview-only answers still avoid
+// rebuilding the page when nothing visible changed.
+var kLiveGroupMs = 500;
 var liveGroupTimer = 0;
 
 function stopLiveGroups() {
@@ -2480,6 +3054,20 @@ function renderGeneral() {
   renderHead(t("generalTitle"), "");
   var b = $("body");
   var keep = b.scrollTop;
+  // A message about AutoIME capture belongs to a document that actually declares a capture action. Without
+  // this guard, a direct redraw (a DOM-level render, or a feature page entered through a state refresh) could
+  // carry the previous feature's hint into an unrelated group. Navigation clears it too, but this is the
+  // stronger boundary: the hint is shown only for a document that can use it.
+  var hasCaptureAction = false;
+  ((S.controls && S.controls.params) || []).forEach(function (p) {
+    if (p && p.type === "group" && p.actions) {
+      p.actions.forEach(function (a) { if (a && a.op === "capture") hasCaptureAction = true; });
+    }
+  });
+  if (!hasCaptureAction) {
+    hintText = "";
+    captureHintBox = null;
+  }
   b.innerHTML = "";
 
   var c2 = el("div", "card gen");
@@ -2522,7 +3110,11 @@ function renderGeneral() {
   // ⚠️ AND THE PAGE DOES NOT NEED TO TELL ANYONE. The flyout is in the HOST's process and rebuilds itself from
   // these settings every time it opens (see Rebuild in quickpanel_win.cpp), so the next click already shows the
   // new answer -- there is no live window to refresh, and this page is the only place they can be changed.
-  c2.appendChild(switchRowPair(t("quickPanel"), [
+  b.appendChild(c2);
+  // ONE CARD PER CONCEPT: the quick-panel switches and the things the flyout contains belong together; the
+  // taskbar's visibility, side, shared text appearance and area order belong together.
+  var quickCard = el("div", "card gen");
+  quickCard.appendChild(switchRowPair(t("quickPanel"), [
     {
       label: t("quickCompact"), checked: Number(S.snap.host.quickCompact) !== 0,
       onToggle: function (v) {
@@ -2538,7 +3130,87 @@ function renderGeneral() {
       }
     }
   ]));
-  b.appendChild(c2);
+  quickOrderCard(quickCard);
+  b.appendChild(quickCard);
+  var taskbarCard = el("div", "card gen");
+  var taskbarPosition = S.snap.host.taskbarPosition === "left" ? "left" : "right";
+  var taskbarEnabled = S.snap.host.taskbarEnabled === undefined
+    ? true : Number(S.snap.host.taskbarEnabled) !== 0;
+  var taskbarEdge = S.snap.host.taskbarEdge || "bottom";
+  var verticalTaskbar = taskbarEdge === "left" || taskbarEdge === "right";
+  var taskbarRow = el("div", "row taskbarctl");
+  taskbarRow.appendChild(el("label", null, t("taskbarDisplay")));
+  var taskbarCtl = el("div", "ctl");
+  taskbarCtl.appendChild(el("span", "inlinelabel", t("position")));
+  [
+    { value: "left", label: t(verticalTaskbar ? "top" : "left") },
+    { value: "right", label: t(verticalTaskbar ? "bottom" : "right") }
+  ].forEach(function (choice) {
+    var opt = el("label", "radiooption");
+    var radio = el("input");
+    radio.type = "radio";
+    radio.name = "taskbar-position";
+    radio.value = choice.value;
+    radio.checked = taskbarPosition === choice.value;
+    radio.addEventListener("change", function () {
+      if (!radio.checked) return;
+      hostCall("setHost", { key: "taskbarposition", value: choice.value });
+      S.snap.host.taskbarPosition = choice.value;
+    });
+    opt.appendChild(radio);
+    opt.appendChild(el("span", null, choice.label));
+    taskbarCtl.appendChild(opt);
+  });
+  var taskbarSwitch = el("span", "swcell taskbar-switch");
+  taskbarSwitch.appendChild(el("span", "swtxt", t("show")));
+  taskbarSwitch.appendChild(switchBox(taskbarEnabled, function (v) {
+    hostCall("setHost", { key: "taskbarenabled", value: v ? "1" : "0" });
+    S.snap.host.taskbarEnabled = v ? 1 : 0;
+  }));
+  taskbarCtl.appendChild(taskbarSwitch);
+  taskbarRow.appendChild(taskbarCtl);
+  taskbarCard.appendChild(taskbarRow);
+
+  var taskbarStyleRow = el("div", "row taskbarctl");
+  taskbarStyleRow.appendChild(el("label", null, t("taskbarAppearance")));
+  var taskbarStyleCtl = el("div", "ctl");
+  var sizeItem = el("span", "inlineitem");
+  sizeItem.appendChild(el("span", "inlinelabel", t("fontSize")));
+  var size = el("input");
+  size.type = "number";
+  size.className = "inline-number";
+  size.min = "9";
+  size.max = "16";
+  size.step = "1";
+  size.value = String(S.snap.host.taskbarFontSize === undefined ? 12 : S.snap.host.taskbarFontSize);
+  var sizeLast = size.value;
+  size.addEventListener("change", function () {
+    var value = Math.max(9, Math.min(16, Math.round(Number(size.value) || 12)));
+    size.value = String(value);
+    if (size.value === sizeLast) return;
+    sizeLast = size.value;
+    hostCall("setHost", { key: "taskbarfontsize", value: size.value });
+    S.snap.host.taskbarFontSize = value;
+  });
+  sizeItem.appendChild(size);
+  sizeItem.appendChild(el("span", "inlineunit", "px"));
+  taskbarStyleCtl.appendChild(sizeItem);
+
+  var colorItem = el("span", "inlineitem");
+  colorItem.appendChild(el("span", "inlinelabel", t("color")));
+  var colorValue = S.snap.host.taskbarTextColor || "auto";
+  colorItem.appendChild(colorControl({
+    value: colorValue,
+    autoValue: "auto",
+    autoLabelZh: "自动",
+    autoLabelEn: "Auto"
+  }, null, false, "", function (v) {
+    hostCall("setHost", { key: "taskbartextcolor", value: v });
+    S.snap.host.taskbarTextColor = v;
+  }));
+  taskbarStyleCtl.appendChild(colorItem);
+  taskbarStyleRow.appendChild(taskbarStyleCtl);
+  taskbarCard.appendChild(taskbarStyleRow);
 
   // ---- ⚠️⚠️ AND WHAT IS *ACTUALLY* IN IT, IN THE ORDER IT IS DRAWN ------------------------------------------
   //
@@ -2554,7 +3226,8 @@ function renderGeneral() {
   // sorted the rows itself would be a second implementation of the flyout's order, and the two could disagree --
   // which is the one failure this card must not have, since its whole job is to show the user what the flyout
   // will do.
-  b.appendChild(quickOrderCard());
+  taskbarAreasCard(taskbarCard);
+  b.appendChild(taskbarCard);
 
   // ⚠️ THE BLACKLIST CARD USED TO BE HERE, AND IT MOVED TO THE FEATURE THAT OWNS IT. "Do not smooth in
   // this program" is a statement about smoothing, not about Apex: a future feature with nothing to do with
@@ -2580,8 +3253,8 @@ function renderGeneral() {
 //
 // ⚠️ AND THE ROWS ARE REORDERED THE WAY EVERY OTHER LIST IN THIS PROGRAM IS -- by dragging (see `makeDraggable`,
 // the SAME helper the rule list and the monitor list use). One way to reorder, not two.
-function quickOrderCard() {
-  var card = el("div", "card");
+function quickOrderCard(card) {
+  card = card || el("div", "card");
   var order = (S.snap && S.snap.quickOrder) || [];
 
   var head = el("div", "row");
@@ -2628,6 +3301,42 @@ function moveQuickOrder(from, to) {
   // from the order the host really stored. Drawing our own guess first would be the second implementation of the
   // order that this card exists to avoid.
   hostCall("setHost", { key: "quickorder", value: keys });
+}
+
+// THE TASKBAR'S OWN ORDER LIST. It follows the same rule as the quick panel: the host answers which areas are
+// live and in what order, the page only drags and sends the complete key order back. Turning an area off hides
+// it here without deleting its saved key, so turning it on again returns it to the same place.
+function taskbarAreasCard(card) {
+  card = card || el("div", "card");
+  var areas = (S.snap && S.snap.taskbarAreas) || [];
+  var head = el("div", "row");
+  head.appendChild(el("label", null, t("taskbarAreas")));
+  if (areas.length > 1) head.appendChild(el("div", "rownote", t("quickOrderHint")));
+  card.appendChild(head);
+  if (!areas.length) {
+    card.appendChild(el("div", "note", t("taskbarAreasEmpty")));
+    return card;
+  }
+  var list = el("div", "qolist");
+  areas.forEach(function (area, i) {
+    var row = el("div", "qorow");
+    row.appendChild(el("span", "grip", "\u2261"));
+    row.appendChild(el("div", "nm",
+      S.lang === "zh" ? (area.nameZh || area.key) : (area.nameEn || area.key)));
+    makeDraggable(row, i, function (from, to) { moveTaskbarOrder(from, to); });
+    list.appendChild(row);
+  });
+  card.appendChild(list);
+  return card;
+}
+
+function moveTaskbarOrder(from, to) {
+  var areas = ((S.snap && S.snap.taskbarAreas) || []).slice();
+  if (from === to || from < 0 || to < 0 || from >= areas.length || to >= areas.length)
+    return;
+  var moved = areas.splice(from, 1)[0];
+  areas.splice(to, 0, moved);
+  hostCall("setHost", { key: "taskbarorder", value: areas.map(function (a) { return a.key; }).join(",") });
 }
 
 // A LIST THE USER EDITS -- one of A FEATURE's controls, and the panel has no idea what is in it.
@@ -2871,13 +3580,16 @@ function renderFeature(slot) {
     // settings.
     if (p.type === "status") {
       if (anyRow) { b.appendChild(cc); cc = el("div", "card"); anyRow = false; }
-      b.appendChild(statusCard(p));
+      b.appendChild(statusCard(p, slot));
     } else if (p.type === "list") {
       if (anyRow) { b.appendChild(cc); cc = el("div", "card"); anyRow = false; }
       b.appendChild(listRow(p, slot));
     } else if (p.type === "group") {
       if (anyRow) { b.appendChild(cc); cc = el("div", "card"); anyRow = false; }
       b.appendChild(groupCard(p, slot, disabled));
+    } else if (p.type === "row") {
+      cc.appendChild(inlineRow(p, slot, disabled));
+      anyRow = true;
     } else if (p.type === "bool") {
       cc.appendChild(switchRow(S.lang === "zh" ? p.labelZh : p.labelEn, p.value,
                               function (v) {
@@ -2891,6 +3603,12 @@ function renderFeature(slot) {
       anyRow = true;
     } else if (p.type === "text") {
       cc.appendChild(textRow(p, slot, disabled, p.id));
+      anyRow = true;
+    } else if (p.type === "file") {
+      cc.appendChild(fileRow(p, slot, disabled, p.id));
+      anyRow = true;
+    } else if (p.type === "pan") {
+      cc.appendChild(panRow(p, slot, disabled, p.id));
       anyRow = true;
     } else if (p.type === "hotkey") {
       cc.appendChild(hotkeyRow(p, slot, disabled));
@@ -2967,7 +3685,15 @@ function loadFeature(slot) {
   //
   // The honest test for "leaving" is that the SLOT CHANGED. Re-reading the page you are on is not leaving.
   var leaving = String(slot) !== String(S.view);
-  if (leaving) cancelEditOnLeave();
+  if (leaving)
+  {
+    cancelEditOnLeave();
+    // A feature's action-bar notice belongs to that feature. `hintText` is page state so it survives a
+    // redraw, which also means it used to survive a NAVIGATION: AutoIME's "先点编辑再捕获" could remain
+    // set and be painted beside an unrelated feature's list actions.
+    hintText = "";
+    captureHintBox = null;
+  }
   // ⚠️ AND THE CAPTURE WATCH STOPS WITH IT: it polls a NAMED slot four times a second, so leaving the page while
   // a capture is armed would keep asking about a feature nobody is looking at -- and every answer is one more
   // chance for the wrong document to arrive at the wrong moment. (The capture itself stays armed in the feature:

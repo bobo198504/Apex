@@ -155,6 +155,7 @@ extern "C" __declspec(dllexport) const ApexFeature *__cdecl ApexFeatureEntry(voi
       StOnWheel,       // int (*)(const ApexWheelEvent*)
       StTick,          // double (*)(double)
       StFlags,         // unsigned (*)()
+      nullptr,         // int (*)(ApexTaskbarArea*, int)
   };
   return &k;
 }

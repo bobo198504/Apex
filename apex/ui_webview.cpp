@@ -29,6 +29,7 @@
 // COM interfaces and the IIDs, and the wrl wrapper is used on top of them. (Compiling without the SDK is
 // not an error: build.sh skips this file, and the host reports that the panel is unavailable.)
 #include <wrl/client.h>
+#include <shobjidl.h>
 #include "WebView2.h"
 
 #include <string.h>
@@ -523,6 +524,54 @@ void CallJs(const wchar_t *fn, const char *jsonArgOrNull)
   Log("script simple: %.60ls -> 0x%08lx", script, (unsigned long)hr2);
 }
 
+// THE PAGE'S BROWSE BUTTON (`file` in apex/abi.h, ABI 26). This is input, not settings logic: the panel process
+// owns the modal picker because it owns the window, and the chosen path goes straight back to the page, which
+// sends it through the feature's ordinary setControl path.
+bool ChooseNativePath(const char *kind, char *out, int outSize)
+{
+  if (!out || outSize <= 0)
+    return false;
+  out[0] = 0;
+  ComPtr<IFileOpenDialog> dialog;
+  if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                              IID_PPV_ARGS(&dialog))) ||
+      !dialog)
+    return false;
+  FILEOPENDIALOGOPTIONS options = 0;
+  dialog->GetOptions(&options);
+  options |= FOS_FORCEFILESYSTEM;
+  const bool folder = kind && !strcmp(kind, "folder");
+  if (folder)
+    options |= FOS_PICKFOLDERS;
+  else
+    options |= FOS_FILEMUSTEXIST;
+  dialog->SetOptions(options);
+  if (!folder)
+  {
+    static const COMDLG_FILTERSPEC filters[] = {
+        {L"Images", L"*.jpg;*.jpeg;*.png;*.bmp"},
+        {L"All files", L"*.*"},
+    };
+    dialog->SetFileTypes(2, filters);
+  }
+  if (FAILED(dialog->Show(g_wnd)))
+    return false;
+  ComPtr<IShellItem> item;
+  if (FAILED(dialog->GetResult(&item)) || !item)
+    return false;
+  PWSTR path = nullptr;
+  if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) || !path)
+    return false;
+  const int n = WideCharToMultiByte(CP_UTF8, 0, path, -1, out, outSize, nullptr, nullptr);
+  CoTaskMemFree(path);
+  if (n <= 0)
+  {
+    out[0] = 0;
+    return false;
+  }
+  return true;
+}
+
 // ---- WHEN THE PANEL'S WINDOW BECOMES VISIBLE -----------------------------------------------------
 //
 // ⚠️ THE WINDOW IS CREATED HIDDEN AND SHOWN FROM HERE, NOT FROM THE LINE THAT CREATES IT. It used to be shown
@@ -776,6 +825,15 @@ HRESULT WebMessageHandler::Invoke(ICoreWebView2 *, ICoreWebView2WebMessageReceiv
       _snprintf(payload, sizeof(payload), "slot=%s\n", JsonString(json, L"slot", num, sizeof(num)) ? num : "0");
     g_ipc.Send(kIpcOpenFile, payload);
   }
+  else if (strcmp(cmd, "chooseFile") == 0)
+  {
+    char kind[24] = {0};
+    JsonString(json, L"kind", kind, sizeof(kind));
+    char path[1024] = {0};
+    const bool chosen = ChooseNativePath(kind, path, (int)sizeof(path));
+    Log("native path picker: %s%s", chosen ? "chosen " : "cancelled", chosen ? path : "");
+    CallJs(L"__apexFileChosen", path);
+  }
   else if (strcmp(cmd, "pageError") == 0)
   {
     // The page reporting its own failure. It cannot log anywhere the host can read, so it sends the text
@@ -836,7 +894,8 @@ HRESULT WebMessageHandler::Invoke(ICoreWebView2 *, ICoreWebView2WebMessageReceiv
   // slider is dragged (see the note on it above).
   if (strcmp(cmd, "snapshot") != 0 && strcmp(cmd, "nativeTheme") != 0 &&
       strcmp(cmd, "describe") != 0 && strcmp(cmd, "pageError") != 0 &&
-      strcmp(cmd, "ready") != 0 && strcmp(cmd, "setControl") != 0)
+      strcmp(cmd, "ready") != 0 && strcmp(cmd, "setControl") != 0 &&
+      strcmp(cmd, "chooseFile") != 0)
     g_ipc.Send(kIpcSnapshot, nullptr);
 
   CoTaskMemFree(json);
@@ -1402,6 +1461,14 @@ int RunPanel(HINSTANCE inst, bool warm)
       *(slash + 1) = 0;
     _snwprintf(udf, MAX_PATH, L"%sWebView2", exe);
   }
+  // WebView2 reads this documented process environment variable when it starts its browser process. It keeps live
+  // thumbnail polling running while Settings or another application occludes the panel. The variable is scoped to
+  // this short-lived settings process and is inherited by the WebView2 child process; no registry value is written.
+  SetEnvironmentVariableW(
+      L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+      L"--disable-background-timer-throttling "
+      L"--disable-renderer-backgrounding "
+      L"--disable-backgrounding-occluded-windows");
   CreateCoreWebView2EnvironmentWithOptions(nullptr, udf, nullptr, new EnvHandler());
 
   // THE HOST CAN DIE WHILE THIS PANEL IS OPEN, AND THE PAGE HAS TO BE TOLD. Without this the panel keeps

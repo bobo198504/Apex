@@ -165,3 +165,31 @@ if ! grep -qE "$W_SCALE" "$PANEL_WIN"; then
 fi
 echo "   ok  a minimum size is answered, and it is scaled by the window's own monitor"
 
+# ---------------------------------------------------------------------------
+echo
+echo "== native file/folder browsing is still wired into the panel process =="
+# The page-side probe above proves the `chooseFile` message and its setControl result. This half proves the
+# process that owns the WebView still turns that message into the real Windows picker; a page that asks and a
+# C++ side that ignores would otherwise look healthy in the DOM stub.
+if grep -q 'CLSID_FileOpenDialog' "$PANEL_WIN" &&
+   grep -q 'FOS_PICKFOLDERS' "$PANEL_WIN" &&
+   grep -q 'strcmp(cmd, "chooseFile")' "$PANEL_WIN" &&
+   grep -q '__apexFileChosen' "$PANEL_WIN"; then
+  echo "   ok  image and folder fields reach the native Windows picker"
+else
+  echo "   FAIL: the page's Browse request no longer reaches a native file/folder dialog"
+  exit 1
+fi
+
+# WebView2 must keep its live-page timer running while another app occludes the panel. The page-side focus listener
+# covers returning to Apex, but only these browser arguments cover a panel visible on another monitor the whole time.
+if grep -q 'disable-background-timer-throttling' "$PANEL_WIN" &&
+   grep -q 'disable-renderer-backgrounding' "$PANEL_WIN" &&
+   grep -q 'disable-backgrounding-occluded-windows' "$PANEL_WIN" &&
+   grep -q 'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS' "$PANEL_WIN"; then
+  echo "   ok  WebView live timers are not throttled when the system settings window is in front"
+else
+  echo "   FAIL: WebView background throttling is enabled again; live thumbnails stop while Settings is in front"
+  exit 1
+fi
+

@@ -199,17 +199,20 @@ fn the_document_is_valid_json_and_carries_every_rule() {
     let doc: serde_json::Value = serde_json::from_str(text).expect("the document must parse");
 
     let params = doc["params"].as_array().expect("params is an array");
-    // switch_method (select), ime_toggle_hotkey (hotkey), rules (group) -- in that order.
-    assert_eq!(params.len(), 3);
-    assert_eq!(params[0]["type"], "select");
+    // One horizontal row carrying the two short switch controls, then the rules group.
+    assert_eq!(params.len(), 2);
+    assert_eq!(params[0]["type"], "row");
+    let controls = params[0]["controls"].as_array().expect("row controls");
+    assert_eq!(controls.len(), 2);
+    assert_eq!(controls[0]["type"], "select");
     // ⚠️ `hotkey`, NOT `text`: this one is RECORDED by pressing the keys, not typed ("切换热键点击后是记录新的
     // 快捷键"). The page draws whichever type it is told, so this line is what makes the control a recorder.
-    assert_eq!(params[1]["type"], "hotkey");
-    assert_eq!(params[1]["id"], "ime_toggle_hotkey");
-    assert!(!params[1]["placeholderZh"].as_str().unwrap_or("").is_empty(),
+    assert_eq!(controls[1]["type"], "hotkey");
+    assert_eq!(controls[1]["id"], "ime_toggle_hotkey");
+    assert!(!controls[1]["placeholderZh"].as_str().unwrap_or("").is_empty(),
             "a recorder needs to say what to do with it");
 
-    let rules = &params[2];
+    let rules = &params[1];
     assert_eq!(rules["type"], "group");
     assert_eq!(rules["id"], "rules");
     let items = rules["items"].as_array().expect("items");
@@ -261,7 +264,7 @@ fn document() -> serde_json::Value {
 }
 
 fn rules_group(doc: &serde_json::Value) -> &serde_json::Value {
-    &doc["params"][2]
+    &doc["params"][1]
 }
 
 fn begin_edit(index: i32) -> i32 {

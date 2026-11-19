@@ -192,7 +192,22 @@
 // The version is bumped rather than a field simply appended, because the host requires an EXACT match -- see
 // the loader: a DLL built against an older layout would otherwise be read past its own end. Refusing it with a
 // log line is the whole point of carrying a version at all.
-#define APEX_ABI_VERSION 25u
+// 25 -> 26: TWO NEW GENERIC CONTROL SHAPES.
+//   * `file` -- a path plus the panel's native Browse button. The feature receives only the chosen path through
+//     setControl; validation and storage remain the feature's.
+//   * `pan` -- a draggable two-dimensional position sent as text "x,y", where both axes are 0..100 and 50,50 is
+//     the centre. A feature decides what that means; the page only owns the input.
+// A page that does not know these types cannot draw Wallpaper's direct file pickers or its span position.
+// 26 -> 27: `row` -- a generic horizontal container whose `controls` are ordinary short controls. Each child
+// keeps its own id and goes through setControl exactly like a standalone control; the page only owns the
+// arrangement. It lets related settings share one line without teaching the page any feature-specific names.
+// 27 -> 28: THE TASKBAR DISPLAY REGISTRY. A feature can declare the taskbar areas it is currently drawing
+// (`taskbarItems`), and can ask the host for the global display switch and left/right side. `status` also gains
+// an optional companion switch for a per-row taskbar visibility control. `group` gains `hideCount` for lists
+// whose count is noise rather than information.
+// 28 -> 29: taskbar text appearance is a HOST setting. Two callbacks return the shared font size and colour, so a
+// feature that draws into the taskbar uses the General page's values instead of duplicating them.
+#define APEX_ABI_VERSION 29u
 
 #ifdef __cplusplus
 extern "C" {
@@ -342,7 +357,31 @@ typedef struct ApexHost
   int (*featureEnabled)(const char *id);
 
   void *hostUser;
+
+  // THE USER'S GLOBAL TASKBAR-DISPLAY CHOICES (ABI 27 -> 28). `taskbarEnabled` is the General page's master
+  // switch; `taskbarPosition` returns 0 for the first end and 1 for the second (left/right on a horizontal
+  // taskbar, top/bottom on a side taskbar). A feature that draws into the
+  // taskbar asks these fresh whenever it repaints or repositions, so toggling the host setting takes effect
+  // without restarting the feature.
+  int (*taskbarEnabled)(void);
+  int (*taskbarPosition)(void);
+  // GLOBAL TASKBAR TEXT APPEARANCE (ABI 28 -> 29). The host owns and validates both settings; features consume
+  // them. `taskbarTextColor` returns "auto" or "#RRGGBB" and stays valid for the process lifetime.
+  int (*taskbarFontSize)(void);
+  const char *(*taskbarTextColor)(void);
 } ApexHost;
+
+// ONE TASKBAR DISPLAY AREA A FEATURE IS CURRENTLY CONTRIBUTING (ABI 27 -> 28). `key` is the stable identity
+// used by the General page's order; the two names are what that page shows. `taskbarItems` returns only areas
+// that are actually visible right now -- hiding the last one makes the feature disappear from the list, while
+// its saved key and place remain in the host config for when it is switched back on.
+// ⚠️ `key` is also a transport token and cannot contain a comma or newline.
+typedef struct ApexTaskbarArea
+{
+  char key[128];
+  char nameZh[64];
+  char nameEn[64];
+} ApexTaskbarArea;
 
 // ---- THE QUICK PANEL: the few controls a feature wants one click away ---------------------------------
 //
@@ -581,11 +620,13 @@ typedef struct ApexFeature
   //                 written once, so a slider and its piece of curve cannot end up different colours.
   //                 `seg` says WHICH SEGMENT that is; see the note under `curve`.
   //   * `bool`   -- a switch.
-  //   * `status` -- a READ-ONLY CONNECTION/HEALTH CARD (ABI 23 -> 25). It carries no control and is never sent
-  //                 to `setControl`; `textZh`/`textEn` are the fixed first-line sentence and `level` is one of
+  //   * `status` -- a CONNECTION/HEALTH CARD (ABI 23 -> 25). `textZh`/`textEn` are the fixed status sentence and `level` is one of
   //                 `ok`, `warn` or `error`. Optional `lines` is an array of `{"textZh":"...","textEn":"..."}`
   //                 rows shown below it, and optional `live:true` makes the page re-read the document while it is
   //                 visible. The FEATURE decides every value because only it knows what happened outside the page.
+  //                 OPTIONAL `toggleId` + `toggleValue` add one switch at the right edge; `toggleLabelZh/En` name
+  //                 it. The switch travels through `setControl`, so the feature still owns validation/storage
+  //                 (ABI 27 -> 28; ComputeManager uses it for each endpoint's taskbar visibility).
   //   * `list`   -- a list of strings the user edits. THE FEATURE OWNS THE LIST: where it lives, what it
   //                 means, whether it is used at all. Apex provides the editor and nothing else -- a
   //                 blacklist is not something every feature has, so it is not something the host knows
@@ -620,12 +661,23 @@ typedef struct ApexFeature
   //                 of the text box. The two are one row because they are one decision ("use this value" and the
   //                 value), and the checkbox writes its own field through `setControl` like any other control --
   //                 `rules[3].use_process` beside `rules[3].process_pattern`.
+  //   * `row`    -- (ABI 26 -> 27) a horizontal group. `controls` is an array of ordinary short control
+  //                 descriptions (`bool`, `select`, `text`), each with its own `id` and `value`; every child
+  //                 travels through `setControl` independently. It changes arrangement, not ownership.
   //
   //                 ⚠️ WHAT IT IS FOR: keeping a value while switching it off. Without it, stopping a condition
   //                 means DELETING the pattern -- and a captured pattern is usually the most valuable thing in a
   //                 rule, so the only way to try the rule without it is to destroy it. The feature owns both
   //                 halves (in this feature's file they are two fields, `use_process` and `process_pattern`, and
   //                 the ENGINE gates on both); the panel only draws them together.
+  //   * `file`   -- A PATH WITH A BROWSE BUTTON. `kind` is `"image"` (the default) or `"folder"`. The page asks
+  //                 this process for the native picker and sends the chosen path through `setControl`, exactly
+  //                 as a text field sends typed text. The feature remains the validator and owner of the value.
+  //                 Optional `hidePath:true` hides the path and draws only the picker; `buttonZh/buttonEn`
+  //                 rename it; `previewId` names another value in the same group item whose string is a data URI
+  //                 shown as the preview.
+  //   * `pan`    -- A DRAGGABLE POSITION. `value` is `"x,y"`, both axes 0..100, with `50,50` as the centre.
+  //                 A feature decides what the coordinates mean. The page supplies only the two-dimensional input.
   //   * `hotkey` -- A KEY COMBINATION THE USER RECORDS RATHER THAN TYPES. `value` is the combination in the same
   //                 text the feature's own grammar uses ("Ctrl+Space"). Clicking the control puts it into "press
   //                 the keys now" state; the combination the user then presses is sent back through `setControl`
@@ -981,6 +1033,11 @@ typedef struct ApexFeature
   // State bits. The host asks for this before doing anything with the feature, so it must be cheap and
   // must not allocate.
   unsigned (*flags)(void);
+
+  // THE TASKBAR AREAS THIS FEATURE IS CURRENTLY DRAWING (optional; ABI 27 -> 28). Same two-part answer as
+  // `quickItems`: fill at most `max`, return the total. Return 0 when every per-area display switch is off.
+  // The host uses this to list and order the areas in General; the feature still owns the pixels and refreshes.
+  int (*taskbarItems)(ApexTaskbarArea *out, int max);
 } ApexFeature;
 
 // Bit 0: the feature's own master switch. The host will not ask an unenabled feature about a wheel.

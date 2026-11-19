@@ -268,6 +268,25 @@ body {
 .row + .row { margin-top: 6px; }
 .row label { flex: 0 0 132px; color: var(--fg); }
 .row .ctl { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.row.inline { gap: 0; }
+.row.inline .ctl { gap: 20px; flex-wrap: wrap; }
+.row.inline .ctl > .row.inline-hotkey { flex: 0 1 auto; margin: 0; gap: 8px; }
+.row.inline .ctl > .row.inline-hotkey label { flex: 0 0 auto; }
+.row.inline .ctl > .row.inline-hotkey .ctl { flex: 0 1 auto; min-width: 170px; }
+.inlineitem { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.inlinelabel { color: var(--sub); white-space: nowrap; }
+.inlineunit { color: var(--sub); }
+.taskbarctl .ctl { gap: 10px; }
+.row label.radiooption {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+  color: var(--fg); cursor: default;
+}
+.taskbar-switch { margin-left: auto; }
+.inline-number {
+  flex: 0 0 4.5em; width: 4.5em; min-width: 4.5em;
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+.colorpair { display: flex; align-items: center; gap: 6px; }
 .row .val {
   flex: 0 0 74px; text-align: right; color: var(--sub);
   font-variant-numeric: tabular-nums; font-size: 13px;
@@ -336,12 +355,22 @@ input[type=range]:disabled::-webkit-slider-thumb { opacity: .4; }
 .sw input:checked + .tr + .kn { transform: translateX(11px); }
 .sw input:disabled + .tr { opacity: .4; }
 
-select, input[type=text] {
+select, input[type=text], input[type=number] {
   font: inherit; color: var(--fg); background: var(--panel);
   border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; min-width: 0;
 }
 input[type=text] { flex: 1; user-select: text; -webkit-user-select: text; }
+input[type=number] { user-select: text; -webkit-user-select: text; }
+input[type=color] {
+  flex: 0 0 46px; width: 46px; height: 32px; padding: 2px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--panel);
+}
+.colorauto {
+  flex: 0 0 auto; min-width: 48px; padding: 5px 9px;
+}
+.colorauto.on { background: var(--track); border-color: var(--sub); }
 select { min-width: 130px; }
+select.compact { width: 72px; min-width: 72px; max-width: 72px; }
 
 /* A RECORDED KEY COMBINATION (apex/abi.h, `hotkey`). It borrows the text field's box -- same border, same radius,
    same padding -- because it sits in the same column and a control that looked different would read as a
@@ -406,6 +435,7 @@ button:disabled { opacity: .45; }
 .statuscard.ok .statusdot { background: var(--dot-on); }
 .statuscard.error .statusdot { background: var(--dot-disabled); }
 .statusbody { flex: 1; min-width: 0; }
+.status-toggle { margin-left: auto; align-self: center; }
 .statustext {
   min-width: 0; color: var(--fg); font-size: 13px; line-height: 22px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -426,8 +456,35 @@ button:disabled { opacity: .45; }
    not a new shade someone has to keep in step. `text-align: right` puts it at the far end of the row, which
    is where a remark about the control reads as a remark rather than as part of the label. */
 .row .rownote { color: var(--sub); font-size: 12px; margin-left: auto; text-align: right; }
+.row.filepath .ctl { align-items: center; }
+.row.filepath .ctl input[type="text"] { flex: 1 1 auto; min-width: 0; }
+.row.filepath .browse { flex: 0 0 auto; }
+.wallpreview {
+  flex: 0 0 auto; width: 192px; height: 108px; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--line); background: var(--panel);
+  display: flex; align-items: center; justify-content: center;
+}
+.wallthumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.wallplaceholder { color: var(--sub); font-size: 11px; text-align: center; padding: 8px; }
+.panbox {
+  position: relative; width: min(360px, 100%); height: 88px; cursor: grab;
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  background:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 25% 25%;
+  background-color: var(--panel);
+}
+.panbox:active { cursor: grabbing; }
+.panbox:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pandot {
+  position: absolute; width: 16px; height: 16px; border-radius: 50%;
+  transform: translate(-50%, -50%); pointer-events: none;
+  background: var(--accent); border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent);
+}
 .skiprow {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
   padding: 7px 2px; border-bottom: 1px solid var(--line);
 }
 /* ⚠️ THE LAST ROW IS MARKED BY THE RENDERER, NOT MATCHED BY A SELECTOR. `:last-child` never matched a row --
@@ -449,9 +506,44 @@ button:disabled { opacity: .45; }
   align-items: center; gap: 8px 12px;
 }
 .fields-wrap > .nm { grid-column: 1; grid-row: 1; min-width: 0; }
-.fields-wrap > button { grid-column: 2; grid-row: 1; justify-self: end; }
+.fields-wrap > .rowactions { grid-column: 2; grid-row: 1; justify-self: end; margin-left: 0; }
 .fields-wrap > .row { grid-column: 1 / -1; }
-.fields-wrap > .swcell { grid-column: 1 / -1; justify-self: end; }
+.rowactions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; margin-left: auto; }
+/* ⚠️ `fieldsWrap` MEANS THE FIELD OWNS THE LINE -- LABEL AND CONTROL TOGETHER, NOT A CONTROL CLIPPED AT THE EDGE.
+   The rows list's normal rule keeps ordinary controls at their intrinsic width so a fader gets the spare room;
+   that rule is right for a one-control row and wrong for a wrapped field whose text (a wallpaper folder, a proxy
+   server) is the content. Expand only the wrapped form: text boxes and selects fill the space after the label,
+   while switches and faders keep their normal geometry. */
+.rowlist .skiprow.fields-wrap > .row { width: 100%; }
+.rowlist .skiprow.fields-wrap > .row .ctl { flex: 1 1 auto; min-width: 0; justify-content: flex-start; }
+.rowlist .skiprow.fields-wrap > .row .ctl input[type="text"],
+.rowlist .skiprow.fields-wrap > .row .ctl select {
+  flex: 1 1 auto; width: auto; min-width: 0;
+}
+/* A list nested inside one group item (ComputeManager's per-vendor sub-models) owns the full field line:
+   the fetch button, the model rows and the manual-add row stack above one another instead of becoming
+   one squeezed horizontal strip. */
+.grouplist .ctl { display: block; width: 100%; }
+.grouplist { display: block; width: 100%; }
+.grouplist.separated {
+  margin: 10px 0; padding: 12px 0;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.grouplisthead {
+  display: flex; align-items: center; justify-content: flex-start; gap: 10px;
+  width: 100%;
+}
+.grouplistlabel { color: var(--sub); }
+.grouplist .rowlist { margin-top: 8px; }
+.grouplist .addrow { margin-top: 8px; }
+.grouplisthead .inline-add { flex: 1 1 auto; margin: 0; justify-content: flex-end; min-width: 220px; }
+.inline-items { display: flex; flex-wrap: wrap; gap: 7px; }
+.inline-items .modelchip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--panel);
+}
+.inline-items .modelchip .nm { flex: 0 1 auto; min-width: 0; max-width: 15em; }
+.inline-items .modelchip button { padding: 3px 7px; }
 .addrow { display: flex; gap: 8px; margin-top: 12px; }
 /* ⚠️ A GROUP ASKED FOR `layout:"rows"` REUSES THE LIST CONTROL'S ROW (`.skiprow`), and that reuse is on purpose:
    "a name and its own controls, one per line" is the same interaction as the blacklist's rows, and the user has
@@ -501,6 +593,10 @@ button:disabled { opacity: .45; }
    field); a name box and a shortcut box are fixed-width controls and take only what they need. */
 .rowlist .skiprow > .row { flex: 0 0 auto; min-width: 0; margin: 0; }
 .rowlist .skiprow > .row.grow { flex: 1 1 auto; }
+/* A hidden-path image picker is a thumbnail, not another control on the name line. It takes the next full line;
+   the row's remaining controls (a compact select and a switch) stay together after the item name. */
+.rowlist .skiprow > .row.thumbrow { flex: 1 0 100%; }
+.rowlist .skiprow > .row.thumbrow .ctl { justify-content: flex-start; }
 /* ⚠️ AND A LABEL IN ONE OF THOSE ROWS IS AS WIDE AS ITS OWN TEXT, NOT A 132-PX COLUMN. `.row label` reserves that
    column for the parameter FORMS, where every value starts at the same x -- a rows list is not a form: its left
    column is the item's own name, and the controls after it are read in the order the feature declared them. The
@@ -659,11 +755,9 @@ button:disabled { opacity: .45; }
 }
 /* THE LIST COLUMN'S OWN HEADING: the group's name and how many items there are. It belongs to the list, not to
    the card -- "表头「规则」以及规则统计数要在规则列表里的顶端，不是在参数面板顶端."
-   ⚠️ IT IS STICKY, because it sits INSIDE the list's own scroll box (the list is what scrolls). Without that
-   the count -- the one thing it is there to give at a glance -- would scroll away with the rows. */
+   It scrolls with the page; the old sticky heading stayed at the top after the section had scrolled away. */
 .listhead {
   display: flex; align-items: baseline; gap: 8px;
-  position: sticky; top: 0; z-index: 1;
   padding: 0 0 6px; margin-bottom: 6px;
   background: var(--panel); border-bottom: 1px solid var(--line);
 }

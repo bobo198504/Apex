@@ -41,12 +41,14 @@ export PATH="/d/Projects/Code/_tools/w64devkit/bin:$PATH"
 
 ASSEMBLY=0
 GATE_SET="all"
+BUILD_SET="all"
 while [ $# -gt 0 ]; do
   case "$1" in
     --assembly) ASSEMBLY=1; shift ;;
     --set)      ASSEMBLY=1; GATE_SET="${2:-all}"; shift 2 ;;
+    --build-set) BUILD_SET="${2:-all}"; shift 2 ;;
     --fast)     break ;;
-    *) echo "usage: test/run_all.sh [--assembly] [--set none|panel|all] [--fast]"; exit 2 ;;
+    *) echo "usage: test/run_all.sh [--assembly] [--set none|panel|feature:<id>|all] [--build-set none|panel|feature:<id>|all] [--fast]"; exit 2 ;;
   esac
 done
 
@@ -74,35 +76,77 @@ run_gate() {
   fi
 }
 
+build_in_set() {
+  local name="$1"
+  case "$BUILD_SET" in
+    all) return 0 ;;
+    none) return 1 ;;
+    panel)
+      case "$name" in
+        check_apex_palette|check_apex_panel) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    feature:*)
+      local id="${BUILD_SET#feature:}"
+      case "$id:$name" in
+        ComputeManager:check_feature_chart|ComputeManager:check_feature_computemanager|\
+        AutoIME:check_feature_chart|AutoIME:check_feature_ime|AutoIME:check_apex_modular|\
+        KeepAwake:check_feature_chart|KeepAwake:check_feature_keepawake|\
+        MediaControl:check_feature_chart|MediaControl:check_feature_mediacontrol|\
+        Wallpaper:check_feature_chart|Wallpaper:check_feature_wallpaper|\
+        SmoothWheel:check_feature_chart|SmoothWheel:check_feature_device|\
+        VolumeLock:check_feature_chart|VolumeLock:check_feature_volumelock|\
+        AuditStub:check_apex_modular|AuditStub:check_feature_chart)
+          return 0
+          ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+run_build_gate() {
+  local name="$1"
+  if build_in_set "$name"; then
+    run_gate "$name"
+  else
+    printf "  %-26s %s\n" "$name" "SKIP (not in the '$BUILD_SET' set)"
+  fi
+}
+
 echo "== build layer =="
 echo "   (pure logic and built artefacts: no window, no process, no input device)"
-run_gate check_apex_paths      # where the files land (the portability promise)
-run_gate check_apex_language   # the tray/panel language rule and the UTF-8 conversion
-run_gate check_apex_hostconfig # the host's own settings file: what it means, and the quick panel's order
-run_gate check_app_swallow     # swallowing implies delivering -- the rule that broke once
-run_gate check_app_engines     # a program with its own smoothing engine is always left alone (sentence AND rule)
-run_gate check_app_core        # the model: conservation and the travel rules
-run_gate check_app_config      # the settings: ranges, clamping, a mangled file
-run_gate check_app_tail        # the payout shape
-run_gate check_app_release     # how long a window lasts (the small model before the delivery layer)
-run_gate check_feature_chart   # the feature's own controls document: valid JSON, and every slider moves it
-run_gate check_feature_device  # which DEVICE sent the wheel: the classifier, and that a touchpad is left alone
-run_gate check_feature_ime     # AutoIME's matching engine: the rules, the order, the anchoring
-run_gate check_feature_keepawake  # KeepAwake: two independent switches, a gated list, and the power requests it makes
-run_gate check_feature_volumelock # VolumeLock: ONE device's volume, at the moment it appears, and nothing else touched
+run_build_gate check_apex_paths      # where the files land (the portability promise)
+run_build_gate check_apex_language   # the tray/panel language rule and the UTF-8 conversion
+run_build_gate check_apex_hostconfig # the host's own settings file: what it means, and the quick panel's order
+run_build_gate check_app_swallow     # swallowing implies delivering -- the rule that broke once
+run_build_gate check_app_engines     # a program with its own smoothing engine is always left alone (sentence AND rule)
+run_build_gate check_app_core        # the model: conservation and the travel rules
+run_build_gate check_app_config      # the settings: ranges, clamping, a mangled file
+run_build_gate check_app_tail        # the payout shape
+run_build_gate check_app_release     # how long a window lasts (the small model before the delivery layer)
+run_build_gate check_feature_chart   # the feature's own controls document: valid JSON, and every slider moves it
+run_build_gate check_feature_device  # which DEVICE sent the wheel: the classifier, and that a touchpad is left alone
+run_build_gate check_feature_ime     # AutoIME's matching engine: the rules, the order, the anchoring
+run_build_gate check_feature_keepawake  # KeepAwake: two independent switches, a gated list, and the power requests it makes
+run_build_gate check_feature_computemanager # ComputeManager: schedules, JSON paths, masking, document size, file ownership
+run_build_gate check_feature_wallpaper # Wallpaper: schedules, solar times, virtual layout, composite, system capabilities
+run_build_gate check_feature_volumelock # VolumeLock: ONE device's volume, at the moment it appears, and nothing else touched
 # ⚠️ THE ONE BUILD-LAYER GATE THAT TOUCHES THE SCREEN, AND IT SAYS SO: it checks that a "screen off" is a WINDOW
 # covering a real monitor (connected, unlocked, undoable) by looking at the window itself, which cannot be done
 # without the window existing. It is put back in tens of milliseconds, and APEX_MC_NO_DARK=1 skips that part --
 # see the gate's own header. Everything else it does starts no program and touches no input device.
-run_gate check_feature_mediacontrol # MediaControl: brightness rows, the screen-off window, per-app volume, named panes
-run_gate check_apex_palette    # the panel's colours, one palette per appearance, ordered, readable, paler
-run_gate check_apex_quickpanel # the flyout: its geometry, its values, its colours, and what the features put in it
-run_gate check_apex_panel      # the panel's SCRIPT against a DOM stub: every control type still renders
-run_gate check_apex_deploy     # a deploy replaces the program, never the user's data, and drops retired features
-run_gate check_apex_package    # the portable zip ships the public program -- and NO private feature (see the header)
-run_gate check_apex_modular    # the boundaries, the process rules, the toolchain, and the input-safety rule
-run_gate check_apex_docs       # AGENTS.md is still short enough to be read whole (see the gate's header)
-run_gate check_model_sync      # shared/ vs the plugin's src/ -- the one thing that must not drift
+run_build_gate check_feature_mediacontrol # MediaControl: brightness rows, the screen-off window, per-app volume, named panes
+run_build_gate check_apex_palette    # the panel's colours, one palette per appearance, ordered, readable, paler
+run_build_gate check_apex_quickpanel # the flyout: its geometry, its values, its colours, and what the features put in it
+run_build_gate check_apex_panel      # the panel's SCRIPT against a DOM stub: every control type still renders
+run_build_gate check_apex_deploy     # a deploy replaces the program, never the user's data, and drops retired features
+run_build_gate check_apex_package    # the portable zip ships the public program -- and NO private feature (see the header)
+run_build_gate check_apex_modular    # the boundaries, the process rules, the toolchain, and the input-safety rule
+run_build_gate check_apex_docs       # AGENTS.md is still short enough to be read whole (see the gate's header)
+run_build_gate check_model_sync      # shared/ vs the plugin's src/ -- the one thing that must not drift
 
 if [ "$ASSEMBLY" != "1" ]; then
   echo
@@ -137,9 +181,10 @@ echo "   (these start the real program; the machine's one Apex is taken for the 
 #            (`check_apex_flash`), the shutdown chain that closes it (`check_apex_shutdown`), and the panel
 #            process actually running the page callback (`check_reaper_live`). The wheel, the REAPER note's
 #            host side and the single-instance rule live in `apex.exe`, which did not change.
-#   all   -- the host or a feature changed. Everything runs, and that is not caution for its own sake: a feature
-#            DLL changes what the host decides about the wheel (see decision.h), and `apex.exe` contains the
-#            hook, the tray, the IPC server and the config writer.
+#   feature:<id> -- one EXISTING independent feature changed. Only its build gate and the assembly gates that
+#                   exercise its host seam run. A feature with no host seam runs no assembly gate and therefore
+#                   does not take the user's Apex away.
+#   all   -- the host, multiple features, a new feature, or an ambiguous delta changed. Everything runs.
 GATE_SET="${GATE_SET:-all}"
 PANEL_GATES=" check_apex_flash check_apex_shutdown check_reaper_live "
 in_set() {
@@ -147,13 +192,33 @@ in_set() {
     all)   return 0 ;;
     none)  return 1 ;;
     panel) case "$PANEL_GATES" in *" $1 "*) return 0 ;; *) return 1 ;; esac ;;
+    feature:AutoIME)
+      [ "$1" = "check_feature_edit" ] && return 0
+      return 1
+      ;;
+    feature:SmoothWheel)
+      case "$1" in
+        check_reaper_note|check_reaper_live|check_apex_endtoend) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    feature:MediaControl)
+      [ "$1" = "check_apex_flyout" ] && return 0
+      return 1
+      ;;
+    feature:*) return 1 ;;
     *)     return 0 ;;
   esac
 }
 
 # ⚠️ THE FIELD IS TAKEN HERE, ONCE, AND ONLY IF SOMETHING IS GOING TO RUN. With `--set none` the user's Apex is
 # never touched at all -- no gate starts, so nothing needs the machine to itself.
-if [ "$GATE_SET" != "none" ]; then
+ASSEMBLY_ANY=0
+case "$GATE_SET" in
+  none|feature:ComputeManager|feature:KeepAwake|feature:Wallpaper|feature:VolumeLock|feature:AuditStub) ;;
+  *) ASSEMBLY_ANY=1 ;;
+esac
+if [ "$ASSEMBLY_ANY" = "1" ]; then
   apex_take_the_field
 fi
 #

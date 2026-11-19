@@ -5,9 +5,9 @@
 
 ## 零、这个项目是什么
 
-**Apex 是一个功能集（PowerToys 那种形态），不是单一工具。** 现在有五个功能：SmoothWheel（丝滑滚动）、
+**Apex 是一个功能集（PowerToys 那种形态），不是单一工具。** 现在有七个功能：SmoothWheel（丝滑滚动）、
 AutoIME（自动输入法）、KeepAwake（保持唤醒）、MediaControl（媒体控制）、
-VolumeLock（音量保护）——清单与现状见 §三，
+VolumeLock（音量保护）、ComputeManager（算力管家）、Wallpaper（壁纸设置）——清单与现状见 §三，
 细节见 `docs/rules/features.md`。
 
 ```
@@ -37,7 +37,8 @@ VolumeLock（音量保护）——清单与现状见 §三，
 
 > 用户原话（2026-10-08）：「**这个插件备注下，只限我自己使用，不开源，后续更新不更新到仓里。**」
 
-⚠️ **范围只有这一个功能**：Apex 宿主和另外四个功能（SmoothWheel / AutoIME / KeepAwake / MediaControl）
+⚠️ **范围只有这一个功能**：Apex 宿主和另外五个功能（SmoothWheel / AutoIME / KeepAwake / MediaControl /
+ComputeManager）
 **照旧进仓**。
 
 ⚠️ **它靠机器保证，不靠"记得"**：`.gitignore` 里列着 `/features/VolumeLock/` 及它的探针与门。
@@ -210,6 +211,9 @@ bash apex/build.sh
 # 跑门：平时改完就这一条（构建层：纯逻辑与产物，不起进程、不碰输入设备）
 bash test/run_all.sh
 
+# 只改一个独立功能时（不会启动或停止正在运行的 Apex）
+bash test/run_all.sh --build-set feature:ComputeManager
+
 # 跑门：交付前一次（构建层 + 装配层；装配层会起真程序）
 bash test/run_all.sh --assembly
 
@@ -239,6 +243,15 @@ bash apex/deploy.sh                  # 只部署（门已经单独跑过时）
    用户原话：**"以前的项目没在对话里做计划，按我自己的节奏，反而更快，这次做了计划，每一步都感觉用时翻好几倍。"**
    → **按批干活，一批做完报一次。** 中途只在**真卡住**或**有真发现**时说话。
 
+4. **插件改动按插件验证，宿主改动才扩大范围。** 用户要求：**"每个插件都是独立的，最多是主程序有关联可以重跑一下。"**
+   → C++ 功能只依赖自己的文件、`common/`、`shared/` 和 `apex/abi.h`；Rust 源码未变不调用 `cargo`；面板源文件未变不重写资源。
+   → 只改一个独立 DLL 时用 `bash test/run_all.sh --build-set feature:<id>`；`apex/deploy.sh --gated` 会自动只跑该功能相关的门，
+     不重跑其它插件。只有该功能确实经过宿主链路时才跑对应装配门；宿主、多个功能、新增功能或规则不确定时才跑全套。
+   → **部署规则（2026-11-16 用户确认）：只要没有改主程序，就直接部署插件。** `apex.exe`、`apex-settings.exe`、
+     面板资源、`apex/abi.h`、`common/`、`shared/` 都没变，而且 delta 只有一个已有功能的 DLL/payload/service 时，
+     只验证并复制这个插件；不跑宿主装配门，不重跑其它插件，也不为它扩大到全套。
+     新增功能、多个功能、ABI/公共头变化，或无法判断 delta 时，才扩大到全套。
+
 ⚠️ **一条留给自己的教训**：2026-09-19 那两小时里，**用户要的三个功能一行没写**，
 全花在我自己引出的测试设施上（一条自查 → 发现探针会杀用户的进程 → 收 9 份重复过滤器 → 撞上工具链的坑 → …）。
 用户问"为什么做这些"时，我给出的链条每一步都站得住，**但那条链比它要保护的功能还长**。
@@ -252,7 +265,7 @@ bash apex/deploy.sh                  # 只部署（门已经单独跑过时）
 | 改一个 `.cpp` 之后构建 | 4.1 s |
 | 改 AutoIME（Rust）之后构建 | 5.7 s |
 | 改 `panel.html` 之后构建 | 3.3 s |
-| **跑一遍构建层的全部门** | **约 52 s**（**23 扇**；大的几扇：modular 14.2 / deploy 7.3 / keepawake 5.3 / ime 4.1 / quickpanel 3.8 / mediacontrol 3.0 / **chart 2.8**。⚠️ 这个数是逐扇相加来的，**不是**一次重新量的整轮：那几轮赶在机器很忙的时候，逐扇相加到了 234 s，比安静时慢四倍，所以旧数不动、新数单独加。⚠️ 有两扇是加了又撤的：`check_feature_unifiedui`（2026-10-06 当天加、当天随功能撤）和 `check_apex_menutheme`（2026-10-12 当天加、当天随"托盘菜单被撤掉"一起删），所以这个总数仍然只配一个「约」） |
+| **跑一遍构建层的全部门** | **约 61 s**（**25 扇**；大的几扇：modular 14.2 / deploy 7.3 / wallpaper 6.4 / keepawake 5.3 / ime 4.1 / quickpanel 3.8 / mediacontrol 3.0 / **chart 2.8**。⚠️ 这个数是逐扇相加来的，**不是**一次重新量的整轮：那几轮赶在机器很忙的时候，逐扇相加到了 234 s，比安静时慢四倍，所以旧数不动、新数单独加。⚠️ 有两扇是加了又撤的：`check_feature_unifiedui`（2026-10-06 当天加、当天随功能撤）和 `check_apex_menutheme`（2026-10-12 当天加、当天随"托盘菜单被撤掉"一起删），所以这个总数仍然只配一个「约」） |
 | **构建层 + 装配层一次跑完** | **约 155 s**（十扇装配门；`check_apex_flyout` 是 2026-09-22 加的。⚠️ 从 PowerShell 量的整轮 169 s 减掉约 1 秒 Git-bash 启动推出来的，**不是** bash 内的读数——要精确值跑 `test/timing.sh`。⚠️⚠️ **2026-10-12：装配层有 4 扇（icons / endtoend / persist / flyout）在"由工具进程树启动私有拷贝"时全红，而同一条 exe、同一个目录、改用 `Start-Process` 手动启动就全绿**——根因是这条会话里 `Shell_NotifyIcon` 对工具派生的进程返回 **error 5**，托盘图标加不上。**这不是代码缺陷**：用户那份部署的 Apex 日志里 `tray icon added` 正常。详见 `docs/rules/gates.md` 的「已知的环境性红」） |
 | `cargo` 空跑一次 | 61 ms —— **它从来不是"构建慢"的原因** |
 
@@ -265,7 +278,8 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 |---|---|---|
 | 只改了文档 / 脚本注释 | 构建层 | **46 s**，你的 Apex 一次都不会被停 |
 | 只有 `apex-settings.exe` | 构建层 + 3 扇面板门 | **80 s** |
-| `apex.exe` 或某个功能 DLL | 全部（十扇装配门） | **155 s**（九扇时是 140 s） |
+| 一个已有独立功能 DLL/payload/service | 该功能自己的构建门；只有确有宿主接缝时才跑对应装配门 | 壁纸插件直部署实测约 **17 s**，只停一次 |
+| `apex.exe`、ABI/公共头、多个功能、新增功能或无法判断 delta | 全部（十扇装配门） | **155 s**（九扇时是 140 s） |
 
 → **判据**：编辑循环的成本 = 构建 + 门，而**门是大头**。现在这个成本**随改动范围变化**，不再是固定 258 秒。
 
@@ -282,6 +296,8 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | `KeepAwake` | 保持唤醒 / Keep Awake | C++ | 完成 |
 | `MediaControl` | 媒体控制 / Media Control | C++ | 完成（每屏亮度与熄屏、每个应用的音量） |
 | `VolumeLock` | 音量保护 / Volume Guard | C++ | 完成（一张设备列表，每台各自一个音量；拖推子立刻生效，其它设备不动） |
+| `ComputeManager` | 算力管家 / Compute Manager | C++ | 完成（多家厂商/模型的余额、用量与各自峰谷规则；无峰谷模型可关闭计价；进程触发的半透明桌面挂件） |
+| `Wallpaper` | 壁纸设置 / Wallpaper | C++ | 完成（显示器用 MediaControl 同款硬件 ID；逐屏缩略图、直接选图并复制进插件目录；五种显示方式、锁屏和可选图库；跨区与浅深主题暂缓） |
 
 ### 三·一、★★ 版本号：**改动哪个组件，就同步更新哪个组件的版本号**（**每次都适用**）
 
@@ -298,15 +314,17 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | 设置面板侧栏显示 | 走快照（`settings_host.cpp`），**没有第二个号** |
 | 便携包文件名 | 由 `apex/package.sh` **读同一个宏**生成，不许手写 |
 
-**五个功能各自的号**（⚠️ 声明形式**不统一**，这是现状，改的时候按各自那一行来）：
+**七个功能各自的号**（⚠️ 声明形式**不统一**，这是现状，改的时候按各自那一行来）：
 
 | 功能 | 声明 | 位置 |
 |---|---|---|
 | SmoothWheel | `"1.7.1",`（`ApexFeature` 初始化里的裸字面量） | `features/SmoothWheel/feature_smoothwheel.cpp` |
-| AutoIME | `version: c"1.2.1".as_ptr(),` | `features/AutoIME/src/lib.rs` |
+| AutoIME | `version: c"1.2.2".as_ptr(),` | `features/AutoIME/src/lib.rs` |
 | KeepAwake | `const char *kVersion = "2.0.0";` | `features/KeepAwake/feature_keepawake.cpp` |
 | MediaControl | `const char *kVersion = "1.1.0";` | `features/MediaControl/feature_mediacontrol.cpp` |
 | VolumeLock | **没有字段**，只有一句注释 `// VERSION: 1.0.0` | `features/VolumeLock/feature_volumelock.cpp` |
+| ComputeManager | `const char *kVersion = "1.8.2";` | `features/ComputeManager/feature_computemanager.cpp` |
+| Wallpaper | `const char *kVersion = "1.1.17";` | `features/Wallpaper/feature_wallpaper.cpp` |
 
 ⚠️ **`VolumeLock` 那一行是已知缺陷**：它没有真正的版本字段，所以面板上那个位置是**空的**。
 将来动这个功能时要顺手补一个字段（照 KeepAwake 的写法），而不是继续改注释。
@@ -323,9 +341,9 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 ⚠️ **一次改动同时动了宿主和某个功能，两边都要动**——这正是用户要求"同步更新"的那一条。
 
 ⚠️ **确认方式**：`grep -rn 'APEX_HOST_VERSION\|kVersion\s*=\|version: c' apex/ features/` 一次列全，
-不要凭记忆——上面的表就是**这么查出来的**，而它纠正了一个想当然：我原以为五个功能写法一致，实际有**三种写法 + 一个没有**。
+不要凭记忆——上面的表就是**这么查出来的**，而它纠正了一个想当然：我原以为所有功能写法一致，实际有多种写法，且 `VolumeLock` 目前没有字段。
 
-- **ABI 版本 = 25**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
+- **ABI 版本 = 29**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
   `features/AutoIME/src/abi.rs` —— **升版必须同时改两处**（漏了那边不是"退化"，是那个功能**直接加载失败**）。
   宿主要求版本**精确相等**；改契约就要升版，"只是加一个位"也要升。
   （11 → 12 是 `quickItems`：功能可以往**快速面板**里放几个自己的控件；
@@ -352,7 +370,11 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
   （见 `common/engines.h` 与 `docs/rules/cases.md` §3.9.1）；
   22 → 23 是 `select` 可以选择显示确认按钮；23 → 24 是 `status` 只读状态卡与 `group.fieldsWrap`
   （项目字段太多时每条字段独立一行）；24 → 25 是 `status` 的 `lines`（固定状态句下面五行最近连接）与
-  `live`（状态卡可见时每秒刷新）。）
+  `live`（状态卡可见时每秒刷新）；25 → 26 是 `file`（文本路径 + 原生浏览按钮）与 `pan`
+  （可拖动的二维位置，发送 `x,y`）；26 → 27 是 `row`
+  （一行内放若干个各自独立、仍分别走 `setControl` 的短控件）；27 → 28 是任务栏显示区注册
+  （功能声明当前贡献的区域、宿主统一管理左右位置和顺序）以及状态卡右侧的可选开关；
+  28 → 29 是任务栏文字字号与颜色改为宿主全局设置（功能通过 `ApexHost` 的两个回调读取，不再各自保存）。）
 - **加一个功能 = 只写一个文件夹**（`features\<id>\`），面板一行都不用改。要画的新形状，**加进 `abi.h` 的契约**，
   绝不在页面里写死某个功能的名字、id 或字段。边界与理由：`docs/rules/features.md`。
 - ⚠️ **每个功能的名单/设置互不相干**（用户定的）：「每个插件的进程名字都是独立的，不要混用」。
@@ -363,7 +385,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 - ❌ **不改 REAPER 的任何东西**（那是插件项目的事；Apex 对 REAPER 只做"让路"）
 - ❌ **不替接收方做取舍**：不预判某个程序"吃不了这么多"就降低精度
 - ❌ **不自己驱动视图**：只把参数交给对方自己的机制
-- ❌ **不写 `%APPDATA%`/注册表**（除了读系统明暗与语言；**读**是必要的，写不行）
+- ❌ **不写 `%APPDATA%`/注册表**（只读系统明暗、语言，以及任务栏图标对齐值 `TaskbarAl`；**读**是必要的，写不行）
 - ❌ **不要为了"自动"造跑不起来的探针**（已放弃两条：`thread_owner.cpp`、
   `apex_tray_state.cpp`——本机 `FindWindow("Shell_TrayWnd")` 返回 0，Win11 的托盘结构变了）
 

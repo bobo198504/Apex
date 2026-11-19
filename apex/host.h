@@ -22,7 +22,7 @@
 // the number for Apex itself, which the panel puts beside the slogan in the sidebar ("Apex主程序版本号1.0 ... 居右").
 // One definition, because the snapshot and anything else that reports it must not be able to disagree.
 // ---------------------------------------------------------------------------
-#define APEX_HOST_VERSION "1.7.1"
+#define APEX_HOST_VERSION "1.10.0"
 
 // ---------------------------------------------------------------------------
 // THE HOST'S OWN INTERFACE: everything apex.exe needs from host_win.cpp, plus the places where the
@@ -174,6 +174,19 @@ static const int kMaxQuickBlocks = 64; // the same ceiling the flyout's own item
 // ⚠️ IT ASKS EACH FEATURE `quickItems`, which is why it is a settings-page call and not a frame call: a feature
 // that enumerates hardware does it on its own throttle (see MediaControl).
 int QuickBlocks(QuickBlock *out, int max);
+
+// EVERY TASKBAR DISPLAY AREA CONTRIBUTED RIGHT NOW, IN THE USER'S SAVED ORDER. Same live-feature rule as
+// QuickBlocks: a switched-off feature contributes nothing, and a hidden area keeps its saved key for later.
+struct TaskbarArea
+{
+  int slot = -1;
+  char key[128] = {0};
+  char nameZh[64] = {0};
+  char nameEn[64] = {0};
+};
+
+static const int kMaxTaskbarAreas = 32;
+int TaskbarAreas(TaskbarArea *out, int max);
 
 // PUT THE MACHINE IN STEP WITH THE `autostart` SETTING (main.cpp).
 //

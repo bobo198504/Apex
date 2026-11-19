@@ -287,7 +287,7 @@ static K_FEATURE: ApexFeature = ApexFeature {
     id: c"AutoIME".as_ptr(),
     nameZh: c"\u{81ea}\u{52a8}\u{8f93}\u{5165}\u{6cd5}".as_ptr(), // 自动输入法
     nameEn: c"Auto IME".as_ptr(),
-    version: c"1.2.1".as_ptr(),
+    version: c"1.2.3".as_ptr(),
     init: Some(fe_init),
     shutdown: Some(fe_shutdown),
     reloadSettings: Some(fe_reload),
@@ -304,6 +304,7 @@ static K_FEATURE: ApexFeature = ApexFeature {
     onWheel: Some(fe_on_wheel),
     tick: Some(fe_tick),
     flags: Some(fe_flags),
+    taskbarItems: None,
 };
 
 #[no_mangle]
