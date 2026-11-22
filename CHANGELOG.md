@@ -11,84 +11,32 @@
 
 ```
 + 版本号：主程序 1.12.18、自动输入法 1.2.4、音量保护 1.0.0、算力管家 1.9.6、媒体控制 1.1.1、系统状态 1.5.3
-+ 任务栏改由通用设置统一排版和绘制，一个显示开关对应一个任务栏显示位
-+ 功能只提供单行或双行文本；紧凑任务栏和左右任务栏会自动把双行合并为单行
-+ 正常高度任务栏中，相邻单行显示位上下配对；单行显示位为奇数时，剩余一个垂直居中
-+ 通用设置的任务栏显示位逐项选择左侧或右侧，顺序仍统一在一张表里
-+ 左侧显示位使用左对齐，右侧显示位使用右对齐
-+ 系统状态按实际 GPU 和有效分区动态拆分，占用率与温度分别映射
-+ 系统状态新增每个有效分区的读取、写入速度；本机 IP 按实际地址逐条拆分
-+ 系统状态所有设置项收敛为单行状态卡，农历不再占用副行
-+ 农历项直接显示日期，不再重复“农历”二字
-+ CPU、内存、GPU 占用卡在任务栏开关左侧增加“实际单位”开关：关为百分比，开为 GHz/GB/显存
-+ 网速箭头与数值之间使用约半个字符宽的窄空格
-+ 任务栏显示项使用紧凑间距和稳定宽度，数字变化时不再左右跳动
-+ 算力管家的峰谷圆点随双行文本恢复，顺序改为“余额 + 红/蓝圆 + 倒计时”；桌面挂件暂不启用，留作以后的通用模块
-+ 峰谷圆改为宿主解析 `[[dot:#RRGGBB]]` 文本标记并实际绘制彩色圆，不再依赖彩色 Emoji 字体
-# 修复算力双行合成单行后前半段看起来偏高：所有文字片段改为共用同一字体顶部位置
-# 修复任务栏显示区在右侧时文字右边多出空白：右侧显示区不再预留右内边距
-# 修复中文任务栏文字仍偏上：所有任务栏文字统一按可见墨迹边界垂直居中，不再按字体行框估算
-# 修复算力双行的余额和倒计时右端不齐：任务栏文本新增通用制表列，两行右列共用同一右边缘
-# 修复统一墨迹居中后仍有字体测量留白：任务栏文字改为直接填充实际字形路径，右边缘也按墨迹收齐
-# 修复算力单行合并后余额与峰谷圆重叠：文本推进保留显式空格，不再按去尾空白的墨迹宽度前进
-# 优化算力双行列间距和窄宽度回落：模型名与余额之间只留约半个字，宽度按 2 像素档即时收紧
-# 修复峰谷圆与倒计时负号重叠：彩色圆右侧增加约四分之一个字宽的固定间距
-# 修复算力单行合并后余额与峰谷圆仍重叠：字形宽度测量显式保留尾部空格
-# 修复 CPU/内存/GPU 数值波动导致后续任务栏项频繁左右跳：显示位宽度只增不减，不随变窄回缩
-# 算力单行合并改为显式换算尾部空格宽度，保证余额与峰谷圆之间始终有间隔
-# 修复算力单行合并时峰谷圆偏下：只对位于两段文字中间的彩色圆向上校正一像素
-# 系统任务栏图标设为左对齐时，本程序的左/上显示位自动进入右/下组；横向和桌面左右任务栏都适用
-# 字体变小时任务栏项间距同步缩小：水平约半个字，桌面左右任务栏略大但同样随字号缩放
-# 修复字号从大改小时仍沿用旧字号宽度缓存，导致 9 号字各项之间留出大号字空白
-# 撤回任务栏文字颜色的拖动实时预览：Windows 原生颜色面板会被中途更新打断，颜色控件恢复选完后提交
-+ 音量保护插件解禁：源码、探针、门和发行包中的插件文件全部公开
-+ 清理算力管家和系统状态里已不再使用的旧任务栏自绘代码
-# 修复媒体控制的熄屏遮罩被任务栏文字刷新抢到下面：熄屏期间遮罩持续保持最高层
-# 修复算力任务栏余额和峰谷倒计时挤到同一行；无峰谷规则时只输出模型名和余额一行
-+ 算力管家的进程显示条件现在同时控制任务栏显示位
-+ 左右任务栏选择“上”时贴到最上方
+* 新增「系统状态」：网速、CPU、内存、每块显卡、每个有效分区的占用/温度/读写速度，本机 IP，时间、日期和农历
++ 音量保护公开发布并随便携包提供
++ 「算力管家」任务栏显示启用中的接口、余额和峰谷倒计时，并遵守进程显示条件
++ 通用设置统一管理任务栏显示位：逐项选择左/右或上/下，统一排序，调整字号和文字颜色
++ 正常高度任务栏自动使用双行排版；紧凑任务栏和桌面左右任务栏自动合并为单行
++ 系统任务栏图标左对齐时，左/上显示位自动改用右/下侧
+# 修复任务栏文字垂直对齐、右边缘对齐和数值变化时左右跳动
+# 修复算力管家单行合并后余额与峰谷圆重叠，双行余额与倒计时不齐
+# 修复媒体控制熄屏时任务栏文字没有一起被遮挡
+# 修复切换任务栏字号后项目间距仍沿用旧字号
 ```
 
 ## What's changed
 
 ```
 + Versions: the host is 1.12.18, Auto IME 1.2.4, Volume Guard 1.0.0, Compute Manager 1.9.6, Media Control 1.1.1, and System Status 1.5.3
-+ The General page now owns taskbar layout and drawing; one display switch maps to one taskbar slot
-+ Features provide one-line or two-line text; compact and side taskbars merge two lines into one
-+ On a normal-height taskbar, adjacent one-line slots stack into two rows; an odd leftover is vertically centred
-+ Every taskbar slot chooses left or right independently while sharing one order table
-+ Left-side slots use left alignment and right-side slots use right alignment
-+ System Status splits every actual GPU and valid partition into separate utilisation and temperature mappings
-+ System Status adds per-volume read/write throughput and splits every actual local IP address into its own item
-+ Every System Status settings card is now one line; the lunar card no longer has a secondary row
-+ The lunar item shows the date alone, without a repeated “Lunar” prefix
-+ CPU, memory and GPU usage cards gain a unit picker left of the taskbar switch: percent by default, or GHz/GB/VRAM
-+ Network speed uses a thin space between the arrow and the value
-+ Taskbar items use compact spacing and stable widths, so changing digits no longer shift the strip
-+ Compute Manager’s peak/off-peak circle returns as “balance + red/blue circle + countdown”; the desktop widget is paused for a future shared module
-+ Peak/off-peak circles are now drawn from host-parsed `[[dot:#RRGGBB]]` text markers instead of relying on a colour-emoji font
-# Fixed the first half looking higher after a two-line Compute Manager item is merged into one line by giving every text fragment one shared top edge
-# Fixed the right-hand taskbar slots reserving an extra blank edge; right-side text now reaches the edge
-# Fixed Chinese taskbar text still sitting high: every taskbar line is now centred by visible ink instead of its font box
-# Fixed Compute Manager's balance and countdown right edges: taskbar text now supports a shared tab column
-# Fixed residual font-measure padding: taskbar text is drawn as its actual glyph path and right edges use visible ink
-# Fixed the balance touching the peak/off-peak circle after a Compute Manager item becomes one line; explicit spaces now advance the pen
-# Tightened Compute Manager's two-line column gap to about half a character and made widths snap back on a 2-pixel grid
-# Fixed the peak/off-peak circle touching the countdown minus sign with a fixed quarter-character gap
-# Fixed the balance still touching the peak/off-peak circle in Compute Manager's one-line layout; glyph measurement now keeps trailing spaces
-# Fixed fluctuating CPU/memory/GPU values moving later taskbar items: slot widths only grow and never shrink
-# Compute Manager's merged line now converts trailing spaces to an explicit advance, guaranteeing a gap before the circle
-# Fixed the merged one-line peak/off-peak circle sitting low by lifting only the circle between two text runs
-# Left/top taskbar slots now follow Windows icon alignment and join the right/bottom group on both horizontal and side taskbars
-# Taskbar item gaps now scale down with the shared font size instead of staying near a fixed spacing
-# Fixed stale large-font width memory leaving oversized gaps after switching the shared taskbar font to 9 px
-# Reverted live taskbar-colour preview because interim updates closed the native Windows picker
-+ Volume Guard is now public: its source, probes, gate and release payload all ship
-+ Removed the retired taskbar drawing code from Compute Manager and System Status
-# Fixed the Media Control screen-off overlay losing z-order to taskbar refreshes; the overlay now keeps top priority
-# Fixed Compute Manager's balance and peak/off-peak countdown sharing one line; models without schedules now use one line
-+ Compute Manager's process display condition now gates its taskbar contribution
-+ The “top” choice on a side taskbar is pinned to the top edge
+* Added System Status: network speed, CPU, memory, every GPU and every active volume's usage/temperature/throughput, local IPs, time, date and lunar date
++ Volume Guard is now public and included in the portable package
++ Compute Manager shows enabled endpoints, balances and peak/off-peak countdowns on the taskbar and follows its process display condition
++ General settings now own taskbar slots: per-item left/right or top/bottom placement, shared ordering, font size and text colour
++ Normal-height taskbars use the two-line layout; compact and side taskbars merge it into one line
++ Left/top slots move to the right/bottom side when Windows taskbar icons are left-aligned
+# Fixed taskbar text vertical alignment, right-edge alignment and horizontal movement when values change
+# Fixed Compute Manager's balance overlapping the peak/off-peak circle in one-line mode and its balance/countdown misalignment in two-line mode
+# Fixed taskbar text remaining visible when Media Control turns a screen off
+# Fixed taskbar item spacing retaining the previous font size after a font-size change
 ```
 
 ## 1.10.0
