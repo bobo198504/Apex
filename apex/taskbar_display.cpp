@@ -10,6 +10,7 @@
 
 #include <windows.h>
 #include <gdiplus.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -24,6 +25,7 @@ namespace host {
 namespace {
 
 constexpr int kTimerId = 1;
+constexpr int kFullscreenTimerId = 2;
 constexpr int kRefreshMessage = WM_APP + 0x731;
 constexpr int kTextCap = 1024;
 constexpr int kLineCap = 512;
@@ -75,6 +77,8 @@ int g_fontPixels = 0;
 ULONG_PTR g_gdiplusToken = 0;
 bool g_gdiplus = false;
 bool g_visible[2] = {false, false};
+bool g_topmostInitialized[2] = {false, false};
+bool g_hiddenByFullscreen = false;
 
 struct WidthMemory
 {
@@ -269,6 +273,47 @@ bool CurrentGeometry(int requestedFont, Geometry *out)
        monitor.rcMonitor.bottom},
       requestedFont);
   return true;
+}
+
+bool ForegroundIsFullscreen()
+{
+  HWND foreground = GetForegroundWindow();
+  if (!foreground || !IsWindowVisible(foreground) || IsIconic(foreground))
+    return false;
+  foreground = GetAncestor(foreground, GA_ROOT);
+  for (int side = 0; side < 2; ++side)
+    if (foreground == g_windows[side])
+      return false;
+  wchar_t cls[128] = {};
+  GetClassNameW(foreground, cls, (int)(sizeof(cls) / sizeof(cls[0])));
+  if (!_wcsicmp(cls, L"Progman") || !_wcsicmp(cls, L"WorkerW") ||
+      !_wcsicmp(cls, L"Shell_TrayWnd"))
+    return false;
+
+  RECT window = {};
+  MONITORINFO monitor = {};
+  monitor.cbSize = sizeof(monitor);
+  if (GetWindowRect(foreground, &window) &&
+      GetMonitorInfoW(MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST), &monitor))
+  {
+    RECT target = monitor.rcMonitor;
+    if (window.left <= target.left + 2 && window.top <= target.top + 2 &&
+        window.right >= target.right - 2 && window.bottom >= target.bottom - 2)
+      return true;
+  }
+
+  QUERY_USER_NOTIFICATION_STATE state = QUNS_NOT_PRESENT;
+  if (SUCCEEDED(SHQueryUserNotificationState(&state)) &&
+      (state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_PRESENTATION_MODE))
+    return true;
+  return false;
+}
+
+bool FullscreenHideRequested()
+{
+  HostConfig *config = SettingsConfig();
+  return config && config->taskbarEnabled && config->taskbarHideFullscreen &&
+         ForegroundIsFullscreen();
 }
 
 int TextWidth(const char *text)
@@ -1033,17 +1078,45 @@ void RefreshSide(int side, bool iconsLeftAligned)
   // First show goes into the topmost band. Once it is already visible, moving/resizing must not promote it above
   // a screen-off window (or any later topmost overlay) on every one-second refresh.
   const UINT positionFlags =
-      SWP_NOACTIVATE | SWP_SHOWWINDOW | (g_visible[side] ? SWP_NOZORDER : 0);
+      SWP_NOACTIVATE | SWP_SHOWWINDOW | (g_topmostInitialized[side] ? SWP_NOZORDER : 0);
   SetWindowPos(g_windows[side], HWND_TOPMOST, x, y, width, height, positionFlags);
+  g_topmostInitialized[side] = true;
   g_visible[side] = true;
   Render(g_windows[side], columns, columnCount, width, height, geometry, side);
 }
 
 void Refresh()
 {
+  if (FullscreenHideRequested())
+  {
+    g_hiddenByFullscreen = true;
+    HideSide(0);
+    HideSide(1);
+    return;
+  }
+  g_hiddenByFullscreen = false;
   const bool iconsLeftAligned = TaskbarIconsAreLeftAligned();
   RefreshSide(0, iconsLeftAligned);
   RefreshSide(1, iconsLeftAligned);
+}
+
+void PollFullscreen()
+{
+  if (FullscreenHideRequested())
+  {
+    if (!g_hiddenByFullscreen)
+    {
+      g_hiddenByFullscreen = true;
+      HideSide(0);
+      HideSide(1);
+    }
+    return;
+  }
+  if (g_hiddenByFullscreen)
+  {
+    g_hiddenByFullscreen = false;
+    Refresh();
+  }
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -1057,6 +1130,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
   case WM_TIMER:
     if (wParam == kTimerId)
       Refresh();
+    else if (wParam == kFullscreenTimerId)
+      PollFullscreen();
     return 0;
   case WM_SETTINGCHANGE:
   case WM_DISPLAYCHANGE:
@@ -1123,6 +1198,7 @@ void TaskbarDisplayInit()
     return;
   }
   SetTimer(g_windows[0], kTimerId, 1000, nullptr);
+  SetTimer(g_windows[0], kFullscreenTimerId, 200, nullptr);
   SettingsLog("taskbar display: host-owned strip created");
   Refresh();
 }
@@ -1134,6 +1210,7 @@ void TaskbarDisplayShutdown()
     if (g_windows[side])
     {
       KillTimer(g_windows[side], kTimerId);
+      KillTimer(g_windows[side], kFullscreenTimerId);
       DestroyWindow(g_windows[side]);
       g_windows[side] = nullptr;
     }
@@ -1146,7 +1223,9 @@ void TaskbarDisplayShutdown()
   ResetWidthMemory();
   g_visible[0] = false;
   g_visible[1] = false;
-  ZeroMemory(g_widths, sizeof(g_widths));
+  g_topmostInitialized[0] = false;
+  g_topmostInitialized[1] = false;
+  g_hiddenByFullscreen = false;
   if (g_gdiplus)
     Gdiplus::GdiplusShutdown(g_gdiplusToken);
   g_gdiplusToken = 0;

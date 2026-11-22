@@ -148,6 +148,7 @@ if (typeof j.host.lang !== "string" || typeof j.host.theme !== "string") bad.pus
 if (typeof j.host.quickCompact === "undefined" || typeof j.host.quickOwn === "undefined")
   bad.push("the quick-panel switches");
 if (typeof j.host.taskbarEnabled === "undefined" ||
+    typeof j.host.taskbarHideFullscreen === "undefined" ||
     (j.host.taskbarPosition !== "left" && j.host.taskbarPosition !== "right") ||
     ["top", "bottom", "left", "right"].indexOf(j.host.taskbarEdge) < 0 ||
     !Number.isInteger(j.host.taskbarFontSize) ||

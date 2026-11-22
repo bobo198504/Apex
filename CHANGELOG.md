@@ -5,6 +5,24 @@
 `*` 和 `+` 会变成同一种圆点，符号的区分就没了）。只写"改了什么"。
 -->
 
+## 1.13.0
+
+## 更新内容
+
+```
++ 版本号：主程序 1.13.0
++ 通用设置新增「全屏时隐藏」：全屏视频或游戏期间隐藏任务栏显示，退出后恢复
+# 修复全屏画面被任务栏显示层覆盖
+```
+
+## What's changed
+
+```
++ Versions: the host is 1.13.0
++ General settings gained "Hide fullscreen": taskbar text disappears over fullscreen video or games and returns afterwards
+# Fixed taskbar text covering fullscreen content
+```
+
 ## 1.12.18
 
 ## 更新内容

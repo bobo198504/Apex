@@ -151,6 +151,7 @@ int main(void)
     a.QuickOrderAppend("KeepAwake|保持唤醒");
     a.QuickOrderAppend("MediaControl|亮度");
     a.taskbarEnabled = false;
+    a.taskbarHideFullscreen = false;
     a.taskbarPosition = 0;
     a.taskbarFontSize = 15;
     _snprintf(a.taskbarTextColor, sizeof(a.taskbarTextColor), "#12ABCD");
@@ -167,7 +168,7 @@ int main(void)
 
     Check(b.lang == Lang::kZh && b.theme == Theme::kDark && b.autostart && !b.quickCompact && b.quickOwn &&
               !b.taskbarEnabled && b.taskbarPosition == 0 && b.taskbarFontSize == 15 &&
-              !strcmp(b.taskbarTextColor, "#12ABCD"),
+              !b.taskbarHideFullscreen && !strcmp(b.taskbarTextColor, "#12ABCD"),
           "  every setting survives the round trip", "");
     Check(b.FeatureOff("AuditStub") && !b.FeatureOff("SmoothWheel"),
           "  including which features are switched off", "");
@@ -210,6 +211,7 @@ int main(void)
     const HostConfig defaults;
     Check(c.quickOwn == defaults.quickOwn && c.quickCompact == defaults.quickCompact &&
               c.taskbarFontSize == defaults.taskbarFontSize &&
+              c.taskbarHideFullscreen == defaults.taskbarHideFullscreen &&
               !strcmp(c.taskbarTextColor, defaults.taskbarTextColor) && c.quickOrderN == 0,
           "  with the defaults untouched", "");
   }

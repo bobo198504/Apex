@@ -379,6 +379,17 @@ void ApplySetHost(const Fields &f)
     else
       SettingsLog("  taskbarenabled value not understood");
   }
+  else if (strcmp(f.key, "taskbarhidefullscreen") == 0)
+  {
+    bool b;
+    if (ParseBool(f.value, &b))
+    {
+      cfg->taskbarHideFullscreen = b;
+      SettingsTouch();
+    }
+    else
+      SettingsLog("  taskbarhidefullscreen value not understood");
+  }
   else if (strcmp(f.key, "taskbarposition") == 0)
   {
     if (!_stricmp(f.value, "left") || !_stricmp(f.value, "right"))
@@ -538,6 +549,7 @@ int SettingsBuildSnapshot(char *out, int outSize)
   j.Fmt(",\"quickOwn\":%d", cfg->quickOwn ? 1 : 0);
   j.Fmt(",\"taskbarEnabled\":%d,\"taskbarPosition\":", cfg->taskbarEnabled ? 1 : 0);
   j.Str(cfg->taskbarPosition ? "right" : "left");
+  j.Fmt(",\"taskbarHideFullscreen\":%d", cfg->taskbarHideFullscreen ? 1 : 0);
   j.Raw(",\"taskbarEdge\":");
   j.Str(CurrentTaskbarEdgeName());
   j.Fmt(",\"taskbarFontSize\":%d,\"taskbarTextColor\":", cfg->taskbarFontSize);

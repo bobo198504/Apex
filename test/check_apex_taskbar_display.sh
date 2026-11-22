@@ -48,9 +48,13 @@ if grep -q 'ApexTaskbarDisplayWnd' "$HOST" &&
    grep -q 'const int rightPad = side == 1 ? 0 : kPad' "$HOST" &&
    grep -q 'placementMargin = nearEnd ? 0 : 4' "$HOST" &&
    grep -q 'UiIsChinese() && chinese.GetLastStatus()' "$HOST" &&
-   grep -q 'g_visible\[side\] ? SWP_NOZORDER : 0' "$HOST" &&
+   grep -q 'g_topmostInitialized\[side\] ? SWP_NOZORDER : 0' "$HOST" &&
    grep -q 'TaskbarIconsAreLeftAligned' "$HOST" &&
    grep -q 'EffectiveTaskbarSide' "$HOST" &&
+   grep -q 'ForegroundIsFullscreen' "$HOST" &&
+   grep -q 'QUNS_RUNNING_D3D_FULL_SCREEN' "$HOST" &&
+   grep -q 'kFullscreenTimerId' "$HOST" &&
+   grep -q 'taskbarHideFullscreen' "$HOST" &&
    grep -q 'geometry.display.vertical && !nearEnd' "$HOST" &&
    grep -q 'placed = axisStart' "$HOST"; then
   echo "  the host draws all feature text, stays click-through, and pins the vertical top choice to the top"

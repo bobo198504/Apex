@@ -314,7 +314,7 @@ P.snapshot(JSON.stringify({
   // different thing and are still sent.
   host: { lang: "zh", theme: "dark", skip: ["game.exe"], systemLight: 0,
           systemLang: "zh-CN", systemIsChinese: 1,
-          taskbarEnabled: 1, taskbarEdge: "bottom",
+          taskbarEnabled: 1, taskbarHideFullscreen: 1, taskbarEdge: "bottom",
           taskbarFontSize: 12, taskbarTextColor: "auto" },
   taskbarAreas: [
     { key: "SystemStatus:cpu_usage", nameZh: "CPU 占用", nameEn: "CPU usage",
@@ -399,6 +399,20 @@ check("  and it listed the feature in the sidebar", elements["nav"].children.len
   check("the General taskbar block owns the shared font size",
         !!sizeInput && sent.some((m) => m.cmd === "setHost" &&
           m.key === "taskbarfontsize" && m.value === "15"),
+        JSON.stringify(sent));
+
+  const fullscreenCell = walk(elements["body"],
+    (n) => n.id === "taskbar-hide-fullscreen", [], 0)[0];
+  const fullscreenInput = fullscreenCell &&
+    walk(fullscreenCell, (n) => n.type === "checkbox", [], 0)[0];
+  sent.length = 0;
+  if (fullscreenInput) {
+    fullscreenInput.checked = false;
+    fullscreenInput.fire("change");
+  }
+  check("  the General taskbar block can hide taskbar text over fullscreen apps",
+        !!fullscreenInput && sent.some((m) => m.cmd === "setHost" &&
+          m.key === "taskbarhidefullscreen" && m.value === "0"),
         JSON.stringify(sent));
 
   const colorInput = walk(elements["body"], (n) => n.type === "color", [], 0)[0];

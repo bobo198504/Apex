@@ -37,6 +37,7 @@ var TEXT = {
     taskbarAreas: "任务栏显示区",
     taskbarAreasEmpty: "还没有插件贡献任务栏显示区",
     taskbarSideHint: "每项单独选择左侧或右侧；拖动决定统一顺序",
+    hideFullscreen: "全屏时隐藏",
     top: "上",
     bottom: "下",
     show: "显示",
@@ -92,6 +93,7 @@ var TEXT = {
     taskbarAreas: "Taskbar areas",
     taskbarAreasEmpty: "No plugin is contributing a taskbar area yet",
     taskbarSideHint: "Choose left or right for each item; drag to set the shared order",
+    hideFullscreen: "Hide fullscreen",
     top: "Top",
     bottom: "Bottom",
     show: "Show",
@@ -3179,6 +3181,16 @@ function renderGeneral() {
     S.snap.host.taskbarEnabled = v ? 1 : 0;
   }));
   taskbarCtl.appendChild(taskbarSwitch);
+  var hideFullscreen = S.snap.host.taskbarHideFullscreen === undefined
+    ? true : Number(S.snap.host.taskbarHideFullscreen) !== 0;
+  var fullscreenSwitch = el("span", "swcell taskbar-switch");
+  fullscreenSwitch.id = "taskbar-hide-fullscreen";
+  fullscreenSwitch.appendChild(el("span", "swtxt", t("hideFullscreen")));
+  fullscreenSwitch.appendChild(switchBox(hideFullscreen, function (v) {
+    hostCall("setHost", { key: "taskbarhidefullscreen", value: v ? "1" : "0" });
+    S.snap.host.taskbarHideFullscreen = v ? 1 : 0;
+  }));
+  taskbarCtl.appendChild(fullscreenSwitch);
   taskbarRow.appendChild(taskbarCtl);
   taskbarCard.appendChild(taskbarRow);
 

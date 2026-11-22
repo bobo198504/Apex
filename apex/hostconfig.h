@@ -133,6 +133,7 @@ struct HostConfig
   // not make an existing taskbar contribution vanish; `taskbarPosition` is 0 left / 1 right and defaults to the
   // right, where the first ComputeManager implementation already lived.
   bool taskbarEnabled = true;
+  bool taskbarHideFullscreen = true;
   int taskbarPosition = 1;
   int taskbarFontSize = 12;
   char taskbarTextColor[8] = "auto";
@@ -725,6 +726,12 @@ inline bool ParseHostConfig(const char *text, HostConfig &c)
       if (ParseBool(val, &b))
         c.taskbarEnabled = b;
     }
+    else if (strcmp(key, "taskbarhidefullscreen") == 0)
+    {
+      bool b;
+      if (ParseBool(val, &b))
+        c.taskbarHideFullscreen = b;
+    }
     else if (strcmp(key, "taskbarposition") == 0)
     {
       if (!_stricmp(val, "left"))
@@ -784,6 +791,7 @@ inline void FormatHostConfig(const HostConfig &c, char *out, int outSize)
                    "# quickcompact : 1 to show every feature's on/off switch in the quick panel (default 0)\n"
                    "# quickown     : 1 to show the controls the features asked for there (default 0)\n"
                    "# taskbarenabled : 1 to show plugin-contributed areas on the taskbar (default 1)\n"
+                   "# taskbarhidefullscreen : 1 to hide taskbar text over fullscreen video or games (default 1)\n"
                    "# taskbarposition: legacy default for newly discovered areas (left | right)\n"
                    "# taskbarfontsize: 9..16 px, shared by every taskbar display area (default 12)\n"
                    "# taskbartextcolor: auto | #RRGGBB (default auto)\n"
@@ -797,12 +805,13 @@ inline void FormatHostConfig(const HostConfig &c, char *out, int outSize)
                    "quickcompact=%d\n"
                    "quickown=%d\n"
                    "taskbarenabled=%d\n"
+                   "taskbarhidefullscreen=%d\n"
                    "taskbarposition=%s\n"
                    "taskbarfontsize=%d\n"
                    "taskbartextcolor=%s\n",
                    LangName(c.lang), ThemeName(c.theme), c.autostart ? 1 : 0, c.quickCompact ? 1 : 0,
-                   c.quickOwn ? 1 : 0, c.taskbarEnabled ? 1 : 0, c.taskbarPosition ? "right" : "left",
-                   c.taskbarFontSize, c.taskbarTextColor);
+                   c.quickOwn ? 1 : 0, c.taskbarEnabled ? 1 : 0, c.taskbarHideFullscreen ? 1 : 0,
+                   c.taskbarPosition ? "right" : "left", c.taskbarFontSize, c.taskbarTextColor);
   for (int i = 0; i < c.taskbarOrderN && off < outSize - 144; ++i)
     off += _snprintf(out + off, outSize - off, "taskbarorder=%s\n", c.taskbarOrder[i]);
   for (int i = 0; i < c.taskbarOrderN && off < outSize - 180; ++i)
