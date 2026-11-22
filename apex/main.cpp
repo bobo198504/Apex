@@ -1477,6 +1477,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
   {
     g_trayUp = false;
     TrayAdd(h);
+    host::TaskbarDisplayRefresh();
     return 0;
   }
 
@@ -1761,7 +1762,7 @@ int TaskbarAreas(TaskbarArea *out, int max)
     return 0;
 
   static TaskbarArea found[kMaxTaskbarAreas];
-  static ApexTaskbarArea raw[8];
+  static ApexTaskbarArea raw[kMaxTaskbarAreas];
   int total = 0;
   bool orderChanged = false;
   for (int i = 0; i < ld->Count(); ++i)
@@ -1787,6 +1788,8 @@ int TaskbarAreas(TaskbarArea *out, int max)
       _snprintf(found[total].key, sizeof(found[total].key), "%s", raw[k].key);
       _snprintf(found[total].nameZh, sizeof(found[total].nameZh), "%s", raw[k].nameZh);
       _snprintf(found[total].nameEn, sizeof(found[total].nameEn), "%s", raw[k].nameEn);
+      found[total].lineCount = raw[k].lineCount == 2 ? 2 : 1;
+      found[total].side = cfg->TaskbarSideFor(found[total].key);
       orderChanged = cfg->TaskbarOrderAppend(found[total].key) || orderChanged;
       ++total;
     }
@@ -1831,6 +1834,7 @@ void SettingsTouch()
   // Re-arming the same id REPLACES the pending timer rather than adding a second one, which is exactly the
   // debounce wanted: the clock restarts at every edit and only the last one fires a write.
   SetTimer(g_wnd, APEXWM_SAVE_TIMER, APEXWM_SAVE_DELAY_MS, nullptr);
+  host::TaskbarDisplayRefresh();
 }
 
 // The settings protocol's window onto the host's state. It reaches the SAME objects the tray does, so the
@@ -2202,6 +2206,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int)
   // because alt-tab can list even a hidden window's owner.
   ApplyWindowIcon(g_wnd);
 
+  // Features contribute text; the host owns the one taskbar strip that draws all of them.
+  host::TaskbarDisplayInit();
+
   if (!host::CaptureStart(OnWheel, nullptr))
   {
     LogLine("FATAL: the wheel hook could not be installed (error %lu)", GetLastError());
@@ -2253,6 +2260,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int)
   }
 
   LogLine("shutting down");
+  host::TaskbarDisplayShutdown();
   host::EngineStop();
   host::InjectThreadStop();
   host::CaptureStop();

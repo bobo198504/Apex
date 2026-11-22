@@ -63,7 +63,7 @@
 namespace {
 
 const char *kId = "MediaControl";
-const char *kVersion = "1.1.0";
+const char *kVersion = "1.1.1";
 
 const int kMaxDisplays = 8;
 const int kMaxSessions = 32;
@@ -1354,8 +1354,10 @@ void SyncOffWindows()
     else if (want && d.blackUp && d.black)
     {
       // Already dark: keep the rectangle in step with the monitor (resolution change, arrangement change).
+      // A screen-off outranks every ordinary topmost surface, including Apex's own taskbar text. Reassert that
+      // priority on each control pass so a later taskbar refresh cannot punch a visible hole through the black.
       SetWindowPos(d.black, HWND_TOPMOST, d.rc.left, d.rc.top, d.rc.right - d.rc.left, d.rc.bottom - d.rc.top,
-                   SWP_NOACTIVATE | SWP_NOZORDER);
+                   SWP_NOACTIVATE);
     }
     if (!want && d.black && !d.blackUp)
     {
@@ -3702,6 +3704,7 @@ static const ApexFeature kFeature = {
     nullptr, // tick
     McFlags,
     nullptr, // taskbarItems
+    nullptr, // taskbarText
 };
 
 extern "C" __declspec(dllexport) const ApexFeature *__cdecl ApexFeatureEntry(void)

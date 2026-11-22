@@ -1,7 +1,9 @@
 #ifndef APEX_COMMON_TASKBAR_LAYOUT_H
 #define APEX_COMMON_TASKBAR_LAYOUT_H
 
+#include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 
@@ -107,9 +109,42 @@ inline Display ChooseDisplay(const Rect &taskbar, const Rect &monitor, int fontP
   return d;
 }
 
-inline bool UseNearEnd(int storedPosition, bool vertical, bool iconsLeftAligned)
+// A feature declares a preference, not a promise: one-line blocks stay one line, and a two-line block becomes one
+// line whenever the taskbar itself cannot comfortably show two.
+inline int LinesForItem(int declaredLines, const Display &display)
 {
-  return storedPosition != 0 || (!vertical && iconsLeftAligned);
+  return declaredLines >= 2 && !display.singleLine ? 2 : 1;
+}
+
+// On a normal-height taskbar, adjacent one-line slots are stacked into the two rows. An odd count leaves one
+// unused half-row; that last slot spans the full height and is vertically centred rather than being forced into
+// either row.
+inline bool PairSingleLineSlots(const Display &display)
+{
+  return display.lineCount == 2;
+}
+
+inline bool LastSingleLineSlotIsCentred(int singleLineSlots)
+{
+  return singleLineSlots > 0 && (singleLineSlots & 1) != 0;
+}
+
+// The gap between separate contributions on the taskbar's long axis. Vertical taskbars get more air: rotated
+// text is read a block at a time, and a compact horizontal gap turns into a very tight break there.
+inline int ItemGap(bool vertical, int fontPixels)
+{
+  const int font = fontPixels > 0 ? fontPixels : 12;
+  return vertical ? std::max(6, (font * 3) / 4) : std::max(3, font / 2);
+}
+
+inline int EffectiveTaskbarSide(int storedPosition, bool iconsLeftAligned)
+{
+  return iconsLeftAligned ? 1 : (storedPosition ? 1 : 0);
+}
+
+inline bool UseNearEnd(int storedPosition, bool, bool iconsLeftAligned)
+{
+  return EffectiveTaskbarSide(storedPosition, iconsLeftAligned) != 0;
 }
 
 // The two words are one reading unit, not two equal halves of the taskbar. Centring each word in height/2 made

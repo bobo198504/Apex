@@ -21,6 +21,10 @@ A Windows tool set in the shape of PowerToys: each feature does one thing.
 | **Auto IME** | Switches the input method by the program or control that has focus; rules are reordered by dragging and recorded by pressing a key |
 | **Keep Awake** | A list of programs, two switches per row — "keep awake" and "keep the screen on"; plus one unremovable "system-wide" row |
 | **Media Control** | One brightness slider and one screen-off button per monitor (also useful against OLED burn-in); one volume slider and one mute button per application |
+| **Volume Guard** | Choose local audio devices to protect; set each one when it appears and move its real volume from the fader |
+| **Compute Manager** | Balances, usage and peak/off-peak rules for multiple providers; a translucent desktop widget triggered by selected programs |
+| **Wallpaper** | A separate wallpaper, thumbnail, one of five fit modes, and lock screen per display |
+| **System Status** | Network speed, CPU/memory, per-GPU and per-volume utilisation/temperature/throughput, per-IP items, time, date and lunar date; every item maps independently |
 
 Every feature **minds its own business**: its own switch, its own settings file, its own *Exclude* list.
 

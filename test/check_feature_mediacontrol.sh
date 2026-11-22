@@ -155,6 +155,17 @@ else
   say "the ramp it finds is normalised to full scale (the slider is an absolute brightness)" FAIL
 fi
 
+# ⚠️ SCREEN OFF OUTRANKS APEX'S OWN TASKBAR TEXT. The taskbar strip refreshes once a second; if that refresh
+# raises its topmost window, a black screen gets a hole. The host avoids reordering an already-visible strip,
+# and the feature reasserts HWND_TOPMOST while a monitor is dark. Check the feature half here; the host half is
+# in check_apex_taskbar_display.sh.
+if grep -q 'including Apex.s own taskbar text' "$SRC" &&
+   grep -q 'SWP_NOACTIVATE);' "$SRC"; then
+  say "the screen-off window keeps priority over taskbar refreshes" ok
+else
+  say "the screen-off window keeps priority over taskbar refreshes" FAIL
+fi
+
 # ⚠️⚠️ THE WMI CALL MUST BE ADDRESSED WITH AN OBJECT PATH, NOT WITH THE INSTANCE'S KEY. This is the bug that took
 # a second deploy to find, and it is the kind that a gate can hold down: the key value ("DISPLAY\SDC4190\5&...")
 # looks exactly like an address, and `ExecMethod` answers `WBEM_E_INVALID_PARAMETER` -- a parameter error for an

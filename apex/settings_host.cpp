@@ -429,6 +429,22 @@ void ApplySetHost(const Fields &f)
     SettingsLog("  taskbar display order: %s", f.value[0] ? f.value : "(unchanged -- nothing was named)");
     SettingsTouch();
   }
+  else if (strcmp(f.key, "taskbarside") == 0)
+  {
+    char one[180] = {0};
+    _snprintf(one, sizeof(one), "%s", f.value);
+    char *bar = strrchr(one, '|');
+    if (bar && bar != one)
+    {
+      *bar++ = 0;
+      const int side = !_stricmp(bar, "left") ? 0 : 1;
+      if (cfg->TaskbarSideSet(one, side))
+      {
+        SettingsLog("  taskbar side: %s -> %s", one, side ? "right" : "left");
+        SettingsTouch();
+      }
+    }
+  }
   else
     SettingsLog("  unknown host key");
 
@@ -597,6 +613,9 @@ int SettingsBuildSnapshot(char *out, int outSize)
       j.Str(areas[k].nameZh);
       j.Raw(",\"nameEn\":");
       j.Str(areas[k].nameEn);
+      j.Fmt(",\"lineCount\":%d", areas[k].lineCount);
+      j.Fmt(",\"side\":");
+      j.Str(areas[k].side ? "right" : "left");
       j.Raw("}");
     }
   }

@@ -254,6 +254,10 @@ body {
    rather than an image so it scales with the font like everything else here. */
 .qorow .grip { color: var(--sub); font-size: 13px; line-height: 1; user-select: none; -webkit-user-select: none; }
 .qorow .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qorow .taskbar-side { display: flex; gap: 8px; flex: 0 0 auto; margin-left: 10px; }
+.qorow .taskbar-side .radiooption { font-size: 12px; color: var(--sub); }
+.status-choice { flex: 0 0 auto; margin-left: 8px; }
+.status-choice select { min-width: 68px; max-width: 92px; }
 
 /* ---- a control ---- */
 /* ⚠️ THE VERTICAL SPACING IS DELIBERATELY TIGHT: "参数设置各项垂直间缩紧些，让它更紧凑些." A rule has fourteen

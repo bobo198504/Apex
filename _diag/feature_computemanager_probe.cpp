@@ -12,7 +12,6 @@
 
 #include "../apex/abi.h"
 #include "../features/ComputeManager/compute_manager_logic.h"
-#include "../common/taskbar_layout.h"
 
 using apex::compute_manager::ExtractJsonNumber;
 using apex::compute_manager::ExtractModelIds;
@@ -32,24 +31,6 @@ typedef const ApexFeature *(*EntryFn)(void);
 
 static int failures = 0;
 static char g_dir[512] = {0};
-
-static HWND g_ownOverlay = nullptr;
-
-static BOOL CALLBACK FindOwnOverlay(HWND window, LPARAM expectedPid)
-{
-  DWORD pid = 0;
-  GetWindowThreadProcessId(window, &pid);
-  if (pid != (DWORD)expectedPid)
-    return TRUE;
-  wchar_t cls[128] = {0};
-  if (GetClassNameW(window, cls, (int)(sizeof(cls) / sizeof(cls[0]))) > 0 &&
-      wcscmp(cls, L"ApexComputeManagerOverlay") == 0)
-  {
-    g_ownOverlay = window;
-    return FALSE;
-  }
-  return TRUE;
-}
 
 static void Check(bool ok, const char *what)
 {
@@ -74,7 +55,8 @@ static void HostLogLine(const char *text)
 // Keep the worker's vendor refreshes off: this probe exercises the local ABI, settings and document
 // paths, and a gate must never depend on the network. The production worker only fetches while the
 // host says its feature is enabled, so this is the same path a disabled feature takes.
-static int HostFeatureEnabled(const char *) { return 0; }
+static int g_testFeatureEnabled = 0;
+static int HostFeatureEnabled(const char *) { return g_testFeatureEnabled; }
 static int HostTaskbarFontSize() { return 15; }
 static const char *HostTaskbarTextColor() { return "#12ABCD"; }
 
@@ -167,59 +149,6 @@ static void TestLogic()
   Check(MinutesUntilWindowsChange(23 * 60 + 30, 5, localStarts, localEnds, 2, weekdayMask) ==
             57 * 60 + 30,
         "the countdown crosses the weekend to Monday's first peak");
-
-  puts("\n== taskbar orientation and compact layout ==");
-  using apex::taskbar::Display;
-  using apex::taskbar::Edge;
-  using apex::taskbar::Rect;
-  using apex::taskbar::Span;
-  const Rect monitor = {0, 0, 1920, 1080};
-  const Rect bottom = {0, 1048, 1920, 1080};
-  const Rect top = {0, 0, 1920, 32};
-  const Rect left = {0, 0, 48, 1080};
-  const Rect right = {1872, 0, 1920, 1080};
-  Check(apex::taskbar::ClassifyEdge(bottom, monitor) == Edge::Bottom &&
-            apex::taskbar::ClassifyEdge(top, monitor) == Edge::Top &&
-            apex::taskbar::ClassifyEdge(left, monitor) == Edge::Left &&
-            apex::taskbar::ClassifyEdge(right, monitor) == Edge::Right,
-        "all four taskbar edges are classified from the real rectangles");
-
-  Display compact = apex::taskbar::ChooseDisplay(bottom, monitor, 12);
-  Display forty = apex::taskbar::ChooseDisplay(Rect{0, 1040, 1920, 1080}, monitor, 12);
-  Display roomy = apex::taskbar::ChooseDisplay(Rect{0, 1032, 1920, 1080}, monitor, 12);
-  Display vertical = apex::taskbar::ChooseDisplay(left, monitor, 12);
-  Check(compact.singleLine && compact.lineCount == 1 &&
-            forty.singleLine && forty.lineCount == 1,
-        "compact taskbars use one readable line");
-  Check(!roomy.singleLine && roomy.lineCount == 2,
-        "a 48 px taskbar keeps the roomy two-line layout");
-  const apex::taskbar::TwoLineRows rows = apex::taskbar::CompactTwoLineRows(44, 12);
-  Check(rows.lineHeight == 16 && rows.balanceTop + rows.lineHeight <= 44 &&
-            rows.balanceTop - rows.titleTop < 22,
-        "two lines use compact font-based spacing instead of half the taskbar each");
-  Check(vertical.vertical && vertical.singleLine && vertical.lineCount == 1,
-        "a side taskbar is vertical and one rotated line deep");
-  Check(apex::taskbar::UseNearEnd(0, false, true) &&
-            !apex::taskbar::UseNearEnd(0, false, false) &&
-            !apex::taskbar::UseNearEnd(0, true, true) &&
-            apex::taskbar::UseNearEnd(1, false, false),
-        "left-aligned icons temporarily route the left choice to the right, then restore it");
-  int taskbarSize = 0;
-  char taskbarColor[8] = {0};
-  Check(apex::taskbar::ParseFontSize("15", &taskbarSize) && taskbarSize == 15 &&
-            !apex::taskbar::ParseFontSize("17", &taskbarSize) &&
-            apex::taskbar::NormaliseColor("#12abCD", taskbarColor, sizeof(taskbarColor)) &&
-            !std::strcmp(taskbarColor, "#12ABCD") &&
-            !apex::taskbar::NormaliseColor("red", taskbarColor, sizeof(taskbarColor)),
-        "shared taskbar appearance is validated by one rule");
-
-  const Span obstacles[] = {{8, 120}, {300, 380}, {850, 950}};
-  Check(apex::taskbar::PlaceSpan(0, 1000, 80, obstacles, 3, false, 4, 8) == 128,
-        "near-start placement moves past an overlapping tool but stays near the start");
-  Check(apex::taskbar::PlaceSpan(0, 1000, 80, obstacles, 3, true, 4, 8) == 762,
-        "near-end placement uses the far end and does not jump across the taskbar");
-  Check(apex::taskbar::PlaceSpan(0, 100, 80, obstacles, 3, false, 4, 8) == -1,
-        "no room returns no answer instead of silently choosing the opposite side");
 }
 
 int main(int argc, char **argv)
@@ -268,19 +197,17 @@ int main(int argc, char **argv)
   host.taskbarFontSize = HostTaskbarFontSize;
   host.taskbarTextColor = HostTaskbarTextColor;
   Check(f->init && f->init(&host) == 0, "the feature starts");
-  // ⚠️ A WINDOW CLASS SAYS WHAT A WINDOW IS, NOT WHOSE IT IS. The user's running Apex can own a visible
-  // ComputeManager overlay at the same moment this probe starts its own hidden one. FindWindowW then returns
-  // whichever happens to be enumerated first, so the probe's verdict depended on the user's desktop state.
-  // Match the probe's process id first, exactly as the project's UI probes do.
-  g_ownOverlay = nullptr;
-  EnumWindows(FindOwnOverlay, (LPARAM)GetCurrentProcessId());
-  HWND overlay = g_ownOverlay;
-  Check(overlay != nullptr && !IsWindowVisible(overlay), "the desktop widget exists but starts hidden");
   Check(Set(f, "auto_poll", "0"), "automatic polling can be switched off for the probe");
   Check(Set(f, "poll_seconds", "1") && !Set(f, "poll_seconds", "61") &&
             !Set(f, "poll_seconds", "0"),
         "refresh bounds are still owned by the feature");
   Check(f->listOp("processes", "add", "code.exe", 0) == 1, "a process can gate the widget");
+  char selfPath[MAX_PATH] = {};
+  GetModuleFileNameA(nullptr, selfPath, MAX_PATH);
+  const char *selfExe = std::strrchr(selfPath, '\\');
+  selfExe = selfExe ? selfExe + 1 : selfPath;
+  Check(f->listOp("processes", "add", selfExe, 0) == 1,
+        "the probe itself can satisfy the feature's display condition");
 
   for (int i = 0; i < 12; ++i)
   {
@@ -365,12 +292,49 @@ int main(int argc, char **argv)
   Check(strstr(document, "secret-token-01") == nullptr, "the real API key is not in the page document");
   if (f->taskbarItems)
   {
-    ApexTaskbarArea area = {};
-    Check(f->taskbarItems(&area, 1) == 1 && area.key[0],
-          "the feature declares its live taskbar area to the host");
+    g_testFeatureEnabled = 1;
+    ApexTaskbarArea areas[16] = {};
+    int areaCount = 0;
+    for (int tries = 0; tries < 30; ++tries)
+    {
+      areaCount = f->taskbarItems(areas, 16);
+      if (areaCount == 12)
+        break;
+      Sleep(100);
+    }
+    Check(areaCount == 12, "the process display condition exposes every endpoint");
+    Check(SetEndpoint(f, 0, "schedule_enabled", "1"),
+          "one endpoint can opt into an explicit peak/valley schedule");
+    char scheduled[512] = {}, plain[512] = {};
+    const bool scheduledOk = areaCount == 12 && f->taskbarText &&
+                             f->taskbarText(areas[0].key, 1, scheduled, sizeof(scheduled)) == 1;
+    const bool plainOk = areaCount == 12 && f->taskbarText &&
+                         f->taskbarText(areas[1].key, 1, plain, sizeof(plain)) == 1;
+    const char *newline = scheduledOk ? std::strchr(scheduled, '\n') : nullptr;
+    Check(scheduledOk && newline && std::strstr(newline + 1, "[[dot:#") &&
+              std::strstr(scheduled, "Provider 01") != nullptr,
+          "a scheduled endpoint uses line 1 for model+balance and line 2 for dot+countdown");
+    Check(plainOk && std::strchr(plain, '\n') == nullptr &&
+              std::strstr(plain, "Provider 02") != nullptr,
+          "an endpoint without peak/valley rules contributes exactly one line");
+    Check(SetEndpoint(f, 0, "schedule_enabled", "0"),
+          "the test restores the endpoint's schedule setting");
+    f->listOp("processes", "remove", "", 0);
+    f->listOp("processes", "remove", "", 0);
+    bool hidden = false;
+    for (int tries = 0; tries < 30 && !hidden; ++tries)
+    {
+      hidden = f->taskbarItems(areas, 16) == 0;
+      if (!hidden)
+        Sleep(100);
+    }
+    Check(hidden, "no matching display condition removes the taskbar contribution");
+    f->listOp("processes", "add", "code.exe", 0);
+    f->listOp("processes", "add", selfExe, 0);
+    g_testFeatureEnabled = 0;
   }
   else
-    Check(false, "the feature declares its live taskbar area to the host");
+    Check(false, "the feature contributes host-drawn taskbar slots");
 
   if (n > 0)
   {

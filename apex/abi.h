@@ -207,7 +207,18 @@
 // whose count is noise rather than information.
 // 28 -> 29: taskbar text appearance is a HOST setting. Two callbacks return the shared font size and colour, so a
 // feature that draws into the taskbar uses the General page's values instead of duplicating them.
-#define APEX_ABI_VERSION 29u
+// 29 -> 30: THE HOST DRAWS THE TASKBAR. A feature contributes one text block per area and declares whether that
+// block is one line or prefers two; the host owns order, spacing, position, font, colour, compact merging and
+// rendering. Features no longer create taskbar windows of their own.
+// 30 -> 31: taskbar text may carry the generic inline token `[[dot:#RRGGBB]]`; the host measures that token as a
+// coloured circle and draws it. This keeps colours inside host-owned layout instead of relying on colour-emoji fonts.
+// 31 -> 32: `status` may carry one optional compact choice beside its taskbar switch (`choiceId`, `choiceValue`,
+// `choiceOptions`). SystemStatus uses it for percentage vs real units; the page treats the options generically.
+// 32 -> 33: that compact choice may be a BOOLEAN SWITCH instead of a dropdown (`choiceSwitch`, `choiceOnValue`,
+// `choiceOffValue`, `choiceLabel*`): off = percent, on = the real unit.
+// 33 -> 34: a tab in `taskbarText` starts a right-hand column. The host measures both lines together and aligns
+// their right cells, so a two-line block can show `model  balance` above `●  countdown` with the same right edge.
+#define APEX_ABI_VERSION 34u
 
 #ifdef __cplusplus
 extern "C" {
@@ -381,6 +392,9 @@ typedef struct ApexTaskbarArea
   char key[128];
   char nameZh[64];
   char nameEn[64];
+  // 1 = one line; 2 = prefers two lines. On a compact or vertical taskbar the host merges the two lines into one.
+  // Values outside 1..2 are read as 1.
+  int lineCount;
 } ApexTaskbarArea;
 
 // ---- THE QUICK PANEL: the few controls a feature wants one click away ---------------------------------
@@ -627,6 +641,10 @@ typedef struct ApexFeature
   //                 OPTIONAL `toggleId` + `toggleValue` add one switch at the right edge; `toggleLabelZh/En` name
   //                 it. The switch travels through `setControl`, so the feature still owns validation/storage
   //                 (ABI 27 -> 28; ComputeManager uses it for each endpoint's taskbar visibility).
+  //                 OPTIONAL `choiceId` + `choiceValue` + `choiceOptions` add one compact dropdown to the LEFT of
+  //                 that switch. Options use the same `{value,labelZh,labelEn}` shape as `select`; choosing one
+  //                 sends that value through `setControl` to `choiceId`. With `choiceSwitch:true` the same place
+  //                 draws a boolean switch instead: `choiceOnValue`/`choiceOffValue` are sent based on its state.
   //   * `list`   -- a list of strings the user edits. THE FEATURE OWNS THE LIST: where it lives, what it
   //                 means, whether it is used at all. Apex provides the editor and nothing else -- a
   //                 blacklist is not something every feature has, so it is not something the host knows
@@ -1034,10 +1052,19 @@ typedef struct ApexFeature
   // must not allocate.
   unsigned (*flags)(void);
 
-  // THE TASKBAR AREAS THIS FEATURE IS CURRENTLY DRAWING (optional; ABI 27 -> 28). Same two-part answer as
+  // THE TASKBAR AREAS THIS FEATURE IS CURRENTLY CONTRIBUTING (optional; ABI 27 -> 28). Same two-part answer as
   // `quickItems`: fill at most `max`, return the total. Return 0 when every per-area display switch is off.
-  // The host uses this to list and order the areas in General; the feature still owns the pixels and refreshes.
+  // The host uses this to list, order and draw the areas in General.
   int (*taskbarItems)(ApexTaskbarArea *out, int max);
+
+  // ONE TASKBAR TEXT BLOCK (optional beside taskbarItems; ABI 29 -> 30). A feature supplies text, not pixels.
+  // For a two-line area, put exactly one '\n' between the two lines; the host merges them automatically when the
+  // taskbar is compact or on the left/right edge. A '\t' within a line starts its right-hand cell. Both cells are
+  // measured as one column, so line 1's right cell and line 2's right cell share an edge (ABI 33 -> 34).
+  // `chinese` is 1 for Chinese and 0 for English. Called about once a second on the host's UI thread, so it may
+  // copy a feature-owned snapshot but must not block. A generic inline `[[dot:#RRGGBB]]` token asks the host to
+  // draw one coloured circle at that position in the text.
+  int (*taskbarText)(const char *key, int chinese, char *out, int outSize);
 } ApexFeature;
 
 // Bit 0: the feature's own master switch. The host will not ask an unenabled feature about a wheel.

@@ -95,6 +95,7 @@ build_in_set() {
         KeepAwake:check_feature_chart|KeepAwake:check_feature_keepawake|\
         MediaControl:check_feature_chart|MediaControl:check_feature_mediacontrol|\
         Wallpaper:check_feature_chart|Wallpaper:check_feature_wallpaper|\
+        SystemStatus:check_feature_chart|SystemStatus:check_feature_systemstatus|\
         SmoothWheel:check_feature_chart|SmoothWheel:check_feature_device|\
         VolumeLock:check_feature_chart|VolumeLock:check_feature_volumelock|\
         AuditStub:check_apex_modular|AuditStub:check_feature_chart)
@@ -133,6 +134,7 @@ run_build_gate check_feature_ime     # AutoIME's matching engine: the rules, the
 run_build_gate check_feature_keepawake  # KeepAwake: two independent switches, a gated list, and the power requests it makes
 run_build_gate check_feature_computemanager # ComputeManager: schedules, JSON paths, masking, document size, file ownership
 run_build_gate check_feature_wallpaper # Wallpaper: schedules, solar times, virtual layout, composite, system capabilities
+run_build_gate check_feature_systemstatus # SystemStatus: adaptive units, ten taskbar mappings, lunar and live cards
 run_build_gate check_feature_volumelock # VolumeLock: ONE device's volume, at the moment it appears, and nothing else touched
 # ⚠️ THE ONE BUILD-LAYER GATE THAT TOUCHES THE SCREEN, AND IT SAYS SO: it checks that a "screen off" is a WINDOW
 # covering a real monitor (connected, unlocked, undoable) by looking at the window itself, which cannot be done
@@ -141,9 +143,10 @@ run_build_gate check_feature_volumelock # VolumeLock: ONE device's volume, at th
 run_build_gate check_feature_mediacontrol # MediaControl: brightness rows, the screen-off window, per-app volume, named panes
 run_build_gate check_apex_palette    # the panel's colours, one palette per appearance, ordered, readable, paler
 run_build_gate check_apex_quickpanel # the flyout: its geometry, its values, its colours, and what the features put in it
+run_build_gate check_apex_taskbar_display # host-owned text layout, compact two-line merging, side-taskbar spacing
 run_build_gate check_apex_panel      # the panel's SCRIPT against a DOM stub: every control type still renders
 run_build_gate check_apex_deploy     # a deploy replaces the program, never the user's data, and drops retired features
-run_build_gate check_apex_package    # the portable zip ships the public program -- and NO private feature (see the header)
+run_build_gate check_apex_package    # the portable zip contains exactly the built public features and no user data
 run_build_gate check_apex_modular    # the boundaries, the process rules, the toolchain, and the input-safety rule
 run_build_gate check_apex_docs       # AGENTS.md is still short enough to be read whole (see the gate's header)
 run_build_gate check_model_sync      # shared/ vs the plugin's src/ -- the one thing that must not drift
@@ -215,7 +218,7 @@ in_set() {
 # never touched at all -- no gate starts, so nothing needs the machine to itself.
 ASSEMBLY_ANY=0
 case "$GATE_SET" in
-  none|feature:ComputeManager|feature:KeepAwake|feature:Wallpaper|feature:VolumeLock|feature:AuditStub) ;;
+  none|feature:ComputeManager|feature:KeepAwake|feature:Wallpaper|feature:SystemStatus|feature:VolumeLock|feature:AuditStub) ;;
   *) ASSEMBLY_ANY=1 ;;
 esac
 if [ "$ASSEMBLY_ANY" = "1" ]; then

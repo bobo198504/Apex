@@ -22,7 +22,7 @@
 // the number for Apex itself, which the panel puts beside the slogan in the sidebar ("Apex主程序版本号1.0 ... 居右").
 // One definition, because the snapshot and anything else that reports it must not be able to disagree.
 // ---------------------------------------------------------------------------
-#define APEX_HOST_VERSION "1.10.0"
+#define APEX_HOST_VERSION "1.12.18"
 
 // ---------------------------------------------------------------------------
 // THE HOST'S OWN INTERFACE: everything apex.exe needs from host_win.cpp, plus the places where the
@@ -183,10 +183,18 @@ struct TaskbarArea
   char key[128] = {0};
   char nameZh[64] = {0};
   char nameEn[64] = {0};
+  int lineCount = 1;
+  int side = 1; // 0 = first end (left/top), 1 = second end (right/bottom)
 };
 
 static const int kMaxTaskbarAreas = 32;
 int TaskbarAreas(TaskbarArea *out, int max);
+
+// THE HOST-OWNED TASKBAR STRIP. Features contribute text blocks; this window draws all of them in the General
+// page's saved order, at the selected edge, with the shared font and colour.
+void TaskbarDisplayInit();
+void TaskbarDisplayShutdown();
+void TaskbarDisplayRefresh();
 
 // PUT THE MACHINE IN STEP WITH THE `autostart` SETTING (main.cpp).
 //

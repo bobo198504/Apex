@@ -194,7 +194,7 @@ fi
 
 echo "== host =="
 HOST_OBJS=()
-for src in main host_win loader_win paths_win settings_host system_win quickpanel_win; do
+for src in main host_win loader_win paths_win settings_host system_win quickpanel_win taskbar_display; do
   CompileUnit "$src"
   HOST_OBJS+=("$OBJ/$src.o")
 done
@@ -482,7 +482,7 @@ for FEAT in "$ROOT"/features/*/; do
   fi
   g++ "${FEATURE_FLAGS[@]}" "${MAIN_EXTRA[@]}" -shared -I"$FEAT" "$SRC" -o "$DEST/$ID.dll" \
       -luser32 -lgdi32 -lgdiplus -lole32 -ladvapi32 -ldxva2 -lwbemuuid -loleaut32 -luuid -lshell32 \
-      -lwinhttp
+      -lwinhttp -liphlpapi -lpdh -lws2_32 -ldxgi -lpowrprof
 done
 
 echo

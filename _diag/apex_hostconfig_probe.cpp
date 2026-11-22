@@ -155,6 +155,9 @@ int main(void)
     a.taskbarFontSize = 15;
     _snprintf(a.taskbarTextColor, sizeof(a.taskbarTextColor), "#12ABCD");
     a.TaskbarOrderAppend("ComputeManager");
+    a.TaskbarOrderAppend("SystemStatus:cpu_usage");
+    a.TaskbarSideSet("ComputeManager", 0);
+    a.TaskbarSideSet("SystemStatus:cpu_usage", 1);
 
     char text[4096] = {0};
     FormatHostConfig(a, text, (int)sizeof(text));
@@ -174,8 +177,23 @@ int main(void)
           "  and the quick panel's order, in its order", got);
     Check(HasText(text, "quickorder=KeepAwake|保持唤醒"),
           "  and it is written one key per line, verbatim, as documented", "");
-    Check(b.taskbarOrderN == 1 && strcmp(b.taskbarOrder[0], "ComputeManager") == 0,
-          "  and the taskbar area and side survive the round trip", "");
+    Check(b.taskbarOrderN == 2 && strcmp(b.taskbarOrder[0], "ComputeManager") == 0 &&
+              strcmp(b.taskbarOrder[1], "SystemStatus:cpu_usage") == 0 &&
+              b.TaskbarSideFor("ComputeManager") == 0 &&
+              b.TaskbarSideFor("SystemStatus:cpu_usage") == 1,
+          "  and each taskbar area's own side survives the round trip", "");
+  }
+
+  {
+    HostConfig c;
+    c.TaskbarOrderAppend("A");
+    c.TaskbarOrderAppend("B");
+    c.TaskbarSideSet("A", 0);
+    c.TaskbarSideSet("B", 1);
+    c.TaskbarOrderSetFromKeys("B,A");
+    Check(c.taskbarOrderN == 2 && !strcmp(c.taskbarOrder[0], "B") &&
+              c.TaskbarSideFor("B") == 1 && c.TaskbarSideFor("A") == 0,
+          "reordering the one shared table carries each item's left/right choice with it", "");
   }
 
   // ---- UNKNOWN KEYS AND MANGLED VALUES STILL LEAVE THE DEFAULTS ALONE ----

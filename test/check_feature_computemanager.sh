@@ -47,12 +47,18 @@ g++ -std=c++17 -O2 -mwindows -Wall -Wextra -Werror -I"$ROOT/apex" -I"$ROOT/commo
     -I"$ROOT/shared" -I"$ROOT/features/ComputeManager" \
     -fsyntax-only "$ROOT/features/ComputeManager/feature_computemanager.cpp" || exit 1
 
-echo "== taskbar copy is display-only =="
-if grep -q 'g_isTaskbar ? HTTRANSPARENT : HTCAPTION' "$ROOT/features/ComputeManager/feature_computemanager.cpp" &&
-   grep -q 'g_isTaskbar ? WS_EX_TRANSPARENT : 0' "$ROOT/features/ComputeManager/feature_computemanager.cpp"; then
-  echo "  the taskbar overlay passes hit-testing through to the taskbar; the desktop widget stays draggable"
+echo "== taskbar drawing belongs to the host; this feature contributes text =="
+if ! grep -qE 'g_isTaskbar|TaskbarGeometry|PaintTaskbarOverlay|RenderTaskbarLayered' \
+     "$ROOT/features/ComputeManager/feature_computemanager.cpp" &&
+   grep -q 'area.lineCount = 2' "$ROOT/features/ComputeManager/feature_computemanager.cpp" &&
+   grep -q 'TaskbarText' "$ROOT/features/ComputeManager/feature_computemanager.cpp" &&
+   grep -q 'periodDot' "$ROOT/features/ComputeManager/feature_computemanager.cpp" &&
+   grep -q '\[\[dot:#E06068\]\]' "$ROOT/features/ComputeManager/feature_computemanager.cpp" &&
+   grep -q '"%s\\t%s\\n\\t%s%s", parts.title, parts.balance' "$ROOT/features/ComputeManager/feature_computemanager.cpp" &&
+   grep -q 'g_displayConditionMet' "$ROOT/features/ComputeManager/feature_computemanager.cpp"; then
+  echo "  the desktop widget is disabled; display conditions gate the taskbar and scheduled text has two lines"
 else
-  echo "FAIL: the taskbar overlay can intercept mouse input"
+  echo "FAIL: the feature still owns taskbar layout or has no two-line text contribution"
   exit 1
 fi
 
@@ -66,7 +72,7 @@ rm -rf "$RUN"
 mkdir -p "$RUN"
 
 echo
-APEX_CM_NO_TASKBAR=1 "$PROBE" "$DLL" "$DOCUMENT" "$RUN/" || exit 1
+"$PROBE" "$DLL" "$DOCUMENT" "$RUN/" || exit 1
 
 echo
 echo "== the document is real JSON with all status cards =="
@@ -93,7 +99,7 @@ node -e '
       p.controls.some((c) => c.id === "poll_seconds"))) process.exit(13);
   if (params.some((p) => p.id === "taskbar_row" || p.id === "taskbar_font_size" ||
       p.id === "taskbar_text_color")) process.exit(14);
-  if (!processes || !Array.isArray(processes.items) || processes.items.length !== 1) process.exit(6);
+  if (!processes || !Array.isArray(processes.items) || processes.items.length !== 2) process.exit(6);
   if (statuses.length !== 12) process.exit(3); // one compact row per endpoint, no aggregate
   if (!statuses.some((p) => p.id === "endpoint_11")) process.exit(4);
   if (statuses.some((p) => p.id === "overall")) process.exit(17);
@@ -103,7 +109,7 @@ node -e '
   if (!JSON.stringify(doc).includes("manually-added-model")) process.exit(7);
   if (group.items[0].values.schedule_enabled !== 0) process.exit(8);
   if (group.items[1].values.schedule_enabled !== 0) process.exit(10);
-  console.log(`  parsed ${params.length} control(s), ${statuses.length} live status cards, ${group.items.length} endpoints, ${processes.items.length} process trigger`);
+  console.log(`  parsed ${params.length} control(s), ${statuses.length} live status cards, ${group.items.length} endpoints, ${processes.items.length} process conditions`);
 ' "$DOCUMENT" || {
   code=$?
   echo "FAIL: the control document check exited with code $code"
@@ -148,6 +154,11 @@ if grep -q '^endpoint\.0\.taskbar_visible=1$' "$RUN/ComputeManager.ini" 2>/dev/n
   say "per-endpoint taskbar visibility is stored in the private file" ok
 else
   say "per-endpoint taskbar visibility is stored in the private file" FAIL
+fi
+if grep -q '^endpoint\.0\.id=ep-' "$RUN/ComputeManager.ini" 2>/dev/null; then
+  say "each taskbar slot has a stable endpoint identity" ok
+else
+  say "each taskbar slot has a stable endpoint identity" FAIL
 fi
 if grep -q '^endpoint\.0\.models=manually-added-model$' "$RUN/ComputeManager.ini" 2>/dev/null; then
   say "manually added sub-models are stored per endpoint" ok

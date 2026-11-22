@@ -162,6 +162,7 @@ struct HostConfig
   // THE ORDER OF PLUGIN-CONTRIBUTED TASKBAR AREAS. A key is the feature's own stable area key. Turning an area
   // off removes it from the live list but never deletes its key here, so turning it back on restores its place.
   char taskbarOrder[kMaxList][128] = {{0}};
+  int taskbarSide[kMaxList] = {0};
   int taskbarOrderN = 0;
 
   bool TaskbarOrderAppend(const char *key)
@@ -174,6 +175,7 @@ struct HostConfig
     _snprintf(taskbarOrder[taskbarOrderN], sizeof(taskbarOrder[taskbarOrderN]), "%s", key);
     if (taskbarOrder[taskbarOrderN][0])
     {
+      taskbarSide[taskbarOrderN] = taskbarPosition ? 1 : 0;
       ++taskbarOrderN;
       return true;
     }
@@ -183,6 +185,7 @@ struct HostConfig
   void TaskbarOrderSetFromKeys(const char *text)
   {
     char kept[kMaxList][128] = {{0}};
+    int keptSide[kMaxList] = {0};
     int keptN = 0;
     const char *p = text ? text : "";
     while (*p && keptN < kMaxList)
@@ -208,7 +211,17 @@ struct HostConfig
           if (_stricmp(kept[i], s) == 0)
             dup = true;
         if (!dup)
+        {
+          int side = taskbarPosition;
+          for (int i = 0; i < taskbarOrderN; ++i)
+            if (_stricmp(taskbarOrder[i], s) == 0)
+            {
+              side = taskbarSide[i];
+              break;
+            }
+          keptSide[keptN] = side ? 1 : 0;
           _snprintf(kept[keptN++], sizeof(kept[0]), "%s", s);
+        }
       }
       p = *end ? end + 1 : end;
     }
@@ -219,11 +232,42 @@ struct HostConfig
         if (_stricmp(kept[k], taskbarOrder[i]) == 0)
           named = true;
       if (!named)
+      {
+        keptSide[keptN] = taskbarSide[i] ? 1 : 0;
         _snprintf(kept[keptN++], sizeof(kept[0]), "%s", taskbarOrder[i]);
+      }
     }
     taskbarOrderN = keptN;
     for (int i = 0; i < keptN; ++i)
+    {
       _snprintf(taskbarOrder[i], sizeof(taskbarOrder[i]), "%s", kept[i]);
+      taskbarSide[i] = keptSide[i] ? 1 : 0;
+    }
+  }
+
+  int TaskbarSideFor(const char *key) const
+  {
+    if (key)
+      for (int i = 0; i < taskbarOrderN; ++i)
+        if (_stricmp(taskbarOrder[i], key) == 0)
+          return taskbarSide[i] ? 1 : 0;
+    return taskbarPosition ? 1 : 0;
+  }
+
+  bool TaskbarSideSet(const char *key, int side)
+  {
+    if (!key || !*key)
+      return false;
+    for (int i = 0; i < taskbarOrderN; ++i)
+      if (_stricmp(taskbarOrder[i], key) == 0)
+      {
+        taskbarSide[i] = side ? 1 : 0;
+        return true;
+      }
+    if (!TaskbarOrderAppend(key))
+      return false;
+    taskbarSide[taskbarOrderN - 1] = side ? 1 : 0;
+    return true;
   }
 
   // ONE KEY FROM THE FILE (`quickorder=<key>`, repeated -- see ParseHostConfig). A repeated key is ignored: the
@@ -707,6 +751,18 @@ inline bool ParseHostConfig(const char *text, HostConfig &c)
       c.QuickOrderAppend(val);
     else if (strcmp(key, "taskbarorder") == 0)
       c.TaskbarOrderAppend(val);
+    else if (strcmp(key, "taskbarside") == 0)
+    {
+      char one[160] = {0};
+      _snprintf(one, sizeof(one), "%s", val ? val : "");
+      char *bar = strrchr(one, '|');
+      if (bar && bar != one)
+      {
+        *bar++ = 0;
+        int side = !_stricmp(bar, "left") || !strcmp(bar, "0") ? 0 : 1;
+        c.TaskbarSideSet(one, side);
+      }
+    }
   }
   return true;
 }
@@ -728,10 +784,11 @@ inline void FormatHostConfig(const HostConfig &c, char *out, int outSize)
                    "# quickcompact : 1 to show every feature's on/off switch in the quick panel (default 0)\n"
                    "# quickown     : 1 to show the controls the features asked for there (default 0)\n"
                    "# taskbarenabled : 1 to show plugin-contributed areas on the taskbar (default 1)\n"
-                   "# taskbarposition: left | right (default right)\n"
+                   "# taskbarposition: legacy default for newly discovered areas (left | right)\n"
                    "# taskbarfontsize: 9..16 px, shared by every taskbar display area (default 12)\n"
                    "# taskbartextcolor: auto | #RRGGBB (default auto)\n"
                    "# taskbarorder   : a taskbar area key, repeated in display order\n"
+                   "# taskbarside    : <area key>|left|right, one line per area\n"
                    "# quickorder   : a feature id, in the order its controls should appear in the quick panel;\n"
                    "#                repeat the line for more. Anything not named comes after, in load order.\n"
                    "lang=%s\n"
@@ -748,6 +805,9 @@ inline void FormatHostConfig(const HostConfig &c, char *out, int outSize)
                    c.taskbarFontSize, c.taskbarTextColor);
   for (int i = 0; i < c.taskbarOrderN && off < outSize - 144; ++i)
     off += _snprintf(out + off, outSize - off, "taskbarorder=%s\n", c.taskbarOrder[i]);
+  for (int i = 0; i < c.taskbarOrderN && off < outSize - 180; ++i)
+    off += _snprintf(out + off, outSize - off, "taskbarside=%s|%s\n", c.taskbarOrder[i],
+                     c.taskbarSide[i] ? "right" : "left");
   for (int i = 0; i < c.quickOrderN && off < outSize - (kMaxName + 16); ++i)
     off += _snprintf(out + off, outSize - off, "quickorder=%s\n", c.quickOrder[i]);
   for (int i = 0; i < c.offN && off < outSize - (kMaxName + 8); ++i)

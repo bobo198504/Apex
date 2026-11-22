@@ -5,10 +5,10 @@
 
 ## 零、这个项目是什么
 
-**Apex 是一个功能集（PowerToys 那种形态），不是单一工具。** 现在有七个功能：SmoothWheel（丝滑滚动）、
+**Apex 是一个功能集（PowerToys 那种形态），不是单一工具。** 现在有八个功能：SmoothWheel（丝滑滚动）、
 AutoIME（自动输入法）、KeepAwake（保持唤醒）、MediaControl（媒体控制）、
-VolumeLock（音量保护）、ComputeManager（算力管家）、Wallpaper（壁纸设置）——清单与现状见 §三，
-细节见 `docs/rules/features.md`。
+VolumeLock（音量保护）、ComputeManager（算力管家）、Wallpaper（壁纸设置）、
+SystemStatus（系统状态）——清单与现状见 §三，细节见 `docs/rules/features.md`。
 
 ```
 端，体之无序而最前者也。   —— 《墨经》
@@ -32,25 +32,6 @@ VolumeLock（音量保护）、ComputeManager（算力管家）、Wallpaper（�
 **本地工作不必请示**：改代码、跑门、构建、改文档、改 `versions/` 快照。
 
 **这个项目现在还没有仓库**（拆出来时用户未要求建仓）。若将来要建，先问。
-
-### ★★ 零之二·一、`VolumeLock` 功能**不进仓、不开源**（**每次都适用**）
-
-> 用户原话（2026-10-08）：「**这个插件备注下，只限我自己使用，不开源，后续更新不更新到仓里。**」
-
-⚠️ **范围只有这一个功能**：Apex 宿主和另外五个功能（SmoothWheel / AutoIME / KeepAwake / MediaControl /
-ComputeManager）
-**照旧进仓**。
-
-⚠️ **它靠机器保证，不靠"记得"**：`.gitignore` 里列着 `/features/VolumeLock/` 及它的探针与门。
-这个仓**有远端**（`github.com/bobo198504/Apex`），一次 `git add -A` 就会把它推上去，
-而**推上去之后从历史里删掉是另一回事**。
-
-| 要做的事 | 怎么做 |
-|---|---|
-| 改这个功能 | **随意**，它是本项目的一部分，照常开发、构建、跑门、部署 |
-| 往仓里加东西 | ⚠️ **不要 `git add` 这个文件夹**；它在 `git status` 里应当是 `??` |
-| 看到它变成**已跟踪** | **立刻停下查明** —— 说明 `.gitignore` 被绕过（`git add -f`、图形客户端） |
-| 它为什么特殊 | 见 `features/VolumeLock/NOT_FOR_RELEASE.md`（⚠️ **不是"不够好"**，是为单一硬件写的、带明确取舍） |
 
 ## 零之二·五、★ 权限边界：**项目目录内全权，项目之外一步都不能越**（**每次都适用**）
 
@@ -252,6 +233,10 @@ bash apex/deploy.sh                  # 只部署（门已经单独跑过时）
      只验证并复制这个插件；不跑宿主装配门，不重跑其它插件，也不为它扩大到全套。
      新增功能、多个功能、ABI/公共头变化，或无法判断 delta 时，才扩大到全套。
 
+5. **已经通过的模块不再重复跑，除非它或它的依赖改了。** 状态记录在
+   `docs/test-status.md`。下一批开始前先看该文件与 `git diff --name-only`：未改模块沿用上次结论；
+   改到的模块必须重新验证，并把新版本/日期/结果写回状态文件。
+
 ⚠️ **一条留给自己的教训**：2026-09-19 那两小时里，**用户要的三个功能一行没写**，
 全花在我自己引出的测试设施上（一条自查 → 发现探针会杀用户的进程 → 收 9 份重复过滤器 → 撞上工具链的坑 → …）。
 用户问"为什么做这些"时，我给出的链条每一步都站得住，**但那条链比它要保护的功能还长**。
@@ -298,6 +283,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | `VolumeLock` | 音量保护 / Volume Guard | C++ | 完成（一张设备列表，每台各自一个音量；拖推子立刻生效，其它设备不动） |
 | `ComputeManager` | 算力管家 / Compute Manager | C++ | 完成（多家厂商/模型的余额、用量与各自峰谷规则；无峰谷模型可关闭计价；进程触发的半透明桌面挂件） |
 | `Wallpaper` | 壁纸设置 / Wallpaper | C++ | 完成（显示器用 MediaControl 同款硬件 ID；逐屏缩略图、直接选图并复制进插件目录；五种显示方式、锁屏和可选图库；跨区与浅深主题暂缓） |
+| `SystemStatus` | 系统状态 / System Status | C++ | 完成（网速、逐块 GPU/逐有效分区/CPU/内存的占用与温度、IP、时间/日期/农历；每项独立映射） |
 
 ### 三·一、★★ 版本号：**改动哪个组件，就同步更新哪个组件的版本号**（**每次都适用**）
 
@@ -314,20 +300,18 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | 设置面板侧栏显示 | 走快照（`settings_host.cpp`），**没有第二个号** |
 | 便携包文件名 | 由 `apex/package.sh` **读同一个宏**生成，不许手写 |
 
-**七个功能各自的号**（⚠️ 声明形式**不统一**，这是现状，改的时候按各自那一行来）：
+**八个功能各自的号**（⚠️ 声明形式**不统一**，这是现状，改的时候按各自那一行来）：
 
 | 功能 | 声明 | 位置 |
 |---|---|---|
 | SmoothWheel | `"1.7.1",`（`ApexFeature` 初始化里的裸字面量） | `features/SmoothWheel/feature_smoothwheel.cpp` |
-| AutoIME | `version: c"1.2.2".as_ptr(),` | `features/AutoIME/src/lib.rs` |
+| AutoIME | `version: c"1.2.4".as_ptr(),` | `features/AutoIME/src/lib.rs` |
 | KeepAwake | `const char *kVersion = "2.0.0";` | `features/KeepAwake/feature_keepawake.cpp` |
-| MediaControl | `const char *kVersion = "1.1.0";` | `features/MediaControl/feature_mediacontrol.cpp` |
-| VolumeLock | **没有字段**，只有一句注释 `// VERSION: 1.0.0` | `features/VolumeLock/feature_volumelock.cpp` |
-| ComputeManager | `const char *kVersion = "1.8.2";` | `features/ComputeManager/feature_computemanager.cpp` |
+| MediaControl | `const char *kVersion = "1.1.1";` | `features/MediaControl/feature_mediacontrol.cpp` |
+| VolumeLock | `const char *kVersion = "1.0.0";` | `features/VolumeLock/feature_volumelock.cpp` |
+| ComputeManager | `const char *kVersion = "1.9.6";` | `features/ComputeManager/feature_computemanager.cpp` |
 | Wallpaper | `const char *kVersion = "1.2.0";` | `features/Wallpaper/feature_wallpaper.cpp` |
-
-⚠️ **`VolumeLock` 那一行是已知缺陷**：它没有真正的版本字段，所以面板上那个位置是**空的**。
-将来动这个功能时要顺手补一个字段（照 KeepAwake 的写法），而不是继续改注释。
+| SystemStatus | `const char *kVersion = "1.5.3";` | `features/SystemStatus/feature_systemstatus.cpp` |
 
 **按幅度定号**（用户指定的口径）：
 
@@ -341,9 +325,9 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 ⚠️ **一次改动同时动了宿主和某个功能，两边都要动**——这正是用户要求"同步更新"的那一条。
 
 ⚠️ **确认方式**：`grep -rn 'APEX_HOST_VERSION\|kVersion\s*=\|version: c' apex/ features/` 一次列全，
-不要凭记忆——上面的表就是**这么查出来的**，而它纠正了一个想当然：我原以为所有功能写法一致，实际有多种写法，且 `VolumeLock` 目前没有字段。
+不要凭记忆——上面的表就是**这么查出来的**，而它纠正了一个想当然：不同功能的版本声明写法并不一致。
 
-- **ABI 版本 = 29**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
+- **ABI 版本 = 34**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
   `features/AutoIME/src/abi.rs` —— **升版必须同时改两处**（漏了那边不是"退化"，是那个功能**直接加载失败**）。
   宿主要求版本**精确相等**；改契约就要升版，"只是加一个位"也要升。
   （11 → 12 是 `quickItems`：功能可以往**快速面板**里放几个自己的控件；
@@ -374,7 +358,11 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
   （可拖动的二维位置，发送 `x,y`）；26 → 27 是 `row`
   （一行内放若干个各自独立、仍分别走 `setControl` 的短控件）；27 → 28 是任务栏显示区注册
   （功能声明当前贡献的区域、宿主统一管理左右位置和顺序）以及状态卡右侧的可选开关；
-  28 → 29 是任务栏文字字号与颜色改为宿主全局设置（功能通过 `ApexHost` 的两个回调读取，不再各自保存）。）
+  28 → 29 是任务栏文字字号与颜色改为宿主全局设置；29 → 30 是任务栏排版与绘制改为宿主负责，
+  功能只声明单行/双行并提供一段文本，一个显示开关对应通用设置里的一个任务栏显示位；30 → 31 是文本中的
+  通用 `[[dot:#RRGGBB]]` 彩色圆点标记由宿主绘制；31 → 32 是状态卡可在任务栏开关左侧带一个通用选择；
+  32 → 33 是它既可以是下拉框，也可以是二态开关；33 → 34 是任务栏文本中的制表符开启右列，
+  两行右列共享同一右边缘。）
 - **加一个功能 = 只写一个文件夹**（`features\<id>\`），面板一行都不用改。要画的新形状，**加进 `abi.h` 的契约**，
   绝不在页面里写死某个功能的名字、id 或字段。边界与理由：`docs/rules/features.md`。
 - ⚠️ **每个功能的名单/设置互不相干**（用户定的）：「每个插件的进程名字都是独立的，不要混用」。

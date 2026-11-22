@@ -978,6 +978,7 @@ static const ApexFeature kFeature = {
     SwsTick,
     SwsFlags,
     nullptr, // taskbarItems
+    nullptr, // taskbarText
 };
 
 extern "C" __declspec(dllexport) const ApexFeature *__cdecl ApexFeatureEntry(void)

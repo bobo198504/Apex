@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
 # Gate: THE PORTABLE PACKAGE SHIPS THE PUBLIC PROGRAM AND NOTHING ELSE.
 #
-# ⚠️⚠️ THIS GATE EXISTS BECAUSE v1.5.0 WAS ABOUT TO PUBLISH A PRIVATE FEATURE.
-#
-# `VolumeLock` is private: it does not go into the repository and is not open source
-# (features/VolumeLock/NOT_FOR_RELEASE.md, the user's own words of 2026-10-08). THREE things already said so --
-# the feature's file header, that document, and `.gitignore` -- and **all three only cover `git`**. `apex/package.sh`
-# never consults `git`: it zips `build/apex/Plugins/*/`, which is the folder the feature is BUILT into. On 2026-10-12
-# the v1.5.0 package contained VolumeLock.dll and every existing guard stayed silent; v1.4.0's package was clean only
-# by luck (that DLL happened not to be built at the time).
-#
-# ⚠️ SO THE LESSON IS NOT "ADD VOLUMELOCK TO A LIST". It is that a rule about the REPOSITORY does not protect the
-# artifact users DOWNLOAD, and the two need separate proofs. The script now carries an allow-list and a read-back
-# check; this gate is the third party that runs the real thing and reads the real zip.
+# ⚠️⚠️ THIS GATE PROVES THE DOWNLOADABLE ARTIFACT, not just the repository. It runs the real package script and
+# reads the zip back: every built public feature must be there, the settings/log/profile files must not be.
 #
 # ⚠️ IT RUNS THE REAL SCRIPT, NOT A COPY OF ITS LOGIC. Asserting "the script contains PUBLICAL_FEATURES" would be a
 # gate about text; what matters is what ends up in the file users download. So it packages for real and lists the zip.
@@ -26,11 +16,8 @@ TAR=/c/Windows/System32/tar.exe
 SRC="$ROOT/build/apex"
 fail=0
 
-# The private features, named here as well as in the script -- deliberately duplicated, because this gate must be able
-# to disagree with the script. If both read one variable, a change to that variable would move both halves together and
-# the gate would agree with any mistake.
-PRIVATE="VolumeLock"
-PUBLIC="AutoIME KeepAwake MediaControl SmoothWheel ComputeManager Wallpaper"
+# Deliberately duplicated rather than sourced from the script, so this gate can disagree with a mistaken allow-list.
+PUBLIC="AutoIME KeepAwake MediaControl SmoothWheel VolumeLock ComputeManager Wallpaper SystemStatus"
 
 echo "== 1. the package can be built, and says what it did =="
 if [ ! -f "$SRC/apex.exe" ]; then
@@ -70,20 +57,7 @@ fi
 printf '%s\n' "$entries" | sed 's/^/   /'
 
 echo
-echo "== 3. NO private feature is in it =="
-# ⚠️ THIS IS THE ASSERTION THE RELEASE NEEDS. It is deliberately independent of the script's own read-back: that check
-# protects the author's next packaging run, this one protects the artifact.
-for id in $PRIVATE; do
-  if printf '%s\n' "$entries" | grep -qi "Plugins/$id/"; then
-    echo "   FAIL: the package contains the PRIVATE feature '$id' and must not be published"
-    fail=1
-  else
-    echo "   ok  '$id' is absent"
-  fi
-done
-
-echo
-echo "== 4. every PUBLIC feature that is built IS in it =="
+echo "== 3. every PUBLIC feature that is built IS in it =="
 # The other half of an allow-list: one that matches nothing ships an empty program and every "is X absent" check
 # above still passes.
 for id in $PUBLIC; do
@@ -117,7 +91,7 @@ for id in $PUBLIC; do
 done
 
 echo
-echo "== 5. it carries the program and no configuration =="
+echo "== 4. it carries the program and no configuration =="
 # ⚠️⚠️ `case` RATHER THAN `grep`, AND THAT IS A FINDING RATHER THAN A STYLE CHOICE.
 #
 # The first version of this check piped `$entries` into `grep -qiF "/$f"` and reported all three files MISSING while

@@ -314,8 +314,14 @@ P.snapshot(JSON.stringify({
   // different thing and are still sent.
   host: { lang: "zh", theme: "dark", skip: ["game.exe"], systemLight: 0,
           systemLang: "zh-CN", systemIsChinese: 1,
-          taskbarEnabled: 1, taskbarPosition: "right", taskbarEdge: "bottom",
+          taskbarEnabled: 1, taskbarEdge: "bottom",
           taskbarFontSize: 12, taskbarTextColor: "auto" },
+  taskbarAreas: [
+    { key: "SystemStatus:cpu_usage", nameZh: "CPU 占用", nameEn: "CPU usage",
+      lineCount: 1, side: "left" },
+    { key: "SystemStatus:ram_usage", nameZh: "内存占用", nameEn: "Memory usage",
+      lineCount: 1, side: "right" }
+  ],
   features: [{ slot: 0, ok: 1, id: "SmoothWheel", nameZh: "丝滑滚动", nameEn: "Silky Scroll",
                version: "1.0.0", off: 0, enabled: 1 }],
 }));
@@ -345,12 +351,11 @@ check("  and it listed the feature in the sidebar", elements["nav"].children.len
     return out;
   }
 
-  P.S.snap.host.taskbarPosition = "left";
   P.S.snap.host.taskbarEdge = "left";
   elements["body"].children.length = 0;
   P.renderGeneral();
   const sideWords = collectRadioWords(elements["body"], [], 0);
-  check("a side taskbar turns the position choices into top/bottom",
+  check("each taskbar row turns left/right into top/bottom on a side taskbar",
         sideWords.indexOf("上") >= 0 && sideWords.indexOf("下") >= 0 &&
           sideWords.indexOf("左") < 0 && sideWords.indexOf("右") < 0,
         sideWords.join(","));
@@ -362,6 +367,22 @@ check("  and it listed the feature in the sidebar", elements["nav"].children.len
   check("  and a top/bottom taskbar keeps the original left/right words",
         flatWords.indexOf("左") >= 0 && flatWords.indexOf("右") >= 0,
         flatWords.join(","));
+
+  const sideRadios = walk(elements["body"],
+    (n) => n.type === "radio" && String(n.name || "").indexOf("taskbar-side-") === 0,
+    [], 0);
+  sent.length = 0;
+  const targetSide = sideRadios[0];
+  if (targetSide) {
+    targetSide.checked = true;
+    targetSide.fire("change");
+  }
+  check("  a per-row side choice sends that area's key and side",
+        !!targetSide && sent.some((m) => m.cmd === "setHost" &&
+          m.key === "taskbarside" && /\|(left|right)$/.test(m.value)),
+        JSON.stringify(sent));
+  check("  the global taskbar position control is gone",
+        !sent.some((m) => m.key === "taskbarposition"), JSON.stringify(sent));
 
   function walk(node, pred, out, depth) {
     if (!node || (depth || 0) > 12) return out;
@@ -744,6 +765,11 @@ check("both pages render without throwing", rendered, renderError);
       textZh: "服务已连接，最近一次代理连接成功。",
       textEn: "Service connected; the latest proxy connection succeeded.",
       live: true,
+      choiceId: "cpu_usage_unit", choiceValue: "percent",
+      choiceSwitch: true, choiceOnValue: "ghz", choiceOffValue: "percent",
+      choiceLabelZh: "实际单位", choiceLabelEn: "Real unit",
+      toggleId: "cpu_usage", toggleValue: 1, toggleLabelZh: "任务栏显示",
+      toggleLabelEn: "Show on taskbar",
       lines: [
         { textZh: "firefox.exe → 203.0.113.10:443", textEn: "firefox.exe -> 203.0.113.10:443" },
         { textZh: "chatgpt.exe → 203.0.113.11:443", textEn: "chatgpt.exe -> 203.0.113.11:443" },
@@ -788,6 +814,25 @@ check("both pages render without throwing", rendered, renderError);
         "rows=" + lines.length);
   check("  and a live status card re-reads itself",
         intervalsOf(500).length === 1, "live timers=" + intervalsOf(500).length);
+  const choice = findByClassForStatus(card, "status-choice", 0);
+  let choiceInput = null;
+  (function findChoiceInput(node, depth) {
+    if (!node || (depth || 0) > 5 || choiceInput) return;
+    if (node.type === "checkbox") choiceInput = node;
+    (node.children || []).forEach((c) => findChoiceInput(c, (depth || 0) + 1));
+  })(choice, 0);
+  const toggleCell = findByClassForStatus(card, "status-toggle", 0);
+  check("  a real-unit switch sits to the left of the taskbar switch",
+        !!choiceInput && !!toggleCell && card.children.indexOf(choice) < card.children.indexOf(toggleCell),
+        card ? card.children.map((n) => n.className).join(",") : "-");
+  sent.length = 0;
+  if (choiceInput) {
+    choiceInput.checked = true;
+    choiceInput.fire("change");
+  }
+  check("  and turning it on selects the real unit",
+        sent.some((m) => m.cmd === "setControl" && m.path === "cpu_usage_unit" && m.value === "ghz"),
+        JSON.stringify(sent));
   P.stopLiveGroups();
 }
 

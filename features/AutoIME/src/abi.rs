@@ -134,6 +134,7 @@ pub struct ApexTaskbarArea {
     pub key: [c_char; 128],
     pub nameZh: [c_char; 64],
     pub nameEn: [c_char; 64],
+    pub lineCount: c_int,
 }
 
 /// `APEX_QUICK_TOGGLE` / `_SLIDER` / `_KNOB` from apex/abi.h -- the three shapes the panel can draw.
@@ -170,6 +171,8 @@ pub struct ApexFeature {
     pub tick: Option<unsafe extern "C" fn(c_double) -> c_double>,
     pub flags: Option<unsafe extern "C" fn() -> c_uint>,
     pub taskbarItems: Option<unsafe extern "C" fn(*mut ApexTaskbarArea, c_int) -> c_int>,
+    pub taskbarText:
+        Option<unsafe extern "C" fn(*const c_char, c_int, *mut c_char, c_int) -> c_int>,
 }
 
 /// `APEX_ABI_VERSION` from apex/abi.h. ⚠️ BUMP THIS WHENEVER THE C SIDE DOES.
@@ -227,7 +230,7 @@ pub struct ApexFeature {
 /// does not load.
 /// ⚠️ 24 -> 25: `status` gained optional `lines` (bilingual recent-connection rows) and `live` (re-read the
 /// document while the status card is visible). Another page-facing change, another exact-match bump.
-pub const APEX_ABI_VERSION: c_uint = 29;
+pub const APEX_ABI_VERSION: c_uint = 34;
 
 pub const APEX_FEATURE_ENABLED: c_uint = 1;
 

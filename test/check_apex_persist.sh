@@ -157,7 +157,9 @@ if (!Array.isArray(j.features)) bad.push("features is not an array");
 if (!Array.isArray(j.taskbarAreas)) bad.push("taskbarAreas is not an array");
 else for (const e of j.taskbarAreas)
   if (!e || typeof e.key !== "string" || !e.key ||
-      typeof e.nameZh !== "string" || typeof e.nameEn !== "string")
+      typeof e.nameZh !== "string" || typeof e.nameEn !== "string" ||
+      (e.lineCount !== 1 && e.lineCount !== 2) ||
+      (e.side !== "left" && e.side !== "right"))
     bad.push("a taskbar area without a key or a name");
 // ⚠️ `quickOrder` IS CHECKED AS AN ARRAY OF PANES WITH A KEY AND A NAME, not merely as "present": the General
 // page draws its reorder list straight from it, so a string, a missing key or a nameless row would be a broken

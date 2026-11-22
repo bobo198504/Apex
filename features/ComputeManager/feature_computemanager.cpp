@@ -6,7 +6,6 @@
 #include "../../apex/abi.h"
 #include "../../common/match.h"
 #include "../../common/system_theme.h"
-#include "../../common/taskbar_layout.h"
 #include "compute_manager_logic.h"
 
 #include <windows.h>
@@ -39,7 +38,7 @@ using apex::compute_manager::PeriodAtWindows;
 using apex::compute_manager::UsageDelta;
 
 const char *kId = "ComputeManager";
-const char *kVersion = "1.8.2";
+const char *kVersion = "1.9.6";
 
 // The panel's control document is capped at 64 KiB (apex/settings_ipc.h). These limits are deliberately
 // chosen so a full endpoint list still leaves room for the status cards and the group schema.
@@ -57,6 +56,7 @@ constexpr int kLogCap = 128 * 1024;
 constexpr int kMaxProcesses = 16;
 constexpr int kMaxProcessName = 96;
 constexpr int kMaxPreset = 24;
+constexpr int kMaxTaskbarId = 48;
 
 struct ProviderPreset
 {
@@ -103,6 +103,7 @@ static const ProviderPreset kPresets[] = {
 
 struct Endpoint
 {
+  char taskbarId[kMaxTaskbarId] = {0};
   bool enabled = true;
   bool taskbarVisible = true;
   char name[kMaxName] = {0};
@@ -186,13 +187,12 @@ HANDLE g_wake = nullptr;
 volatile LONG g_stop = 0;
 volatile LONG g_uiStop = 0;
 HWND g_overlay = nullptr;
-HWND g_owner = nullptr;
-bool g_isTaskbar = false;
 HANDLE g_uiThread = nullptr;
 DWORD g_uiThreadId = 0;
 HANDLE g_uiReady = nullptr;
 unsigned long long g_nextPollTick = 0;
 unsigned long long g_nextRevision = 1;
+volatile LONG g_displayConditionMet = 0;
 HINTERNET g_session = nullptr;
 FILE *g_log = nullptr;
 ULONG_PTR g_gdiplusToken = 0;
@@ -201,7 +201,6 @@ bool g_gdiplusReady = false;
 Period EndpointPeriodAt(const Endpoint &e, const SYSTEMTIME &time);
 int EndpointMinutesUntilChange(const Endpoint &e, const SYSTEMTIME &time);
 SYSTEMTIME AddMinutes(const SYSTEMTIME &time, int minutes);
-COLORREF TaskbarTextColor();
 int OverlayTextWidth(HDC dc, HFONT font, const char *text);
 
 void CopyText(char *dst, size_t cap, const char *src)
@@ -273,6 +272,14 @@ bool ParseInt(const char *v, int lo, int hi, int *out)
     return false;
   *out = (int)n;
   return true;
+}
+
+void EnsureTaskbarId(Endpoint &endpoint, int index)
+{
+  if (endpoint.taskbarId[0])
+    return;
+  _snprintf(endpoint.taskbarId, sizeof(endpoint.taskbarId), "ep-%llx-%d",
+            (unsigned long long)GetTickCount64(), index + 1);
 }
 
 bool ConfigPath(char *out, int outSize)
@@ -413,6 +420,15 @@ bool SetEndpointField(Endpoint &e, const char *field, const char *value)
 {
   if (!field || !value)
     return false;
+  if (!std::strcmp(field, "id"))
+  {
+    char id[kMaxTaskbarId] = {};
+    TrimCopy(id, sizeof(id), value);
+    if (!id[0] || std::strpbrk(id, ",|\r\n"))
+      return false;
+    CopyText(e.taskbarId, sizeof(e.taskbarId), id);
+    return true;
+  }
   if (!std::strcmp(field, "enabled"))
   {
     bool v = false;
@@ -769,6 +785,7 @@ void LoadSettings()
   for (int i = 0; i < fresh.n; ++i)
   {
     Endpoint &e = fresh.e[i];
+    EnsureTaskbarId(e, i);
     if (!(e.scheduleMask & 1u))
       e.peakStart = fresh.peakStart;
     if (!(e.scheduleMask & 2u))
@@ -846,6 +863,7 @@ bool SaveSettings()
     const Endpoint &e = s.e[i];
     char prefix[64] = {0};
     _snprintf(prefix, sizeof(prefix), "endpoint.%d.", i);
+    fprintf(f, "%sid=%s\n", prefix, e.taskbarId);
     fprintf(f, "%senabled=%d\n", prefix, e.enabled ? 1 : 0);
     fprintf(f, "%staskbar_visible=%d\n", prefix, e.taskbarVisible ? 1 : 0);
     fprintf(f, "%sname=%s\n", prefix, e.name);
@@ -1862,164 +1880,14 @@ constexpr int kOverlayMinWidth = 180;
 constexpr int kOverlayMaxWidth = 320;
 constexpr int kOverlayPad = 12;
 constexpr int kOverlayMaxRows = 4;
-constexpr int kTaskbarMaxColumns = 4;
-
-struct TaskbarGeometry
-{
-  HWND window = nullptr;
-  RECT taskbar = {};
-  RECT monitor = {};
-  apex::taskbar::Display display = {};
-};
-
-apex::taskbar::Rect LayoutRect(const RECT &r)
-{
-  return {r.left, r.top, r.right, r.bottom};
-}
-
-bool CurrentTaskbarGeometry(int fontPixels, TaskbarGeometry *out)
-{
-  if (!out)
-    return false;
-  HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
-  if (!taskbar)
-    return false;
-  RECT taskbarRect = {};
-  if (!GetWindowRect(taskbar, &taskbarRect))
-    return false;
-  MONITORINFO monitor = {};
-  monitor.cbSize = sizeof(monitor);
-  if (!GetMonitorInfoW(MonitorFromWindow(taskbar, MONITOR_DEFAULTTONEAREST), &monitor))
-    return false;
-  out->window = taskbar;
-  out->taskbar = taskbarRect;
-  out->monitor = monitor.rcMonitor;
-  out->display = apex::taskbar::ChooseDisplay(
-      LayoutRect(taskbarRect), LayoutRect(monitor.rcMonitor), fontPixels);
-  return true;
-}
-
-bool TaskbarIconsAreLeftAligned()
-{
-  DWORD value = 1;
-  DWORD size = sizeof(value);
-  const LONG result = RegGetValueW(
-      HKEY_CURRENT_USER,
-      L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-      L"TaskbarAl", RRF_RT_REG_DWORD, nullptr, &value, &size);
-  return result == ERROR_SUCCESS && size == sizeof(value) && value == 0;
-}
 
 HFONT g_uiFont = nullptr;
 HFONT g_uiSmallFont = nullptr;
-HFONT g_uiTaskbarFont = nullptr;
-LOGFONTW g_uiTaskbarLogFont = {};
-int g_uiTaskbarFontSize = 0;
 bool g_overlayVisible = false;
 
 bool OverlayChinese()
 {
   return (GetUserDefaultUILanguage() & 0x3ff) == 0x04;
-}
-
-int TaskbarInlineGap()
-{
-  return std::max(9, -(int)g_uiTaskbarLogFont.lfHeight);
-}
-
-int ClampTaskbarFontSize(int size)
-{
-  return std::max(9, std::min(16, size));
-}
-
-int SharedTaskbarFontSize()
-{
-  const int size = (g_host && g_host->taskbarFontSize) ? g_host->taskbarFontSize() : 12;
-  return ClampTaskbarFontSize(size);
-}
-
-const char *SharedTaskbarTextColor()
-{
-  const char *color = (g_host && g_host->taskbarTextColor) ? g_host->taskbarTextColor() : nullptr;
-  return color && *color ? color : "auto";
-}
-
-int EffectiveTaskbarFontSize()
-{
-  int size = SharedTaskbarFontSize();
-  TaskbarGeometry geometry;
-  if (!CurrentTaskbarGeometry(size, &geometry))
-    return size;
-  const int thickness = apex::taskbar::Thickness(LayoutRect(geometry.taskbar), geometry.display.edge);
-  const int cap = apex::taskbar::FontCap(thickness, geometry.display.lineCount);
-  if (cap >= 9)
-    size = std::min(size, cap);
-  return size;
-}
-
-void EnsureTaskbarFont()
-{
-  const int size = EffectiveTaskbarFontSize();
-  if (g_uiTaskbarFont && g_uiTaskbarFontSize == size)
-    return;
-  if (g_uiTaskbarFont)
-    DeleteObject(g_uiTaskbarFont);
-  LOGFONTW font = {};
-  NONCLIENTMETRICSW metrics = {};
-  metrics.cbSize = sizeof(metrics);
-  if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0))
-    font = metrics.lfMessageFont;
-  if (!font.lfFaceName[0])
-    std::wcsncpy(font.lfFaceName, L"Segoe UI", (sizeof(font.lfFaceName) / sizeof(font.lfFaceName[0])) - 1);
-  font.lfHeight = -size;
-  font.lfWeight = FW_NORMAL;
-  font.lfItalic = FALSE;
-  font.lfUnderline = FALSE;
-  font.lfStrikeOut = FALSE;
-  font.lfQuality = ANTIALIASED_QUALITY;
-  font.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
-  g_uiTaskbarLogFont = font;
-  g_uiTaskbarFont = CreateFontIndirectW(&font);
-  g_uiTaskbarFontSize = g_uiTaskbarFont ? size : 0;
-}
-
-int TaskbarTextWidth(const char *text)
-{
-  if (!text || !*text)
-    return 0;
-  wchar_t wide[1024] = {0};
-  if (MultiByteToWideChar(CP_UTF8, 0, text, -1, wide,
-                          (int)(sizeof(wide) / sizeof(wide[0]))) <= 0)
-    return 0;
-  if (!g_gdiplusReady)
-  {
-    HDC dc = GetDC(nullptr);
-    const int width = dc ? OverlayTextWidth(dc, g_uiTaskbarFont, text) : 0;
-    if (dc)
-      ReleaseDC(nullptr, dc);
-    return width;
-  }
-
-  Gdiplus::Bitmap scratch(1, 1, PixelFormat32bppPARGB);
-  Gdiplus::Graphics graphics(&scratch);
-  Gdiplus::FontFamily primaryFamily(g_uiTaskbarLogFont.lfFaceName);
-  Gdiplus::FontFamily chineseFamily(L"Microsoft YaHei UI");
-  Gdiplus::FontFamily latinFamily(L"Segoe UI");
-  Gdiplus::FontFamily *family = &primaryFamily;
-  if (primaryFamily.GetLastStatus() != Gdiplus::Ok || !primaryFamily.IsAvailable())
-    family = &chineseFamily;
-  if (family->GetLastStatus() != Gdiplus::Ok || !family->IsAvailable())
-    family = &latinFamily;
-  const int fontPixels = std::max(9, -(int)g_uiTaskbarLogFont.lfHeight);
-  Gdiplus::Font font(family, (Gdiplus::REAL)fontPixels, Gdiplus::FontStyleRegular,
-                     Gdiplus::UnitPixel);
-  Gdiplus::StringFormat format;
-  format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
-  Gdiplus::RectF layout(0, 0, 4096, 4096);
-  Gdiplus::RectF bounds;
-  if (graphics.MeasureString(wide, -1, &font, layout, &format, &bounds) != Gdiplus::Ok)
-    return 0;
-  return (int)(bounds.Width + 1.999f);
 }
 
 int OverlayTextWidth(HDC dc, HFONT font, const char *text)
@@ -2146,314 +2014,6 @@ TaskbarParts BuildTaskbarParts(const Endpoint &e, const SYSTEMTIME &now)
   return parts;
 }
 
-int TaskbarPartsWidth(const TaskbarParts &parts, const apex::taskbar::Display &display)
-{
-  if (display.singleLine)
-  {
-    int width = TaskbarTextWidth(parts.title) + TaskbarInlineGap() + TaskbarTextWidth(parts.balance);
-    if (parts.hasRemaining)
-      width += 8 + 8 + 8 + TaskbarTextWidth(parts.remaining);
-    return width;
-  }
-  int width = TaskbarTextWidth(parts.balance);
-  if (parts.hasRemaining)
-    width += 8 + 8 + 8 + TaskbarTextWidth(parts.remaining);
-  return std::max(TaskbarTextWidth(parts.title), width);
-}
-
-COLORREF TaskbarDotColor(Period period)
-{
-  if (period == Period::Peak)
-    return RGB(224, 96, 104);
-  if (period == Period::Valley)
-    return RGB(78, 151, 219);
-  return RGB(150, 154, 160);
-}
-
-int TaskbarOverlayExtent(const Settings &s, const apex::taskbar::Display &display)
-{
-  SYSTEMTIME local;
-  GetLocalTime(&local);
-  int columns[kTaskbarMaxColumns] = {};
-  int shown = 0;
-  for (int i = 0; i < s.n && shown < kTaskbarMaxColumns; ++i)
-  {
-    const Endpoint &e = s.e[i];
-    if (!e.enabled || !e.taskbarVisible)
-      continue;
-    const TaskbarParts parts = BuildTaskbarParts(e, local);
-    const int column = shown;
-    columns[column] = std::max(columns[column], TaskbarPartsWidth(parts, display) + 4);
-    ++shown;
-  }
-  int content = 0;
-  for (int i = 0; i < kTaskbarMaxColumns && columns[i]; ++i)
-    content += columns[i] + (i ? 12 : 0);
-  return std::max(96, std::min(620, content + kOverlayPad * 2 + 6));
-}
-
-bool PaintTaskbarOverlay(const Settings &s, DWORD *pixels, int width, int height,
-                         const apex::taskbar::Display &display)
-{
-  if (!g_gdiplusReady || !pixels || width <= 0 || height <= 0)
-    return false;
-  Gdiplus::Bitmap bitmap(width, height, width * 4, PixelFormat32bppPARGB,
-                         reinterpret_cast<BYTE *>(pixels));
-  if (bitmap.GetLastStatus() != Gdiplus::Ok)
-    return false;
-  Gdiplus::Graphics graphics(&bitmap);
-  if (graphics.GetLastStatus() != Gdiplus::Ok)
-    return false;
-  graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
-  graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
-  graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-  graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
-
-  SYSTEMTIME local;
-  GetLocalTime(&local);
-  const bool chinese = OverlayChinese();
-  Endpoint visible[kTaskbarMaxColumns];
-  int columnWidths[kTaskbarMaxColumns] = {};
-  int shown = 0;
-  for (int i = 0; i < s.n && shown < kTaskbarMaxColumns; ++i)
-  {
-    if (!s.e[i].enabled || !s.e[i].taskbarVisible)
-      continue;
-    visible[shown] = s.e[i];
-    const TaskbarParts parts = BuildTaskbarParts(visible[shown], local);
-    columnWidths[shown] = std::max(columnWidths[shown], TaskbarPartsWidth(parts, display) + 4);
-    ++shown;
-  }
-
-  int drawWidth = width;
-  int drawHeight = height;
-  if (display.vertical)
-  {
-    // Rotate the logical horizontal line clockwise into the side taskbar. The window itself stays a plain
-    // layered rectangle; only the GDI+ coordinate system turns.
-    graphics.TranslateTransform((Gdiplus::REAL)width, 0.0f);
-    graphics.RotateTransform(90.0f);
-    drawWidth = height;
-    drawHeight = width;
-  }
-  const int textPixels = std::max(9, -(int)g_uiTaskbarLogFont.lfHeight);
-  const apex::taskbar::TwoLineRows rows =
-      apex::taskbar::CompactTwoLineRows(drawHeight, textPixels);
-  const int rowHeight = display.lineCount == 1 ? drawHeight : rows.lineHeight;
-  int columnLeft[kTaskbarMaxColumns] = {};
-  int x = kOverlayPad;
-  for (int c = 0; c < kTaskbarMaxColumns && columnWidths[c]; ++c)
-  {
-    columnLeft[c] = x;
-    x += columnWidths[c] + 12;
-  }
-
-  Gdiplus::FontFamily primaryFamily(g_uiTaskbarLogFont.lfFaceName);
-  Gdiplus::FontFamily chineseFamily(L"Microsoft YaHei UI");
-  Gdiplus::FontFamily latinFamily(L"Segoe UI");
-  Gdiplus::FontFamily *family = &primaryFamily;
-  if (primaryFamily.GetLastStatus() != Gdiplus::Ok || !primaryFamily.IsAvailable())
-    family = &chineseFamily;
-  if (family->GetLastStatus() != Gdiplus::Ok || !family->IsAvailable())
-    family = &latinFamily;
-  const int fontPixels = textPixels;
-  Gdiplus::Font font(family, (Gdiplus::REAL)fontPixels, Gdiplus::FontStyleRegular,
-                     Gdiplus::UnitPixel);
-  const COLORREF color = TaskbarTextColor();
-  Gdiplus::SolidBrush brush(Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)));
-  Gdiplus::StringFormat format;
-  format.SetAlignment(Gdiplus::StringAlignmentNear);
-  format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-  format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
-  format.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
-
-  for (int i = 0; i < shown; ++i)
-  {
-    const int column = i;
-    const TaskbarParts parts = BuildTaskbarParts(visible[i], local);
-    const int titleWidth = TaskbarTextWidth(parts.title);
-    const int balanceWidth = TaskbarTextWidth(parts.balance);
-    wchar_t titleW[512] = {0};
-    MultiByteToWideChar(CP_UTF8, 0, parts.title, -1, titleW,
-                        (int)(sizeof(titleW) / sizeof(titleW[0])));
-    const int titleY = display.singleLine ? 0 : rows.titleTop;
-    Gdiplus::RectF titleRect((Gdiplus::REAL)columnLeft[column], (Gdiplus::REAL)titleY,
-                             (Gdiplus::REAL)(columnWidths[column] + 2), (Gdiplus::REAL)rowHeight);
-    if (display.singleLine)
-    {
-      Gdiplus::RectF inlineTitle((Gdiplus::REAL)columnLeft[column], 0,
-                                 (Gdiplus::REAL)(titleWidth + 2), (Gdiplus::REAL)rowHeight);
-      graphics.DrawString(titleW, -1, &font, inlineTitle, &format, &brush);
-    }
-    else
-      graphics.DrawString(titleW, -1, &font, titleRect, &format, &brush);
-
-    wchar_t balanceW[128] = {0};
-    MultiByteToWideChar(CP_UTF8, 0, parts.balance, -1, balanceW,
-                        (int)(sizeof(balanceW) / sizeof(balanceW[0])));
-    const int balanceX =
-        display.singleLine ? columnLeft[column] + titleWidth + TaskbarInlineGap() : columnLeft[column];
-    const int balanceY = display.singleLine ? 0 : rows.balanceTop;
-    Gdiplus::RectF balanceRect((Gdiplus::REAL)balanceX, (Gdiplus::REAL)balanceY,
-                               (Gdiplus::REAL)(balanceWidth + 2), (Gdiplus::REAL)rowHeight);
-    graphics.DrawString(balanceW, -1, &font, balanceRect, &format, &brush);
-    if (parts.hasRemaining)
-    {
-      const int dotX = balanceX + balanceWidth + 8;
-      const int centerY = balanceY + rowHeight / 2;
-      const COLORREF dotColor = TaskbarDotColor(parts.current);
-      const bool blinkOff = parts.minutesUntilChange <= 5 && ((GetTickCount64() / 1000ULL) & 1ULL) != 0;
-      if (!blinkOff)
-      {
-        Gdiplus::SolidBrush dotBrush(
-            Gdiplus::Color(245, GetRValue(dotColor), GetGValue(dotColor), GetBValue(dotColor)));
-        graphics.FillEllipse(&dotBrush, (Gdiplus::REAL)dotX, (Gdiplus::REAL)(centerY - 4.0f), 8.0f, 8.0f);
-      }
-
-      wchar_t remainingW[128] = {0};
-      MultiByteToWideChar(CP_UTF8, 0, parts.remaining, -1, remainingW,
-                          (int)(sizeof(remainingW) / sizeof(remainingW[0])));
-      const int remainingX = dotX + 8 + 8;
-      Gdiplus::RectF remainingRect((Gdiplus::REAL)remainingX, (Gdiplus::REAL)balanceY,
-                                   (Gdiplus::REAL)(TaskbarTextWidth(parts.remaining) + 2),
-                                   (Gdiplus::REAL)rowHeight);
-      graphics.DrawString(remainingW, -1, &font, remainingRect, &format, &brush);
-    }
-  }
-  if (!shown)
-  {
-    wchar_t empty[64] = {0};
-    MultiByteToWideChar(CP_UTF8, 0, chinese ? "尚无模型" : "No models", -1, empty,
-                        (int)(sizeof(empty) / sizeof(empty[0])));
-    Gdiplus::RectF r((Gdiplus::REAL)kOverlayPad, 0, (Gdiplus::REAL)(drawWidth - kOverlayPad),
-                     (Gdiplus::REAL)drawHeight);
-    graphics.DrawString(empty, -1, &font, r, &format, &brush);
-  }
-  graphics.Flush(Gdiplus::FlushIntentionSync);
-  return true;
-}
-
-void ApplyTaskbarTextRegion(HWND hwnd, const Settings &s, const apex::taskbar::Display &display)
-{
-  RECT client;
-  GetClientRect(hwnd, &client);
-  Endpoint visible[kTaskbarMaxColumns];
-  int columnWidths[kTaskbarMaxColumns] = {};
-  int shown = 0;
-  SYSTEMTIME local;
-  GetLocalTime(&local);
-  for (int i = 0; i < s.n && shown < kTaskbarMaxColumns; ++i)
-  {
-    if (!s.e[i].enabled || !s.e[i].taskbarVisible)
-      continue;
-    visible[shown] = s.e[i];
-    const TaskbarParts parts = BuildTaskbarParts(visible[shown], local);
-    columnWidths[shown] = std::max(columnWidths[shown], TaskbarPartsWidth(parts, display) + 4);
-    ++shown;
-  }
-
-  int columnLeft[kTaskbarMaxColumns] = {};
-  int x = kOverlayPad;
-  for (int c = 0; c < kTaskbarMaxColumns && columnWidths[c]; ++c)
-  {
-    columnLeft[c] = x;
-    x += columnWidths[c] + 12;
-  }
-  HRGN total = CreateRectRgn(0, 0, 0, 0);
-  // The visible window region must cover the WHOLE line the GDI+ renderer is allowed
-  // to draw. The old region was built from GDI TextOut paths; GDI+ has a different
-  // baseline and glyph box, so it clipped the new text into horizontal slices.
-  // A line rectangle is deliberately used here: it is stable across fonts, sizes
-  // and renderers, while still keeping the transparent gaps of the taskbar clickable.
-  for (int i = 0; i < shown; ++i)
-  {
-    const int column = i;
-    RECT lineRect = {};
-    if (display.vertical)
-    {
-      lineRect.left = 0;
-      lineRect.top = columnLeft[column];
-      lineRect.right = client.right;
-      lineRect.bottom = std::min((int)client.bottom, columnLeft[column] + columnWidths[column] + 4);
-    }
-    else
-    {
-      lineRect.left = columnLeft[column];
-      lineRect.top = 0;
-      lineRect.right = std::min((int)client.right, columnLeft[column] + columnWidths[column] + 4);
-      lineRect.bottom = client.bottom;
-    }
-    HRGN lineRegion = CreateRectRgn(lineRect.left, lineRect.top, lineRect.right, lineRect.bottom);
-    if (lineRegion)
-    {
-      CombineRgn(total, total, lineRegion, RGN_OR);
-      DeleteObject(lineRegion);
-    }
-  }
-  SetWindowRgn(hwnd, total, TRUE);
-}
-
-COLORREF TaskbarTextColor()
-{
-  unsigned rgb = 0;
-  if (ParseHexColor(SharedTaskbarTextColor(), &rgb))
-    return RGB((rgb >> 16) & 0xffu, (rgb >> 8) & 0xffu, rgb & 0xffu);
-  return ::apex::common::SystemIsLightTheme() ? RGB(76, 80, 86) : RGB(188, 191, 196);
-}
-
-void RenderTaskbarLayered(HWND hwnd, const Settings &s)
-{
-  RECT client;
-  GetClientRect(hwnd, &client);
-  const int width = client.right - client.left;
-  const int height = client.bottom - client.top;
-  if (width <= 0 || height <= 0)
-    return;
-  TaskbarGeometry geometry;
-  apex::taskbar::Display display = {};
-  display.edge = apex::taskbar::Edge::Bottom;
-  display.lineCount = 2;
-  if (CurrentTaskbarGeometry(std::max(9, -(int)g_uiTaskbarLogFont.lfHeight), &geometry))
-    display = geometry.display;
-  HDC screen = GetDC(nullptr);
-  if (!screen)
-    return;
-  HDC mem = CreateCompatibleDC(screen);
-  if (!mem)
-  {
-    ReleaseDC(nullptr, screen);
-    return;
-  }
-  BITMAPINFO info = {};
-  info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-  info.bmiHeader.biWidth = width;
-  info.bmiHeader.biHeight = -height;
-  info.bmiHeader.biPlanes = 1;
-  info.bmiHeader.biBitCount = 32;
-  info.bmiHeader.biCompression = BI_RGB;
-  void *bits = nullptr;
-  HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
-  if (!bitmap)
-  {
-    DeleteDC(mem);
-    ReleaseDC(nullptr, screen);
-    return;
-  }
-  HGDIOBJ oldBitmap = SelectObject(mem, bitmap);
-  ApplyTaskbarTextRegion(hwnd, s, display);
-  DWORD *pixels = static_cast<DWORD *>(bits);
-  if (!PaintTaskbarOverlay(s, pixels, width, height, display))
-    ZeroMemory(pixels, (size_t)width * (size_t)height * sizeof(DWORD));
-  POINT source = {0, 0};
-  SIZE size = {width, height};
-  BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-  UpdateLayeredWindow(hwnd, screen, nullptr, &size, mem, &source, 0, &blend, ULW_ALPHA);
-  SelectObject(mem, oldBitmap);
-  DeleteObject(bitmap);
-  DeleteDC(mem);
-  ReleaseDC(nullptr, screen);
-}
-
 void PaintOverlay(HWND hwnd)
 {
   Settings s;
@@ -2463,12 +2023,6 @@ void PaintOverlay(HWND hwnd)
 
   PAINTSTRUCT ps;
   HDC dc = BeginPaint(hwnd, &ps);
-  if (g_isTaskbar)
-  {
-    RenderTaskbarLayered(hwnd, s);
-    EndPaint(hwnd, &ps);
-    return;
-  }
   RECT client;
   GetClientRect(hwnd, &client);
   const bool light = apex::common::SystemIsLightTheme();
@@ -2648,140 +2202,16 @@ void ApplyOverlayRoundRegion(HWND hwnd, int width, int height)
     SetWindowRgn(hwnd, region, TRUE); // the window owns the region after this call
 }
 
-struct TaskbarOccupantScan
-{
-  HWND taskbar = nullptr;
-  HWND overlay = nullptr;
-  DWORD taskbarPid = 0;
-  DWORD selfPid = 0;
-  RECT band = {};
-  RECT items[32] = {};
-  int count = 0;
-  int leftmost = 0;
-  int rightmost = 0;
-};
-
-bool TaskbarBandWindow(HWND hwnd, const TaskbarOccupantScan &scan)
-{
-  if (!hwnd || hwnd == scan.taskbar || hwnd == scan.overlay || !IsWindowVisible(hwnd))
-    return false;
-  DWORD pid = 0;
-  GetWindowThreadProcessId(hwnd, &pid);
-  if (!pid || pid == scan.taskbarPid || pid == scan.selfPid)
-    return false;
-  RECT r = {};
-  if (!GetWindowRect(hwnd, &r) || r.right <= r.left || r.bottom <= r.top)
-    return false;
-  const int taskbarHeight = scan.band.bottom - scan.band.top;
-  if (r.bottom - r.top > taskbarHeight + 2)
-    return false;
-  // The window must occupy the taskbar's vertical band, not merely cover part of it in passing.
-  if (r.top < scan.band.top - 2 || r.bottom > scan.band.bottom + 2)
-    return false;
-  return r.right > scan.band.left && r.left < scan.band.right;
-}
-
-BOOL CALLBACK CollectTaskbarChild(HWND hwnd, LPARAM parameter)
-{
-  TaskbarOccupantScan *scan = reinterpret_cast<TaskbarOccupantScan *>(parameter);
-  if (TaskbarBandWindow(hwnd, *scan) && scan->count < (int)(sizeof(scan->items) / sizeof(scan->items[0])))
-  {
-    RECT r = {};
-    GetWindowRect(hwnd, &r);
-    scan->items[scan->count++] = r;
-    scan->leftmost = scan->count == 1 ? (int)r.left : std::min(scan->leftmost, (int)r.left);
-    scan->rightmost = std::max(scan->rightmost, (int)r.right);
-  }
-  return TRUE;
-}
-
-BOOL CALLBACK CollectTaskbarTopLevel(HWND hwnd, LPARAM parameter)
-{
-  TaskbarOccupantScan *scan = reinterpret_cast<TaskbarOccupantScan *>(parameter);
-  if (!TaskbarBandWindow(hwnd, *scan))
-    return TRUE;
-  // A same-purpose taskbar overlay is a tool/layered window. This filter keeps ordinary application windows that
-  // happen to touch the taskbar edge from pushing ComputeManager around.
-  const LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-  if (!(ex & (WS_EX_TOOLWINDOW | WS_EX_LAYERED)))
-    return TRUE;
-  wchar_t cls[64] = {0};
-  GetClassNameW(hwnd, cls, (int)(sizeof(cls) / sizeof(cls[0])));
-  if (!std::wcscmp(cls, L"#32768") || !_wcsicmp(cls, L"tooltips_class32"))
-    return TRUE;
-  RECT r = {};
-  GetWindowRect(hwnd, &r);
-  if (scan->count < (int)(sizeof(scan->items) / sizeof(scan->items[0])))
-  {
-    scan->items[scan->count++] = r;
-    scan->leftmost = scan->count == 1 ? (int)r.left : std::min(scan->leftmost, (int)r.left);
-    scan->rightmost = std::max(scan->rightmost, (int)r.right);
-  }
-  return TRUE;
-}
-
-void TaskbarOccupants(HWND taskbar, HWND overlay, const RECT &taskbarRect, TaskbarOccupantScan *out)
-{
-  TaskbarOccupantScan scan;
-  scan.taskbar = taskbar;
-  scan.overlay = overlay;
-  scan.selfPid = GetCurrentProcessId();
-  GetWindowThreadProcessId(taskbar, &scan.taskbarPid);
-  scan.band = taskbarRect;
-  EnumChildWindows(taskbar, CollectTaskbarChild, reinterpret_cast<LPARAM>(&scan));
-  EnumWindows(CollectTaskbarTopLevel, reinterpret_cast<LPARAM>(&scan));
-  *out = scan;
-}
-
-void UsableTaskbarSpan(const TaskbarGeometry &geometry, long *start, long *end)
-{
-  const RECT &bar = geometry.taskbar;
-  if (geometry.display.vertical)
-  {
-    *start = bar.top + 4;
-    *end = bar.bottom - 4;
-  }
-  else
-  {
-    *start = bar.left + 4;
-    *end = bar.right - 4;
-  }
-
-  HWND notify = FindWindowExW(geometry.window, nullptr, L"TrayNotifyWnd", nullptr);
-  RECT notifyRect = {};
-  if (!notify || !GetWindowRect(notify, &notifyRect))
-    return;
-  if (geometry.display.vertical)
-  {
-    const long center = (notifyRect.top + notifyRect.bottom) / 2;
-    if (center >= (bar.top + bar.bottom) / 2)
-      *end = std::min(*end, (long)notifyRect.top - 4);
-    else
-      *start = std::max(*start, (long)notifyRect.bottom + 4);
-  }
-  else
-  {
-    const long center = (notifyRect.left + notifyRect.right) / 2;
-    if (center >= (bar.left + bar.right) / 2)
-      *end = std::min(*end, (long)notifyRect.left - 4);
-    else
-      *start = std::max(*start, (long)notifyRect.right + 4);
-  }
-  if (*end - *start < 16)
-  {
-    *start = geometry.display.vertical ? bar.top + 4 : bar.left + 4;
-    *end = geometry.display.vertical ? bar.bottom - 4 : bar.right - 4;
-  }
-}
-
 void UpdateOverlayVisibility()
 {
   if (!g_overlay || InterlockedCompareExchange(&g_uiStop, 0, 0) != 0)
     return;
   const bool enabled = !g_host || !g_host->featureEnabled || g_host->featureEnabled(kId) != 0;
-  const bool taskbarEnabled =
-      !g_host || !g_host->taskbarEnabled || g_host->taskbarEnabled() != 0;
-  const bool show = enabled && taskbarEnabled && AnyWatchedProcessRunning();
+  // The desktop widget is intentionally NOT implemented in this version. Its process/watch/paint code stays as
+  // a proven sketch, but the product will later expose desktop widgets as a host-owned general module alongside
+  // the taskbar display and the quick panel.
+  const bool desktopWidgetModuleEnabled = false;
+  const bool show = desktopWidgetModuleEnabled && enabled && AnyWatchedProcessRunning();
   if (!show)
   {
     if (g_overlayVisible)
@@ -2803,79 +2233,6 @@ void UpdateOverlayVisibility()
   {
     ShowWindow(g_overlay, SW_HIDE);
     g_overlayVisible = false;
-    return;
-  }
-  if (g_isTaskbar)
-  {
-    EnsureTaskbarFont();
-    TaskbarGeometry geometry;
-    const int fontPixels = std::max(9, -(int)g_uiTaskbarLogFont.lfHeight);
-    if (!CurrentTaskbarGeometry(fontPixels, &geometry))
-    {
-      ShowWindow(g_overlay, SW_HIDE);
-      g_overlayVisible = false;
-      return;
-    }
-    const RECT &taskbarRect = geometry.taskbar;
-    const int taskbarWidth = taskbarRect.right - taskbarRect.left;
-    const int taskbarHeight = taskbarRect.bottom - taskbarRect.top;
-    const int thickness = apex::taskbar::Thickness(LayoutRect(taskbarRect), geometry.display.edge);
-    int extent = TaskbarOverlayExtent(s, geometry.display);
-    long axisStart = 0;
-    long axisEnd = 0;
-    UsableTaskbarSpan(geometry, &axisStart, &axisEnd);
-    const long usable = std::max(1L, axisEnd - axisStart - 8);
-    extent = (int)std::max(1L, std::min((long)extent, usable));
-
-    const int position = (g_host && g_host->taskbarPosition) ? g_host->taskbarPosition() : 1;
-    // Windows offers "left aligned" taskbar icons as well as the centred default. When the icons own the left
-    // side, asking for Apex's left area would draw on top of Start and the pinned apps, so the left choice uses
-    // the safe right-hand run. Reading the system preference every timer tick makes the original position come
-    // back as soon as Windows is switched to centred again.
-    const bool nearEnd = apex::taskbar::UseNearEnd(
-        position, geometry.display.vertical, TaskbarIconsAreLeftAligned());
-    TaskbarOccupantScan occupants;
-    TaskbarOccupants(geometry.window, g_overlay, taskbarRect, &occupants);
-    apex::taskbar::Span blocked[32] = {};
-    int blockedCount = 0;
-    for (int i = 0; i < occupants.count; ++i)
-    {
-      blocked[blockedCount].start =
-          geometry.display.vertical ? occupants.items[i].top : occupants.items[i].left;
-      blocked[blockedCount].end =
-          geometry.display.vertical ? occupants.items[i].bottom : occupants.items[i].right;
-      ++blockedCount;
-    }
-    long placed = apex::taskbar::PlaceSpan(axisStart, axisEnd, extent, blocked, blockedCount, nearEnd, 4, 8);
-    if (placed < 0)
-    {
-      // Other tools can fill the whole usable run. Staying on the requested side and overlapping one is less
-      // surprising than obeying a UI that says "left" by drawing on the right.
-      placed = nearEnd ? axisEnd - extent : axisStart;
-    }
-
-    int width = 0;
-    int height = 0;
-    int x = 0;
-    int y = 0;
-    if (geometry.display.vertical)
-    {
-      width = std::max(16, thickness - 4);
-      height = extent;
-      x = taskbarRect.left + (taskbarWidth - width) / 2;
-      y = (int)placed;
-    }
-    else
-    {
-      width = extent;
-      height = std::max(16, thickness - 4);
-      x = (int)placed;
-      y = taskbarRect.top + (taskbarHeight - height) / 2;
-    }
-    SetWindowPos(g_overlay, HWND_TOPMOST, x, y, width, height,
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    g_overlayVisible = true;
-    InvalidateRect(g_overlay, nullptr, FALSE);
     return;
   }
   const int height = OverlayHeight(s);
@@ -2970,9 +2327,7 @@ LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
   switch (msg)
   {
   case WM_NCHITTEST:
-    // The taskbar copy is display-only. Returning HTTRANSPARENT makes Windows route every click, right-click
-    // and wheel message to the taskbar underneath; the desktop fallback remains draggable.
-    return g_isTaskbar ? HTTRANSPARENT : HTCAPTION;
+    return HTCAPTION;
   case WM_MOUSEACTIVATE:
     return MA_NOACTIVATE;
   case WM_PAINT:
@@ -2983,8 +2338,6 @@ LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     return 0;
   case WM_EXITSIZEMOVE:
   {
-    if (g_isTaskbar)
-      return 0;
     SnapOverlayToEdges(hwnd);
     RECT r;
     GetWindowRect(hwnd, &r);
@@ -3017,23 +2370,11 @@ DWORD WINAPI OverlayThread(LPVOID)
       SetEvent(g_uiReady);
     return 0;
   }
-  const char *taskbarTest = std::getenv("APEX_CM_NO_TASKBAR");
-  HWND taskbar = (taskbarTest && !std::strcmp(taskbarTest, "1"))
-                     ? nullptr
-                     : FindWindowW(L"Shell_TrayWnd", nullptr);
-  g_isTaskbar = taskbar != nullptr;
-  if (g_isTaskbar)
-  {
-    g_owner = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"ComputeManagerHost", WS_POPUP,
-                              0, 0, 1, 1, nullptr, nullptr, wc.hInstance, nullptr);
-  }
-  LogLine(g_isTaskbar ? "feature %s: taskbar overlay anchored"
-                      : "feature %s: taskbar unavailable; using desktop fallback", kId);
+  LogLine("feature %s: desktop widget ready; taskbar text is host-owned", kId);
   const DWORD style = WS_POPUP;
-  const DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE |
-                        (g_isTaskbar ? WS_EX_TRANSPARENT : 0);
+  const DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE;
   g_overlay = CreateWindowExW(exStyle, wc.lpszClassName, L"算力管家", style,
-                               0, 0, kOverlayMinWidth, 40, g_isTaskbar ? g_owner : nullptr, nullptr,
+                               0, 0, kOverlayMinWidth, 40, nullptr, nullptr,
                                wc.hInstance, nullptr);
   if (!g_overlay)
   {
@@ -3048,7 +2389,6 @@ DWORD WINAPI OverlayThread(LPVOID)
   g_uiSmallFont = CreateFontW(-10, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-  EnsureTaskbarFont();
   SetTimer(g_overlay, 1, 500, nullptr);
   if (g_uiReady)
     SetEvent(g_uiReady);
@@ -3063,16 +2403,9 @@ DWORD WINAPI OverlayThread(LPVOID)
     DeleteObject(g_uiFont);
   if (g_uiSmallFont)
     DeleteObject(g_uiSmallFont);
-  if (g_uiTaskbarFont)
-    DeleteObject(g_uiTaskbarFont);
   g_uiFont = nullptr;
   g_uiSmallFont = nullptr;
-  g_uiTaskbarFont = nullptr;
-  g_uiTaskbarFontSize = 0;
   g_overlay = nullptr;
-  if (g_owner)
-    DestroyWindow(g_owner);
-  g_owner = nullptr;
   g_overlayVisible = false;
   UnregisterClassW(wc.lpszClassName, wc.hInstance);
   return 0;
@@ -3109,7 +2442,10 @@ DWORD WINAPI Worker(LPVOID)
     {
       FetchPendingSchedules();
       FetchPendingModels();
+      InterlockedExchange(&g_displayConditionMet, AnyWatchedProcessRunning() ? 1 : 0);
     }
+    else
+      InterlockedExchange(&g_displayConditionMet, 0);
     const unsigned long long now = GetTickCount64();
     bool due = false;
     if (enabled)
@@ -3310,6 +2646,7 @@ int ListOp(const char *id, const char *op, const char *value, int index)
     CopyText(e.name, sizeof(e.name), name);
     if (!std::strncmp(name, "http://", 7) || !std::strncmp(name, "https://", 8))
       CopyText(e.url, sizeof(e.url), name);
+    EnsureTaskbarId(e, g_set.n);
     e.revision = ++g_nextRevision;
     g_set.e[g_set.n++] = e;
     g_nextPollTick = 0;
@@ -3510,21 +2847,67 @@ int Save() { return SaveSettings() ? 1 : 0; }
 
 int TaskbarItems(ApexTaskbarArea *out, int max)
 {
-  bool visible = false;
-  EnterCriticalSection(&g_lock);
-  for (int i = 0; i < g_set.n && !visible; ++i)
-    visible = g_set.e[i].enabled && g_set.e[i].taskbarVisible;
-  LeaveCriticalSection(&g_lock);
-  if (!visible)
+  if (!InterlockedCompareExchange(&g_displayConditionMet, 0, 0))
     return 0;
-  if (out && max > 0)
+  Settings s;
+  EnterCriticalSection(&g_lock);
+  s = g_set;
+  LeaveCriticalSection(&g_lock);
+  int total = 0;
+  for (int i = 0; i < s.n; ++i)
   {
-    ZeroMemory(out, sizeof(ApexTaskbarArea));
-    _snprintf(out[0].key, sizeof(out[0].key), "%s", kId);
-    _snprintf(out[0].nameZh, sizeof(out[0].nameZh), "%s", "算力管家");
-    _snprintf(out[0].nameEn, sizeof(out[0].nameEn), "%s", "Compute Manager");
+    const Endpoint &e = s.e[i];
+    if (!e.enabled || !e.taskbarVisible || !e.taskbarId[0])
+      continue;
+    if (out && total < max)
+    {
+      ApexTaskbarArea &area = out[total];
+      ZeroMemory(&area, sizeof(area));
+      _snprintf(area.key, sizeof(area.key), "%s:%s", kId, e.taskbarId);
+      _snprintf(area.nameZh, sizeof(area.nameZh), "%s", e.name[0] ? e.name : e.model);
+      _snprintf(area.nameEn, sizeof(area.nameEn), "%s", e.name[0] ? e.name : e.model);
+      area.lineCount = 2;
+    }
+    ++total;
   }
-  return 1;
+  return total;
+}
+
+int TaskbarText(const char *key, int, char *out, int outSize)
+{
+  if (!key || !out || outSize <= 0)
+    return 0;
+  if (!InterlockedCompareExchange(&g_displayConditionMet, 0, 0))
+    return 0;
+  Settings s;
+  EnterCriticalSection(&g_lock);
+  s = g_set;
+  LeaveCriticalSection(&g_lock);
+  for (int i = 0; i < s.n; ++i)
+  {
+    const Endpoint &e = s.e[i];
+    if (!e.taskbarId[0])
+      continue;
+    char expected[128] = {};
+    _snprintf(expected, sizeof(expected), "%s:%s", kId, e.taskbarId);
+    if (std::strcmp(key, expected))
+      continue;
+    SYSTEMTIME now;
+    GetLocalTime(&now);
+    const TaskbarParts parts = BuildTaskbarParts(e, now);
+    const char *periodDot = parts.current == Period::Peak
+                                ? "[[dot:#E06068]]"
+                                : (parts.current == Period::Valley
+                                       ? "[[dot:#4E97DB]]"
+                                       : "[[dot:#969AA0]]");
+    if (parts.hasRemaining)
+      _snprintf(out, outSize, "%s\t%s\n\t%s%s", parts.title, parts.balance,
+                periodDot, parts.remaining);
+    else
+      _snprintf(out, outSize, "%s\t%s", parts.title, parts.balance);
+    return out[0] ? 1 : 0;
+  }
+  return 0;
 }
 
 unsigned Flags() { return APEX_FEATURE_ENABLED; }
@@ -3550,6 +2933,7 @@ static const ApexFeature kFeature = {
     nullptr,
     Flags,
     TaskbarItems,
+    TaskbarText,
 };
 
 extern "C" __declspec(dllexport) const ApexFeature *__cdecl ApexFeatureEntry(void)

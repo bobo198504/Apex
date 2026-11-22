@@ -36,6 +36,7 @@ var TEXT = {
     color: "颜色",
     taskbarAreas: "任务栏显示区",
     taskbarAreasEmpty: "还没有插件贡献任务栏显示区",
+    taskbarSideHint: "每项单独选择左侧或右侧；拖动决定统一顺序",
     top: "上",
     bottom: "下",
     show: "显示",
@@ -90,6 +91,7 @@ var TEXT = {
     color: "Colour",
     taskbarAreas: "Taskbar areas",
     taskbarAreasEmpty: "No plugin is contributing a taskbar area yet",
+    taskbarSideHint: "Choose left or right for each item; drag to set the shared order",
     top: "Top",
     bottom: "Bottom",
     show: "Show",
@@ -377,6 +379,33 @@ function statusCard(p, slot) {
     body.appendChild(list);
   }
   card.appendChild(body);
+  if (p.choiceId && p.choiceSwitch) {
+    var unitCell = el("span", "swcell status-choice");
+    var unitLabel = S.lang === "zh" ? (p.choiceLabelZh || "实际单位") : (p.choiceLabelEn || "Real unit");
+    unitCell.appendChild(el("span", "swtxt", unitLabel));
+    unitCell.appendChild(switchBox(p.choiceValue === p.choiceOnValue, function (on) {
+      sendControl(slot, p.choiceId, on ? p.choiceOnValue : p.choiceOffValue);
+    }));
+    card.appendChild(unitCell);
+  } else if (p.choiceId) {
+    var choiceCell = el("span", "status-choice");
+    var choice = el("select", "compact");
+    (p.choiceOptions || []).forEach(function (o) {
+      var option = el("option", null,
+        S.lang === "zh" ? (o.labelZh || o.value) : (o.labelEn || o.value));
+      option.value = o.value;
+      if (o.value === p.choiceValue) option.selected = true;
+      choice.appendChild(option);
+    });
+    var choiceLast = p.choiceValue;
+    choice.addEventListener("change", function () {
+      if (choice.value === choiceLast) return;
+      choiceLast = choice.value;
+      sendControl(slot, p.choiceId, choice.value);
+    });
+    choiceCell.appendChild(choice);
+    card.appendChild(choiceCell);
+  }
   if (p.toggleId) {
     var cell = el("span", "swcell status-toggle");
     var swLabel = S.lang === "zh" ? (p.toggleLabelZh || "") : (p.toggleLabelEn || "");
@@ -679,12 +708,15 @@ function colorControl(p, slot, disabled, path, sink) {
     S.lang === "zh" ? (p.autoLabelZh || "自动") : (p.autoLabelEn || "Auto"));
   auto.disabled = !!disabled;
   auto.title = S.lang === "zh" ? "跟随系统明暗" : "Follow the system theme";
-  inp.addEventListener("change", function () {
-    var next = String(inp.value).toUpperCase();
+  function commitColor(next) {
+    next = String(next).toUpperCase();
     if (next === colourLast) return;
     colourLast = next;
     auto.className = "colorauto";
     if (sink) sink(next); else sendControl(slot, path, next);
+  }
+  inp.addEventListener("change", function () {
+    commitColor(inp.value);
   });
   auto.addEventListener("click", function () {
     if (colourLast === autoValue) return;
@@ -3133,7 +3165,6 @@ function renderGeneral() {
   quickOrderCard(quickCard);
   b.appendChild(quickCard);
   var taskbarCard = el("div", "card gen");
-  var taskbarPosition = S.snap.host.taskbarPosition === "left" ? "left" : "right";
   var taskbarEnabled = S.snap.host.taskbarEnabled === undefined
     ? true : Number(S.snap.host.taskbarEnabled) !== 0;
   var taskbarEdge = S.snap.host.taskbarEdge || "bottom";
@@ -3141,26 +3172,6 @@ function renderGeneral() {
   var taskbarRow = el("div", "row taskbarctl");
   taskbarRow.appendChild(el("label", null, t("taskbarDisplay")));
   var taskbarCtl = el("div", "ctl");
-  taskbarCtl.appendChild(el("span", "inlinelabel", t("position")));
-  [
-    { value: "left", label: t(verticalTaskbar ? "top" : "left") },
-    { value: "right", label: t(verticalTaskbar ? "bottom" : "right") }
-  ].forEach(function (choice) {
-    var opt = el("label", "radiooption");
-    var radio = el("input");
-    radio.type = "radio";
-    radio.name = "taskbar-position";
-    radio.value = choice.value;
-    radio.checked = taskbarPosition === choice.value;
-    radio.addEventListener("change", function () {
-      if (!radio.checked) return;
-      hostCall("setHost", { key: "taskbarposition", value: choice.value });
-      S.snap.host.taskbarPosition = choice.value;
-    });
-    opt.appendChild(radio);
-    opt.appendChild(el("span", null, choice.label));
-    taskbarCtl.appendChild(opt);
-  });
   var taskbarSwitch = el("span", "swcell taskbar-switch");
   taskbarSwitch.appendChild(el("span", "swtxt", t("show")));
   taskbarSwitch.appendChild(switchBox(taskbarEnabled, function (v) {
@@ -3309,9 +3320,11 @@ function moveQuickOrder(from, to) {
 function taskbarAreasCard(card) {
   card = card || el("div", "card");
   var areas = (S.snap && S.snap.taskbarAreas) || [];
+  var taskbarEdge = (S.snap && S.snap.host && S.snap.host.taskbarEdge) || "bottom";
+  var verticalTaskbar = taskbarEdge === "left" || taskbarEdge === "right";
   var head = el("div", "row");
   head.appendChild(el("label", null, t("taskbarAreas")));
-  if (areas.length > 1) head.appendChild(el("div", "rownote", t("quickOrderHint")));
+  if (areas.length) head.appendChild(el("div", "rownote", t("taskbarSideHint")));
   card.appendChild(head);
   if (!areas.length) {
     card.appendChild(el("div", "note", t("taskbarAreasEmpty")));
@@ -3323,6 +3336,27 @@ function taskbarAreasCard(card) {
     row.appendChild(el("span", "grip", "\u2261"));
     row.appendChild(el("div", "nm",
       S.lang === "zh" ? (area.nameZh || area.key) : (area.nameEn || area.key)));
+    var sideCell = el("span", "taskbar-side");
+    [
+      { value: "left", label: t(verticalTaskbar ? "top" : "left") },
+      { value: "right", label: t(verticalTaskbar ? "bottom" : "right") }
+    ].forEach(function (choice) {
+      var opt = el("label", "radiooption");
+      var radio = el("input");
+      radio.type = "radio";
+      radio.name = "taskbar-side-" + i;
+      radio.value = choice.value;
+      radio.checked = (area.side || "right") === choice.value;
+      radio.addEventListener("change", function () {
+        if (!radio.checked) return;
+        hostCall("setHost", { key: "taskbarside", value: area.key + "|" + choice.value });
+        area.side = choice.value;
+      });
+      opt.appendChild(radio);
+      opt.appendChild(el("span", null, choice.label));
+      sideCell.appendChild(opt);
+    });
+    row.appendChild(sideCell);
     makeDraggable(row, i, function (from, to) { moveTaskbarOrder(from, to); });
     list.appendChild(row);
   });
