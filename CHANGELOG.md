@@ -5,6 +5,26 @@
 `*` 和 `+` 会变成同一种圆点，符号的区分就没了）。只写"改了什么"。
 -->
 
+## 1.13.1
+
+## 更新内容
+
+```
++ 版本号：主程序 1.13.1、系统状态 1.5.4
++ 版本号：壁纸设置 1.2.9
+# 修复系统状态显卡开关、单位和任务栏顺序在重启后丢失
++ 壁纸设置改用原生 IDesktopWallpaper 逐屏接口，修复多屏、换显示器和锁定壁纸互相影响
+```
+
+## What's changed
+
+```
++ Versions: the host is 1.13.1 and System Status is 1.5.4
++ Version: Wallpaper 1.2.9
+# Fixed System Status GPU switches, units and taskbar positions being lost after a restart
++ Wallpaper now uses the native IDesktopWallpaper per-monitor interface and fixes multi-monitor, monitor replacement, and lock interactions
+```
+
 ## 1.13.0
 
 ## 更新内容

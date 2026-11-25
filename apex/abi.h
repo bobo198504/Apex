@@ -218,7 +218,9 @@
 // `choiceOffValue`, `choiceLabel*`): off = percent, on = the real unit.
 // 33 -> 34: a tab in `taskbarText` starts a right-hand column. The host measures both lines together and aligns
 // their right cells, so a two-line block can show `model  balance` above `●  countdown` with the same right edge.
-#define APEX_ABI_VERSION 34u
+// 34 -> 35: a taskbar area may name the key it replaces (`previousKey`). When a feature must move a persisted item
+// from a temporary identity to a stable one, the host renames that key in place instead of appending it at the end.
+#define APEX_ABI_VERSION 35u
 
 #ifdef __cplusplus
 extern "C" {
@@ -395,6 +397,9 @@ typedef struct ApexTaskbarArea
   // 1 = one line; 2 = prefers two lines. On a compact or vertical taskbar the host merges the two lines into one.
   // Values outside 1..2 are read as 1.
   int lineCount;
+  // OPTIONAL (ABI 34 -> 35): the old key this item's `key` replaces. The host prefers `key`; if it is not in the
+  // saved order but this key is, it renames the old entry where it sits, preserving both position and side.
+  char previousKey[128];
 } ApexTaskbarArea;
 
 // ---- THE QUICK PANEL: the few controls a feature wants one click away ---------------------------------

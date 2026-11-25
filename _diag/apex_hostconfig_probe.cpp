@@ -197,6 +197,21 @@ int main(void)
           "reordering the one shared table carries each item's left/right choice with it", "");
   }
 
+  {
+    HostConfig c;
+    c.TaskbarOrderAppend("First");
+    c.TaskbarOrderAppend("OldGpu");
+    c.TaskbarOrderAppend("Last");
+    c.TaskbarSideSet("OldGpu", 0);
+    Check(c.TaskbarOrderRename("OldGpu", "StableGpu"),
+          "a migrated taskbar key can be renamed in place", "");
+    Check(c.taskbarOrderN == 3 && !strcmp(c.taskbarOrder[0], "First") &&
+              !strcmp(c.taskbarOrder[1], "StableGpu") &&
+              !strcmp(c.taskbarOrder[2], "Last") &&
+              c.TaskbarSideFor("StableGpu") == 0,
+          "  and keeps both its position and its left/right choice", "");
+  }
+
   // ---- UNKNOWN KEYS AND MANGLED VALUES STILL LEAVE THE DEFAULTS ALONE ----
   {
     HostConfig c;

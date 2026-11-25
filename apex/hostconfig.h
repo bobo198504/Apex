@@ -183,6 +183,33 @@ struct HostConfig
     return false;
   }
 
+  bool TaskbarOrderContains(const char *key) const
+  {
+    if (!key || !*key)
+      return false;
+    for (int i = 0; i < taskbarOrderN; ++i)
+      if (_stricmp(taskbarOrder[i], key) == 0)
+        return true;
+    return false;
+  }
+
+  // Replace a persisted area key where it sits. A feature uses this when its hardware identity had to change
+  // from a temporary value to a stable one: the user's position and left/right choice belong to the same item,
+  // not to the spelling that happened to be saved that day.
+  bool TaskbarOrderRename(const char *oldKey, const char *newKey)
+  {
+    if (!oldKey || !*oldKey || !newKey || !*newKey || !_stricmp(oldKey, newKey) ||
+        TaskbarOrderContains(newKey))
+      return false;
+    for (int i = 0; i < taskbarOrderN; ++i)
+      if (_stricmp(taskbarOrder[i], oldKey) == 0)
+      {
+        _snprintf(taskbarOrder[i], sizeof(taskbarOrder[i]), "%s", newKey);
+        return taskbarOrder[i][0] != 0;
+      }
+    return false;
+  }
+
   void TaskbarOrderSetFromKeys(const char *text)
   {
     char kept[kMaxList][128] = {{0}};

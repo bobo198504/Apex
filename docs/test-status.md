@@ -1,5 +1,39 @@
 # Apex 测试状态记录
 
+## 2026-11-25 — Wallpaper 1.2.9
+
+本轮只修改 Wallpaper：显示器身份缓存从“EDID 型号码”改为“完整硬件设备路径 + EDID”，
+修复同型号显示器重接或更换后命中旧身份的问题；单台坏路径改为不阻塞其它屏幕；新屏无原图时补用
+`Transcoded_*` / `CachedFiles` 缓存合成；正常桌面路径改为原生
+`IDesktopWallpaper::SetWallpaper(monitorID, path)`，真实 monitorID 与显示槽位别名分离。
+逐屏调用后记录 monitorID、目标路径和 `GetWallpaper` 回读路径，防止误用旧的合成图路径。
+锁定检测把插件自己写入的来源/目标路径加入白名单，只恢复外部修改。
+合成提交后恢复原有系统显示位置，避免把“适应”改成“跨区”；原位置写入 `Wallpaper.ini` 的
+`system_position`，旧配置默认按“适应”恢复。
+
+- `apex/build.sh`：通过
+- `check_feature_wallpaper`：通过（ABI 35 / 结构 144；真实 DLL、插件图片副本、缩略图、锁屏和隐藏切换控件）
+
+多屏热插拔和实际换屏后的视觉结果由用户验证。
+
+## 2026-11-23 — Apex 1.13.1 / ABI 35 / SystemStatus 1.5.4
+
+本轮修改宿主、ABI、AutoIME 的 ABI 副本和系统状态；其它功能的行为未改。
+
+- `apex/build.sh`：通过；全部插件按 ABI 35 重新构建
+- 构建层：**27 / 27 通过**
+- `check_apex_hostconfig`：通过（任务栏显示位在原位置改名，位置和左右侧不变）
+- `check_apex_taskbar_display`：通过
+- `check_feature_systemstatus`：通过（显卡稳定键、旧开关/单位迁移、任务栏旧键别名）
+- `check_apex_modular`：通过（C 与 Rust 两侧均为 `ApexHost=104 ApexFeature=144`，ABI 35）
+- 装配层：**33 / 37 通过**；未通过的仍是 `check_apex_icons`、`check_apex_endtoend`、
+  `check_apex_persist`、`check_apex_flyout` 四项已知工具会话环境性失败
+- 已部署到 `D:\App protable\Apex`
+- 部署后只读核对：`SystemStatus.ini` 已写入稳定 GPU 键和 `.legacy` 别名；已启用的显卡项在
+  `apex.ini` 的 `taskbarorder` 中已原位改成稳定键，左右侧仍为原来的 `left`
+
+Windows 重启后的实际持久化由用户验证。
+
 ## 2026-11-22 — Apex 1.13.0
 
 本轮只修改宿主、任务栏显示层和通用设置面板；其它功能未改，沿用 1.12.18 的通过记录。

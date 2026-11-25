@@ -1786,11 +1786,19 @@ int TaskbarAreas(TaskbarArea *out, int max)
         continue;
       found[total].slot = i;
       _snprintf(found[total].key, sizeof(found[total].key), "%s", raw[k].key);
+      _snprintf(found[total].previousKey, sizeof(found[total].previousKey), "%s",
+                raw[k].previousKey);
       _snprintf(found[total].nameZh, sizeof(found[total].nameZh), "%s", raw[k].nameZh);
       _snprintf(found[total].nameEn, sizeof(found[total].nameEn), "%s", raw[k].nameEn);
       found[total].lineCount = raw[k].lineCount == 2 ? 2 : 1;
+      if (!cfg->TaskbarOrderContains(found[total].key))
+      {
+        if (found[total].previousKey[0])
+          orderChanged =
+              cfg->TaskbarOrderRename(found[total].previousKey, found[total].key) || orderChanged;
+        orderChanged = cfg->TaskbarOrderAppend(found[total].key) || orderChanged;
+      }
       found[total].side = cfg->TaskbarSideFor(found[total].key);
-      orderChanged = cfg->TaskbarOrderAppend(found[total].key) || orderChanged;
       ++total;
     }
   }

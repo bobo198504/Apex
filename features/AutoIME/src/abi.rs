@@ -135,6 +135,7 @@ pub struct ApexTaskbarArea {
     pub nameZh: [c_char; 64],
     pub nameEn: [c_char; 64],
     pub lineCount: c_int,
+    pub previousKey: [c_char; 128],
 }
 
 /// `APEX_QUICK_TOGGLE` / `_SLIDER` / `_KNOB` from apex/abi.h -- the three shapes the panel can draw.
@@ -230,7 +231,7 @@ pub struct ApexFeature {
 /// does not load.
 /// ⚠️ 24 -> 25: `status` gained optional `lines` (bilingual recent-connection rows) and `live` (re-read the
 /// document while the status card is visible). Another page-facing change, another exact-match bump.
-pub const APEX_ABI_VERSION: c_uint = 34;
+pub const APEX_ABI_VERSION: c_uint = 35;
 
 pub const APEX_FEATURE_ENABLED: c_uint = 1;
 

@@ -158,6 +158,52 @@ int main(int argc, char **argv)
   }
   Check(sampled, "the non-blocking sampler publishes live values after init returns");
 
+  const char *migrationOnly = std::getenv("APEX_SYSTEMSTATUS_MIGRATE_ONLY");
+  if (migrationOnly && !std::strcmp(migrationOnly, "1"))
+  {
+    ApexTaskbarArea migratedAreas[64] = {};
+    const int migratedCount = feature->taskbarItems(migratedAreas, 64);
+    bool intelUsage = false, nvidiaTemp = false, stableOnly = true;
+    for (int i = 0; i < migratedCount; ++i)
+    {
+      const std::string key = migratedAreas[i].key;
+      const std::string previous = migratedAreas[i].previousKey;
+      stableOnly = stableOnly && key.find("gpu_00000000_") == std::string::npos;
+      if (key.find("gpu_v8086_") != std::string::npos &&
+          key.find("_usage") != std::string::npos)
+      {
+        intelUsage = previous ==
+                     "SystemStatus:gpu_00000000_00000001_usage";
+      }
+      if (key.find("gpu_v10de_") != std::string::npos &&
+          key.find("_temp") != std::string::npos)
+      {
+        nvidiaTemp = previous ==
+                     "SystemStatus:gpu_00000000_00000002_temp";
+      }
+    }
+    Check(intelUsage && nvidiaTemp && stableOnly,
+          "legacy GPU mappings become stable hardware keys with in-place aliases");
+
+    static char migratedDocument[64 * 1024] = {};
+    const int migratedLength =
+        feature->settingsJson(migratedDocument, (int)sizeof(migratedDocument));
+    Check(migratedLength > 0 &&
+              std::strstr(migratedDocument,
+                          "\"toggleId\":\"gpu_v8086_") != nullptr &&
+              std::strstr(migratedDocument,
+                          "\"toggleId\":\"gpu_v10de_") != nullptr &&
+              std::strstr(migratedDocument, "\"choiceValue\":\"gb\"") != nullptr,
+          "the migrated cards keep their saved switch and unit");
+    Check(feature->saveSettings && feature->saveSettings() == 1,
+          "the stable GPU keys and aliases save back to SystemStatus.ini");
+    if (feature->shutdown)
+      feature->shutdown();
+    FreeLibrary(module);
+    printf("\n%s: %d failure(s)\n", g_failures ? "FAILED" : "OK", g_failures);
+    return g_failures ? 1 : 0;
+  }
+
   const char *staticMode = std::getenv("APEX_SYSTEMSTATUS_STATIC");
   const char *realUnits = std::getenv("APEX_SYSTEMSTATUS_REAL_UNITS");
   if (realUnits && !std::strcmp(realUnits, "1"))

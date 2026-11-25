@@ -43,7 +43,7 @@ using apex::wallpaper::Variant;
 namespace {
 
 const char *kId = "Wallpaper";
-const char *kVersion = "1.2.0";
+const char *kVersion = "1.2.9";
 
 constexpr int kMaxDisplays = 12;
 constexpr int kMaxMonitorSettings = 24;
@@ -81,6 +81,7 @@ struct MonitorSetting
 struct Display
 {
   char device[kMaxDevice] = {0};
+  char hardwarePath[kMaxDevice] = {0};
   char identity[96] = {0};
   char edid[32] = {0};
   Rect rect = {0, 0, 0, 0};
@@ -95,6 +96,7 @@ struct Display
 struct Settings
 {
   char schedule[16] = "clock";
+  char systemPosition[16] = "fit";
   char lockPath[kMaxPath] = {0};
   int dayStart = 7 * 60;
   int nightStart = 19 * 60;
@@ -384,7 +386,7 @@ void WmiOpen()
   LogEvent("WMI ROOT\\WMI opened for monitor identity");
 }
 
-bool WmiMonitorIdentity(const char *edid, char *out, int outSize)
+bool WmiMonitorIdentity(const char *edid, const char *hardwarePath, char *out, int outSize)
 {
   if (!out || outSize <= 0)
     return false;
@@ -405,6 +407,8 @@ bool WmiMonitorIdentity(const char *edid, char *out, int outSize)
   CopyText(upperEdid, (int)sizeof(upperEdid), edid);
   UpperAscii(upperEdid);
   bool found = false;
+  bool fallbackFound = false;
+  char fallbackIdentity[96] = {0};
   for (;;)
   {
     IWbemClassObject *object = nullptr;
@@ -420,7 +424,11 @@ bool WmiMonitorIdentity(const char *edid, char *out, int outSize)
       WideCharToMultiByte(CP_UTF8, 0, instance.bstrVal, -1, text, (int)sizeof(text) - 1,
                           nullptr, nullptr);
       UpperAscii(text);
-      if (strstr(text, upperEdid))
+      const char *wmiInstance = strchr(text, '\\');
+      const char *deviceInstance = hardwarePath ? strchr(hardwarePath, '\\') : nullptr;
+      const bool exactDevice =
+          wmiInstance && deviceInstance && _stricmp(wmiInstance, deviceInstance) == 0;
+      if (exactDevice || strstr(text, upperEdid))
       {
         const wchar_t *fields[3] = {L"ManufacturerName", L"ProductCodeID", L"SerialNumberID"};
         char part[3][64] = {{0}};
@@ -456,11 +464,16 @@ bool WmiMonitorIdentity(const char *edid, char *out, int outSize)
             serial = false;
         }
         if (part[0][0] && part[1][0])
-          _snprintf(out, outSize, "%s-%s%s%s", part[0], part[1], serial ? "-" : "",
-                    serial ? part[2] : "");
+          _snprintf(exactDevice ? out : fallbackIdentity,
+                    exactDevice ? outSize : (int)sizeof(fallbackIdentity), "%s-%s%s%s",
+                    part[0], part[1], serial ? "-" : "", serial ? part[2] : "");
         else
-          CanonicalEdidIdentity(edid, out, outSize);
-        found = out[0] != 0;
+          CanonicalEdidIdentity(edid, exactDevice ? out : fallbackIdentity,
+                                exactDevice ? outSize : (int)sizeof(fallbackIdentity));
+        if (exactDevice)
+          found = out[0] != 0;
+        else if (!fallbackFound)
+          fallbackFound = fallbackIdentity[0] != 0;
       }
     }
     VariantClear(&instance);
@@ -469,36 +482,46 @@ bool WmiMonitorIdentity(const char *edid, char *out, int outSize)
       break;
   }
   enumerator->Release();
-  return found;
+  if (found)
+    return true;
+  if (fallbackFound)
+  {
+    CopyText(out, outSize, fallbackIdentity);
+    return out[0] != 0;
+  }
+  return false;
 }
 
 struct IdentityCacheEntry
 {
   char edid[32];
+  char hardwarePath[kMaxDevice];
   char identity[96];
 };
 IdentityCacheEntry g_identityCache[kMaxDisplays * 2];
 int g_identityCacheCount = 0;
 
-void ResolveMonitorIdentity(const char *edid, char *out, int outSize)
+void ResolveMonitorIdentity(const char *edid, const char *hardwarePath, char *out, int outSize)
 {
   out[0] = 0;
   if (!edid || !edid[0])
     return;
   for (int i = 0; i < g_identityCacheCount; ++i)
-    if (!strcmp(g_identityCache[i].edid, edid))
+    if (!strcmp(g_identityCache[i].edid, edid) &&
+        !_stricmp(g_identityCache[i].hardwarePath, hardwarePath ? hardwarePath : ""))
     {
       CopyText(out, outSize, g_identityCache[i].identity);
       return;
     }
   char identity[96] = {0};
-  if (!WmiMonitorIdentity(edid, identity, (int)sizeof(identity)))
+  if (!WmiMonitorIdentity(edid, hardwarePath, identity, (int)sizeof(identity)))
     CanonicalEdidIdentity(edid, identity, (int)sizeof(identity));
   CopyText(out, outSize, identity);
   if (identity[0] && g_identityCacheCount < (int)(sizeof(g_identityCache) / sizeof(g_identityCache[0])))
   {
     IdentityCacheEntry &entry = g_identityCache[g_identityCacheCount++];
     CopyText(entry.edid, (int)sizeof(entry.edid), edid);
+    CopyText(entry.hardwarePath, (int)sizeof(entry.hardwarePath), hardwarePath ? hardwarePath : "");
     CopyText(entry.identity, (int)sizeof(entry.identity), identity);
     LogEvent("monitor %s identity: %s", edid, identity);
   }
@@ -645,6 +668,8 @@ void LoadSettings()
 
         if (!strcmp(key, "schedule") && ValidSchedule(value))
           CopyText(fresh.schedule, (int)sizeof(fresh.schedule), value);
+        else if (!strcmp(key, "system_position") && ValidStyle(value))
+          CopyText(fresh.systemPosition, (int)sizeof(fresh.systemPosition), value);
         else if (!strcmp(key, "lock_file"))
           CopyText(fresh.lockPath, (int)sizeof(fresh.lockPath), value);
         else if (!strcmp(key, "day_start"))
@@ -750,6 +775,7 @@ bool SaveSettings()
   _snprintf(night, sizeof(night), "%02d:%02d", s.nightStart / 60, s.nightStart % 60);
   fprintf(f, "# Apex Wallpaper -- this feature's own settings\n");
   fprintf(f, "schedule=%s\n", s.schedule);
+  fprintf(f, "system_position=%s\n", s.systemPosition);
   fprintf(f, "lock_file=%s\n", s.lockPath);
   fprintf(f, "day_start=%s\n", day);
   fprintf(f, "night_start=%s\n", night);
@@ -796,6 +822,35 @@ int CompareDisplays(const void *a, const void *b)
   if (x->rect.top != y->rect.top)
     return x->rect.top < y->rect.top ? -1 : 1;
   return strcmp(x->device, y->device);
+}
+
+long long MonitorRectScore(const Rect &a, const RECT &b)
+{
+  const long long ax = (static_cast<long long>(a.left) + a.right) / 2;
+  const long long ay = (static_cast<long long>(a.top) + a.bottom) / 2;
+  const long long bx = (static_cast<long long>(b.left) + b.right) / 2;
+  const long long by = (static_cast<long long>(b.top) + b.bottom) / 2;
+  const long long dx = ax - bx;
+  const long long dy = ay - by;
+  const long long dw = static_cast<long long>(a.right - a.left) - (b.right - b.left);
+  const long long dh = static_cast<long long>(a.bottom - a.top) - (b.bottom - b.top);
+  return dx * dx + dy * dy + dw * dw + dh * dh;
+}
+
+int ClosestDisplayIndex(const RECT &rect, const Display *displays, int count)
+{
+  int best = -1;
+  long long bestScore = 0x7fffffffffffffffLL;
+  for (int i = 0; i < count; ++i)
+  {
+    const long long score = MonitorRectScore(displays[i].rect, rect);
+    if (score < bestScore)
+    {
+      bestScore = score;
+      best = i;
+    }
+  }
+  return best;
 }
 
 const char *PositionId(DWORD position)
@@ -1230,12 +1285,16 @@ BOOL CALLBACK CollectMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM data)
     device.cb = sizeof(device);
     if (!EnumDisplayDevicesW(info.szDevice, index, &device, 0))
       break;
-    if ((device.StateFlags & DISPLAY_DEVICE_ACTIVE) && device.DeviceID[0] &&
-        EdidFromDeviceId(device.DeviceID, out.edid, (int)sizeof(out.edid)))
-      break;
+    if (device.StateFlags & DISPLAY_DEVICE_ACTIVE)
+    {
+      if (device.DeviceID[0])
+        ToUtf8(device.DeviceID, out.hardwarePath, (int)sizeof(out.hardwarePath));
+      if (device.DeviceID[0] && EdidFromDeviceId(device.DeviceID, out.edid, (int)sizeof(out.edid)))
+        break;
+    }
   }
   if (out.edid[0])
-    ResolveMonitorIdentity(out.edid, out.identity, (int)sizeof(out.identity));
+    ResolveMonitorIdentity(out.edid, out.hardwarePath, out.identity, (int)sizeof(out.identity));
   if (!out.identity[0])
     CopyText(out.identity, (int)sizeof(out.identity), out.device);
   return TRUE;
@@ -1269,6 +1328,11 @@ void PublishDisplays(Display *fresh, int n)
         const bool recentWrite =
             g_lastWallpaperApplyTick && now - g_lastWallpaperApplyTick < kExternalChangeGraceMs;
         const bool managed = setting && setting->wallpaper[0];
+        const bool ownPath =
+            setting &&
+            (!strcmp(fresh[i].currentPath, setting->wallpaper) ||
+             (g_displays[j].appliedSource[0] &&
+              !strcmp(fresh[i].currentPath, g_displays[j].appliedSource)));
         const bool ownComposite =
             (g_expectedGlobalWallpaper[0] &&
              (!strcmp(fresh[i].currentPath, g_expectedGlobalWallpaper) ||
@@ -1277,7 +1341,7 @@ void PublishDisplays(Display *fresh, int n)
              (!strcmp(fresh[i].currentPath, g_expectedGlobalWallpaperSystem) ||
               (globalCurrent[0] && !strcmp(globalCurrent, g_expectedGlobalWallpaperSystem))));
         if (setting && setting->locked && fresh[i].currentPath[0] && !same && !recentWrite &&
-            !ownComposite)
+            !ownComposite && !ownPath)
           lockedWallpaperChanged = true;
         if (!same && ((setting && setting->locked) || (managed && recentWrite)))
         {
@@ -1341,25 +1405,26 @@ void CheckDisplayWallpaperChanges(IDesktopWallpaper *desk)
       continue;
 
     char expected[kMaxPath] = {0};
+    char expectedSource[kMaxPath] = {0};
     char expectedGlobal[kMaxPath] = {0};
     char expectedGlobalSystem[kMaxPath] = {0};
     bool locked = false;
     int displayIndex = -1;
     EnterCriticalSection(&g_lock);
-    for (int j = 0; j < g_displayCount; ++j)
-      if (g_displays[j].rect.left == rect.left && g_displays[j].rect.top == rect.top &&
-          g_displays[j].rect.right == rect.right && g_displays[j].rect.bottom == rect.bottom)
+    displayIndex = ClosestDisplayIndex(rect, g_displays, g_displayCount);
+    if (displayIndex >= 0)
+    {
+      MonitorSetting *setting = FindMonitorSettingLocked(g_displays[displayIndex].identity);
+      locked = setting && setting->locked;
+      if (locked)
       {
-        MonitorSetting *setting = FindMonitorSettingLocked(g_displays[j].identity);
-        locked = setting && setting->locked;
-        displayIndex = j;
-        if (locked)
-          CopyText(expected, (int)sizeof(expected), g_displays[j].currentPath);
-        CopyText(expectedGlobal, (int)sizeof(expectedGlobal), g_expectedGlobalWallpaper);
-        CopyText(expectedGlobalSystem, (int)sizeof(expectedGlobalSystem),
-                 g_expectedGlobalWallpaperSystem);
-        break;
+        CopyText(expected, (int)sizeof(expected), g_displays[displayIndex].currentPath);
+        CopyText(expectedSource, (int)sizeof(expectedSource), setting->wallpaper);
       }
+      CopyText(expectedGlobal, (int)sizeof(expectedGlobal), g_expectedGlobalWallpaper);
+      CopyText(expectedGlobalSystem, (int)sizeof(expectedGlobalSystem),
+               g_expectedGlobalWallpaperSystem);
+    }
     LeaveCriticalSection(&g_lock);
     if (displayIndex < 0)
       continue;
@@ -1374,6 +1439,7 @@ void CheckDisplayWallpaperChanges(IDesktopWallpaper *desk)
     if (locked)
     {
       if (expected[0] && strcmp(reported, expected) &&
+          (!expectedSource[0] || strcmp(reported, expectedSource)) &&
           !ownComposite && (!expectedGlobal[0] || strcmp(reported, expectedGlobal)))
       {
         wchar_t expectedWide[kMaxPath] = {0};
@@ -1499,23 +1565,35 @@ bool DiscoverDisplays(IDesktopWallpaper *desk)
   for (int h = 0; h < ctx.count; ++h)
   {
     CopyText(fresh[h].currentStyle, (int)sizeof(fresh[h].currentStyle), PositionId(position));
+    LPWSTR bestId = nullptr;
+    long long bestScore = 0x7fffffffffffffffLL;
     for (UINT i = 0; desk && i < deskCount; ++i)
     {
       LPWSTR id = nullptr;
       RECT rect = {0, 0, 0, 0};
       if (FAILED(desk->GetMonitorDevicePathAt(i, &id)) || !id)
         continue;
-      if (SUCCEEDED(desk->GetMonitorRECT(id, &rect)) &&
-          rect.left == fresh[h].rect.left && rect.top == fresh[h].rect.top &&
-          rect.right == fresh[h].rect.right && rect.bottom == fresh[h].rect.bottom)
+      if (SUCCEEDED(desk->GetMonitorRECT(id, &rect)))
       {
-        ToUtf8(id, fresh[h].device, (int)sizeof(fresh[h].device));
-        LPWSTR wallpaper = nullptr;
-        if (SUCCEEDED(desk->GetWallpaper(id, &wallpaper)) && wallpaper)
-          ToUtf8(wallpaper, fresh[h].currentPath, (int)sizeof(fresh[h].currentPath));
-        CoTaskMemFree(wallpaper);
+        const long long score = MonitorRectScore(fresh[h].rect, rect);
+        if (score < bestScore)
+        {
+          CoTaskMemFree(bestId);
+          bestId = id;
+          bestScore = score;
+          id = nullptr;
+        }
       }
       CoTaskMemFree(id);
+    }
+    if (bestId)
+    {
+      ToUtf8(bestId, fresh[h].device, (int)sizeof(fresh[h].device));
+      LPWSTR wallpaper = nullptr;
+      if (SUCCEEDED(desk->GetWallpaper(bestId, &wallpaper)) && wallpaper)
+        ToUtf8(wallpaper, fresh[h].currentPath, (int)sizeof(fresh[h].currentPath));
+      CoTaskMemFree(wallpaper);
+      CoTaskMemFree(bestId);
     }
   }
   if (!desk)
@@ -1827,22 +1905,16 @@ bool BuildPlan(const Snapshot &s, Plan *plan, char *whyZh, int whyZhSize, char *
 
     if (!chosen[0])
     {
-      char zh[256] = {0}, en[256] = {0};
-      _snprintf(zh, sizeof(zh), "显示器 %d 还没有壁纸路径", i + 1);
-      _snprintf(en, sizeof(en), "Display %d has no wallpaper path", i + 1);
-      CopyText(whyZh, whyZhSize, zh);
-      CopyText(whyEn, whyEnSize, en);
-      return false;
+      LogEvent("display %s has no wallpaper path; leaving its system wallpaper untouched",
+               s.display[i].identity);
+      continue;
     }
     if (!ResolveImageLocked(cfg, chosen, plan->displayPath[i], kMaxPath) ||
         !FileNameExists(plan->displayPath[i]))
     {
-      char zh[256] = {0}, en[256] = {0};
-      _snprintf(zh, sizeof(zh), "显示器 %d 的壁纸文件不存在", i + 1);
-      _snprintf(en, sizeof(en), "The wallpaper for display %d is missing", i + 1);
-      CopyText(whyZh, whyZhSize, zh);
-      CopyText(whyEn, whyEnSize, en);
-      return false;
+      LogEvent("display %s wallpaper is missing; leaving its system wallpaper untouched",
+               s.display[i].identity);
+      continue;
     }
 
     const char *style = ms && ValidStyle(ms->style)
@@ -2902,6 +2974,29 @@ bool ApplyDesktopWallpaperFallback(const Plan &plan, char *error, int errorSize)
                             (int)sizeof(composed.renderPath[i]), error, errorSize))
       return false;
   }
+  // A newly attached/unconfigured display may still be showing a protected Spotlight or vendor image. Use the
+  // per-monitor system transcoded cache for the composite; if no cache exists, the caller falls back to the
+  // per-monitor interface rather than replacing the unknown screen with black.
+  for (int i = 0; i < composed.displayCount; ++i)
+  {
+    if (composed.renderPath[i][0])
+      continue;
+    if (!composed.managed[i] && composed.displays[i].currentPath[0])
+      CopyText(composed.renderPath[i], (int)sizeof(composed.renderPath[i]),
+               composed.displays[i].currentPath);
+    if (!composed.renderPath[i][0])
+      SystemWallpaperCacheForDisplay(i, composed.renderPath[i],
+                                     (int)sizeof(composed.renderPath[i]));
+    if (!composed.renderPath[i][0] && i == 0)
+      SystemWallpaperCache(composed.renderPath[i], (int)sizeof(composed.renderPath[i]));
+    if (!composed.renderPath[i][0])
+      SystemWallpaperCachedFile(composed.renderPath[i], (int)sizeof(composed.renderPath[i]));
+    if (!composed.renderPath[i][0])
+    {
+      CopyText(error, errorSize, "a display has no usable image for the composite");
+      return false;
+    }
+  }
   char fallback[kMaxPath] = {0};
   if (!ComposeWallpaper(composed, fallback, (int)sizeof(fallback), error, errorSize))
     return false;
@@ -2912,21 +3007,61 @@ bool ApplyDesktopWallpaperFallback(const Plan &plan, char *error, int errorSize)
   HRESULT positionResult = CoCreateInstance(CLSID_DesktopWallpaper, nullptr, CLSCTX_ALL,
                                             IID_IDesktopWallpaper,
                                             reinterpret_cast<void **>(&desk));
+  DESKTOP_WALLPAPER_POSITION previousPosition = DWPOS_FILL;
+  bool havePreviousPosition = false;
+  bool savePositionSetting = false;
   if (SUCCEEDED(positionResult) && desk)
   {
+    havePreviousPosition = SUCCEEDED(desk->GetPosition(&previousPosition));
+    if (havePreviousPosition && previousPosition != DWPOS_SPAN)
+    {
+      const char *previousId = PositionId(previousPosition);
+      EnterCriticalSection(&g_lock);
+      if (strcmp(g_settings.systemPosition, previousId))
+      {
+        CopyText(g_settings.systemPosition, (int)sizeof(g_settings.systemPosition), previousId);
+        savePositionSetting = true;
+      }
+      LeaveCriticalSection(&g_lock);
+    }
     const HRESULT spanResult = desk->SetPosition(DWPOS_SPAN);
     if (FAILED(spanResult))
       LogEvent("composite wallpaper could not select span mode (0x%08lx)",
                (unsigned long)spanResult);
-    desk->Release();
   }
   if (!SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wide,
                              SPIF_UPDATEINIFILE | SPIF_SENDCHANGE))
   {
+    if (desk)
+      desk->Release();
     _snprintf(error, errorSize, "the wallpaper fallback failed (%lu)",
               (unsigned long)GetLastError());
     return false;
   }
+  if (desk)
+  {
+    // Span is needed only while Windows accepts the composite. Restore the user's previous system mode
+    // (Fit/Fill/Stretch/Tile/Center) so the plugin does not leave Settings showing "Span".
+    DESKTOP_WALLPAPER_POSITION restorePosition = PositionForId(g_settings.systemPosition);
+    if (havePreviousPosition && previousPosition != DWPOS_SPAN)
+      restorePosition = previousPosition;
+    if (desk)
+    {
+      const HRESULT restoreResult = desk->SetPosition(restorePosition);
+      if (SUCCEEDED(restoreResult))
+      {
+        g_expectedSystemPosition = restorePosition;
+        g_expectedSystemPositionPending = true;
+        LogEvent("desktop system position restored after composite");
+      }
+      else
+        LogEvent("desktop system position restore failed (0x%08lx)",
+                 (unsigned long)restoreResult);
+    }
+    desk->Release();
+  }
+  if (savePositionSetting)
+    SaveSettings();
   char systemPath[kMaxPath] = {0};
   wchar_t systemPathWide[kMaxPath] = {0};
   if (SystemParametersInfoW(SPI_GETDESKWALLPAPER,
@@ -2951,12 +3086,6 @@ bool ApplyDesktopWallpaper(const Plan &plan, char *error, int errorSize)
   if (!anyChanged)
     return true;
   LogEvent("desktop system apply requested");
-  // On this machine IDesktopWallpaper accepts SetWallpaper (S_OK) but ASUS OLED Shifter immediately keeps the
-  // system path, so the desktop does not change. The composed SystemParametersInfo path is the one that actually
-  // takes effect here; keep the per-monitor IDesktopWallpaper code below as the fallback for other environments.
-  if (ApplyDesktopWallpaperFallback(plan, error, errorSize))
-    return true;
-  LogEvent("desktop composite failed; trying per-monitor IDesktopWallpaper");
   IDesktopWallpaper *desk = nullptr;
   HRESULT hr = CoCreateInstance(CLSID_DesktopWallpaper, nullptr, CLSCTX_ALL,
                                 IID_IDesktopWallpaper, reinterpret_cast<void **>(&desk));
@@ -2970,6 +3099,17 @@ bool ApplyDesktopWallpaper(const Plan &plan, char *error, int errorSize)
       return false;
     }
     return true;
+  }
+
+  DESKTOP_WALLPAPER_POSITION position = DWPOS_FILL;
+  if (SUCCEEDED(desk->GetPosition(&position)) && position == DWPOS_SPAN)
+  {
+    const DESKTOP_WALLPAPER_POSITION restore = PositionForId(g_settings.systemPosition);
+    if (SUCCEEDED(desk->SetPosition(restore)))
+    {
+      g_expectedSystemPosition = restore;
+      g_expectedSystemPositionPending = true;
+    }
   }
 
   UINT monitorCount = 0;
@@ -2999,10 +3139,21 @@ bool ApplyDesktopWallpaper(const Plan &plan, char *error, int errorSize)
     if (!monitorID &&
         ToWide(plan.displays[i].device, cachedDevice,
                (int)(sizeof(cachedDevice) / sizeof(cachedDevice[0]))))
-      monitorID = cachedDevice;
+    {
+      const bool displayAlias =
+          strlen(plan.displays[i].device) >= 10 &&
+          !_strnicmp(plan.displays[i].device, "\\\\.\\DISPLAY", 10);
+      if (!displayAlias)
+        monitorID = cachedDevice;
+    }
+    // In fill mode the source image is the final image. Never let a stale composite path leak into a
+    // per-monitor call; only non-fill modes use the plugin's rendered monitor image.
+    const char *targetPath = (!strcmp(plan.style[i], "fill") || !plan.renderPath[i][0])
+                                 ? plan.displayPath[i]
+                                 : plan.renderPath[i];
     wchar_t path[kMaxPath] = {0};
     if (!monitorID ||
-        !ToWide(plan.renderPath[i], path, (int)(sizeof(path) / sizeof(path[0]))))
+        !ToWide(targetPath, path, (int)(sizeof(path) / sizeof(path[0]))))
     {
       if (monitorID != cachedDevice)
         CoTaskMemFree(monitorID);
@@ -3010,8 +3161,18 @@ bool ApplyDesktopWallpaper(const Plan &plan, char *error, int errorSize)
       break;
     }
     hr = desk->SetWallpaper(monitorID, path);
-    LogEvent("desktop system SetWallpaper(%s): 0x%08lx",
-             plan.displays[i].identity, (unsigned long)hr);
+    char monitorText[512] = {0};
+    char targetText[kMaxPath] = {0};
+    char readbackText[kMaxPath] = {0};
+    ToUtf8(monitorID, monitorText, (int)sizeof(monitorText));
+    ToUtf8(path, targetText, (int)sizeof(targetText));
+    LPWSTR readback = nullptr;
+    if (SUCCEEDED(desk->GetWallpaper(monitorID, &readback)) && readback)
+      ToUtf8(readback, readbackText, (int)sizeof(readbackText));
+    CoTaskMemFree(readback);
+    LogEvent("desktop system SetWallpaper(%s): 0x%08lx monitor=%s target=%s readback=%s",
+             plan.displays[i].identity, (unsigned long)hr, monitorText,
+             targetText, readbackText[0] ? readbackText : "(none)");
     if (monitorID != cachedDevice)
       CoTaskMemFree(monitorID);
   }

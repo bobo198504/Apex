@@ -65,6 +65,18 @@ APEX_SYSTEMSTATUS_NO_TASKBAR=1 "$PROBE" "$DLL" "$DOCUMENT" "$RUN/" || exit 1
 mkdir -p "$RUN/static"
 APEX_SYSTEMSTATUS_NO_TASKBAR=1 APEX_SYSTEMSTATUS_STATIC=1 \
   "$PROBE" "$DLL" "$RUN/static/document.json" "$RUN/static/" >/dev/null || exit 1
+mkdir -p "$RUN/migrate"
+cat > "$RUN/migrate/SystemStatus.ini" <<'EOF'
+gpu_00000000_00000001_usage=1
+gpu_00000000_00000001_usage.unit=gb
+gpu_00000000_00000001_temp=0
+gpu_00000000_00000002_usage=0
+gpu_00000000_00000002_usage.unit=percent
+gpu_00000000_00000002_temp=1
+EOF
+APEX_SYSTEMSTATUS_NO_TASKBAR=1 APEX_SYSTEMSTATUS_STATIC=1 \
+  APEX_SYSTEMSTATUS_MIGRATE_ONLY=1 \
+  "$PROBE" "$DLL" "$RUN/migrate/document.json" "$RUN/migrate/" >/dev/null || exit 1
 
 echo
 echo "== the document is real JSON with every independent item =="
@@ -158,6 +170,16 @@ if find "$RUN" -maxdepth 1 -name '*.tmp' -print -quit 2>/dev/null | grep -q .; t
   say "atomic save leaves no temporary file behind" FAIL
 else
   say "atomic save leaves no temporary file behind" ok
+fi
+if grep -q '^gpu_v8086_.*_usage=1$' "$RUN/migrate/SystemStatus.ini" &&
+   grep -q '^gpu_v8086_.*_usage.unit=gb$' "$RUN/migrate/SystemStatus.ini" &&
+   grep -q '^gpu_v8086_.*_usage.legacy=gpu_00000000_00000001_usage$' \
+     "$RUN/migrate/SystemStatus.ini" &&
+   grep -q '^gpu_v10de_.*_temp=1$' "$RUN/migrate/SystemStatus.ini" &&
+   ! grep -q '^gpu_00000000_' "$RUN/migrate/SystemStatus.ini"; then
+  say "legacy GPU switches, units and positions migrate to stable hardware keys" ok
+else
+  say "legacy GPU switches, units and positions migrate to stable hardware keys" FAIL
 fi
 
 echo

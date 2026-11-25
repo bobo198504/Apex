@@ -45,7 +45,7 @@ using apex::system_status::WeekdayEn;
 using apex::system_status::WeekdayZh;
 
 const char *kId = "SystemStatus";
-const char *kVersion = "1.5.3";
+const char *kVersion = "1.5.4";
 constexpr int kMaxMetrics = 64;
 constexpr int kMaxMetricId = 96;
 constexpr int kMaxVolumes = 12;
@@ -56,6 +56,7 @@ constexpr int kLogCap = 96 * 1024;
 struct MetricSnapshot
 {
   char id[kMaxMetricId] = {};
+  char previousId[kMaxMetricId] = {};
   char nameZh[96] = {};
   char nameEn[96] = {};
   char statusZh[512] = {};
@@ -72,6 +73,7 @@ struct VisibleSetting
   char id[kMaxMetricId] = {};
   bool visible = false;
   char unit[16] = "percent";
+  char previousId[kMaxMetricId] = {};
 };
 
 struct Settings
@@ -113,6 +115,11 @@ struct GpuReading
 {
   char name[128] = {};
   char shortName[32] = {};
+  char stableId[64] = {};
+  unsigned long vendorId = 0;
+  unsigned long deviceId = 0;
+  unsigned long subSysId = 0;
+  unsigned long revision = 0;
   unsigned long luidHigh = 0;
   unsigned long luidLow = 0;
   double percent = 0.0;
@@ -122,6 +129,11 @@ struct GpuReading
   unsigned long long memoryBudgetBytes = 0;
   double temperature = 0.0;
   bool hasTemperature = false;
+};
+
+struct GpuIdentityMap
+{
+  char previousPrefix[kMaxGpus][48] = {};
 };
 
 struct Reading
@@ -394,6 +406,26 @@ bool SetMetricUnit(Settings &settings, const char *id, const char *unit)
   return true;
 }
 
+void SetMetricPreviousId(Settings &settings, const char *id, const char *previousId)
+{
+  if (!id || !*id)
+    return;
+  for (int i = 0; i < settings.count; ++i)
+    if (!std::strcmp(settings.values[i].id, id))
+    {
+      CopyText(settings.values[i].previousId, sizeof(settings.values[i].previousId),
+               previousId);
+      return;
+    }
+  if (settings.count >= kMaxMetrics)
+    return;
+  VisibleSetting &entry = settings.values[settings.count++];
+  CopyText(entry.id, sizeof(entry.id), id);
+  entry.visible = DefaultMetricVisible(id);
+  CopyText(entry.unit, sizeof(entry.unit), "percent");
+  CopyText(entry.previousId, sizeof(entry.previousId), previousId);
+}
+
 const char *MigratedKey(const char *key)
 {
   if (!key)
@@ -435,6 +467,15 @@ void LoadSettings()
                               end[-1] == '\t'))
           *--end = 0;
         const size_t keyLength = std::strlen(key);
+        if (keyLength > 7 && !std::strcmp(key + keyLength - 7, ".legacy"))
+        {
+          char metric[kMaxMetricId] = {};
+          const size_t metricLength = std::min(keyLength - 7, sizeof(metric) - 1);
+          std::memcpy(metric, key, metricLength);
+          metric[metricLength] = 0;
+          SetMetricPreviousId(fresh, metric, value);
+          continue;
+        }
         if (keyLength > 5 && !std::strcmp(key + keyLength - 5, ".unit"))
         {
           char metric[kMaxMetricId] = {};
@@ -502,6 +543,8 @@ bool SaveSettings()
               UnitAllowed(settings.values[i].id, settings.values[i].unit)
                   ? settings.values[i].unit
                   : "percent");
+    if (settings.values[i].previousId[0])
+      fprintf(f, "%s.legacy=%s\n", settings.values[i].id, settings.values[i].previousId);
   }
   for (int i = 0; i < snapshot.metricCount; ++i)
   {
@@ -866,6 +909,10 @@ bool DiscoverGpuAdapters(Reading *reading)
       WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, gpu.name, sizeof(gpu.name),
                           nullptr, nullptr);
       CopyText(gpu.shortName, sizeof(gpu.shortName), ShortGpuName(gpu.name));
+      gpu.vendorId = desc.VendorId;
+      gpu.deviceId = desc.DeviceId;
+      gpu.subSysId = desc.SubSysId;
+      gpu.revision = desc.Revision;
       gpu.luidHigh = desc.AdapterLuid.HighPart;
       gpu.luidLow = desc.AdapterLuid.LowPart;
       IDXGIAdapter3 *adapter3 = nullptr;
@@ -1690,6 +1737,242 @@ struct LunarReader
 
 LunarReader g_lunar;
 
+unsigned long StableNameHash(const char *text)
+{
+  unsigned long hash = 2166136261u;
+  for (const unsigned char *p = (const unsigned char *)(text ? text : ""); *p; ++p)
+  {
+    hash ^= *p;
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+void AssignGpuStableIds(Reading *reading)
+{
+  if (!reading)
+    return;
+  for (int i = 0; i < reading->gpuCount; ++i)
+  {
+    GpuReading &gpu = reading->gpus[i];
+    int occurrence = 1;
+    for (int before = 0; before < i; ++before)
+    {
+      const GpuReading &other = reading->gpus[before];
+      const bool sameHardware =
+          gpu.vendorId && gpu.vendorId == other.vendorId && gpu.deviceId == other.deviceId &&
+          gpu.subSysId == other.subSysId && gpu.revision == other.revision;
+      const bool sameFallback =
+          !gpu.vendorId && !other.vendorId && !std::strcmp(gpu.name, other.name);
+      if (sameHardware || sameFallback)
+        ++occurrence;
+    }
+    if (gpu.vendorId)
+      _snprintf(gpu.stableId, sizeof(gpu.stableId),
+                "gpu_v%04lx_d%04lx_s%08lx_r%02lx_%d", gpu.vendorId, gpu.deviceId,
+                gpu.subSysId, gpu.revision, occurrence);
+    else
+      _snprintf(gpu.stableId, sizeof(gpu.stableId), "gpu_n%08lx_%d",
+                StableNameHash(gpu.name), occurrence);
+  }
+}
+
+bool LegacyGpuMetricPrefix(const char *id, char *out, int outSize)
+{
+  if (!id || !out || outSize <= 0 || std::strncmp(id, "gpu_", 4))
+    return false;
+  const char *high = id + 4;
+  const char *highEnd = std::strchr(high, '_');
+  if (!highEnd || highEnd == high)
+    return false;
+  const char *low = highEnd + 1;
+  const char *suffix = std::strchr(low, '_');
+  if (!suffix || suffix == low)
+    return false;
+  if (std::strcmp(suffix, "_usage") && std::strcmp(suffix, "_temp"))
+    return false;
+  for (const char *p = high; p < highEnd; ++p)
+    if (!std::isxdigit((unsigned char)*p))
+      return false;
+  for (const char *p = low; p < suffix; ++p)
+    if (!std::isxdigit((unsigned char)*p))
+      return false;
+  const size_t length = (size_t)(suffix - id);
+  if (length >= (size_t)outSize)
+    return false;
+  std::memcpy(out, id, length);
+  out[length] = 0;
+  return true;
+}
+
+bool LegacyGpuLuid(const char *prefix, unsigned long *high, unsigned long *low)
+{
+  if (!prefix || !high || !low || std::strncmp(prefix, "gpu_", 4))
+    return false;
+  char *end = nullptr;
+  *high = std::strtoul(prefix + 4, &end, 16);
+  if (!end || *end != '_')
+    return false;
+  *low = std::strtoul(end + 1, &end, 16);
+  return end && *end == 0;
+}
+
+int SettingIndex(const Settings &settings, const char *id)
+{
+  if (!id)
+    return -1;
+  for (int i = 0; i < settings.count; ++i)
+    if (!std::strcmp(settings.values[i].id, id))
+      return i;
+  return -1;
+}
+
+void AddLegacyGpuPrefix(char prefixes[][48], int *count, const char *candidate)
+{
+  char prefix[48] = {};
+  if (!count || !LegacyGpuMetricPrefix(candidate, prefix, sizeof(prefix)))
+    return;
+  for (int i = 0; i < *count; ++i)
+    if (!std::strcmp(prefixes[i], prefix))
+      return;
+  if (*count < kMaxMetrics)
+  {
+    CopyText(prefixes[*count], 48, prefix);
+    ++*count;
+  }
+}
+
+void BuildGpuIdentityMap(const Reading &reading, const Settings &settings,
+                         GpuIdentityMap *map)
+{
+  if (!map)
+    return;
+  char prefixes[kMaxMetrics][48] = {};
+  int prefixCount = 0;
+  for (int i = 0; i < settings.count; ++i)
+  {
+    AddLegacyGpuPrefix(prefixes, &prefixCount, settings.values[i].id);
+    AddLegacyGpuPrefix(prefixes, &prefixCount, settings.values[i].previousId);
+  }
+  bool used[kMaxMetrics] = {};
+  for (int gpuIndex = 0; gpuIndex < reading.gpuCount; ++gpuIndex)
+  {
+    const GpuReading &gpu = reading.gpus[gpuIndex];
+    int mapped = -1;
+    char stableUsage[kMaxMetricId] = {}, stableTemp[kMaxMetricId] = {};
+    _snprintf(stableUsage, sizeof(stableUsage), "%s_usage", gpu.stableId);
+    _snprintf(stableTemp, sizeof(stableTemp), "%s_temp", gpu.stableId);
+    for (const char *stable : {stableUsage, stableTemp})
+    {
+      const int at = SettingIndex(settings, stable);
+      char candidate[48] = {};
+      if (at < 0 || !LegacyGpuMetricPrefix(settings.values[at].previousId, candidate,
+                                           sizeof(candidate)))
+        continue;
+      for (int i = 0; i < prefixCount; ++i)
+        if (!used[i] && !std::strcmp(prefixes[i], candidate))
+        {
+          mapped = i;
+          break;
+        }
+      if (mapped >= 0)
+        break;
+    }
+    if (mapped < 0)
+      for (int i = 0; i < prefixCount; ++i)
+      {
+        unsigned long high = 0, low = 0;
+        if (!used[i] && LegacyGpuLuid(prefixes[i], &high, &low) &&
+            high == gpu.luidHigh && low == gpu.luidLow)
+        {
+          mapped = i;
+          break;
+        }
+      }
+    if (mapped < 0)
+      for (int i = 0; i < prefixCount; ++i)
+        if (!used[i])
+        {
+          mapped = i;
+          break;
+        }
+    if (mapped >= 0)
+    {
+      used[mapped] = true;
+      CopyText(map->previousPrefix[gpuIndex], sizeof(map->previousPrefix[gpuIndex]),
+               prefixes[mapped]);
+    }
+  }
+}
+
+bool GpuPrefixWasMapped(const GpuIdentityMap &map, const char *prefix)
+{
+  for (int i = 0; i < kMaxGpus; ++i)
+    if (map.previousPrefix[i][0] && !std::strcmp(map.previousPrefix[i], prefix))
+      return true;
+  return false;
+}
+
+bool MigrateGpuMetric(Settings &settings, const char *stableId, const char *previousPrefix,
+                      const char *suffix)
+{
+  if (!stableId || !*stableId || !previousPrefix || !*previousPrefix)
+    return false;
+  char previousId[kMaxMetricId] = {};
+  _snprintf(previousId, sizeof(previousId), "%s_%s", previousPrefix, suffix);
+  const int stableAt = SettingIndex(settings, stableId);
+  const int previousAt = SettingIndex(settings, previousId);
+  if (stableAt >= 0)
+  {
+    if (!settings.values[stableAt].previousId[0] && previousAt >= 0)
+    {
+      CopyText(settings.values[stableAt].previousId,
+               sizeof(settings.values[stableAt].previousId), previousId);
+      return true;
+    }
+    return false;
+  }
+  if (previousAt < 0 || settings.count <= 0)
+    return false;
+  CopyText(settings.values[previousAt].id, sizeof(settings.values[previousAt].id), stableId);
+  CopyText(settings.values[previousAt].previousId,
+           sizeof(settings.values[previousAt].previousId), previousId);
+  return true;
+}
+
+bool MigrateGpuSettings(const Reading &reading, Settings &settings, GpuIdentityMap *map)
+{
+  BuildGpuIdentityMap(reading, settings, map);
+  bool changed = false;
+  for (int i = 0; i < reading.gpuCount; ++i)
+  {
+    const GpuReading &gpu = reading.gpus[i];
+    if (!gpu.stableId[0] || !map || !map->previousPrefix[i][0])
+      continue;
+    char usageId[kMaxMetricId] = {}, tempId[kMaxMetricId] = {};
+    _snprintf(usageId, sizeof(usageId), "%s_usage", gpu.stableId);
+    _snprintf(tempId, sizeof(tempId), "%s_temp", gpu.stableId);
+    changed = MigrateGpuMetric(settings, usageId, map->previousPrefix[i], "usage") || changed;
+    changed = MigrateGpuMetric(settings, tempId, map->previousPrefix[i], "temp") || changed;
+  }
+  int kept = 0;
+  for (int i = 0; i < settings.count; ++i)
+  {
+    char prefix[48] = {};
+    if (LegacyGpuMetricPrefix(settings.values[i].id, prefix, sizeof(prefix)) &&
+        GpuPrefixWasMapped(*map, prefix))
+    {
+      changed = true;
+      continue;
+    }
+    if (kept != i)
+      settings.values[kept] = settings.values[i];
+    ++kept;
+  }
+  settings.count = kept;
+  return changed;
+}
+
 void StaticReading(Reading *reading)
 {
   reading->download = 1.5 * 1024.0 * 1024.0;
@@ -1730,6 +2013,10 @@ void StaticReading(Reading *reading)
     GpuReading &gpu = reading->gpus[reading->gpuCount++];
     CopyText(gpu.name, sizeof(gpu.name), "Intel Iris Xe Graphics");
     CopyText(gpu.shortName, sizeof(gpu.shortName), "Intel");
+    gpu.vendorId = 0x8086;
+    gpu.deviceId = 0x9a49;
+    gpu.subSysId = 0x12345678;
+    gpu.revision = 1;
     gpu.luidLow = 1;
     gpu.percent = 4.0;
     gpu.localUsageBytes = 512ULL * 1024ULL * 1024ULL;
@@ -1741,6 +2028,10 @@ void StaticReading(Reading *reading)
     GpuReading &gpu = reading->gpus[reading->gpuCount++];
     CopyText(gpu.name, sizeof(gpu.name), "NVIDIA GeForce RTX 4060 Laptop GPU");
     CopyText(gpu.shortName, sizeof(gpu.shortName), "NVIDIA");
+    gpu.vendorId = 0x10de;
+    gpu.deviceId = 0x28e0;
+    gpu.subSysId = 0x87654321;
+    gpu.revision = 2;
     gpu.luidLow = 2;
     gpu.percent = 13.0;
     gpu.localUsageBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
@@ -1758,6 +2049,7 @@ void CollectReading(Reading *reading)
   if (staticTest && !std::strcmp(staticTest, "1"))
   {
     StaticReading(reading);
+    AssignGpuStableIds(reading);
     return;
   }
   const unsigned long long now = GetTickCount64();
@@ -1821,6 +2113,7 @@ void CollectReading(Reading *reading)
       reading->volumes[0].hasTemperature = true;
     }
   }
+  AssignGpuStableIds(reading);
   SYSTEMTIME local;
   GetLocalTime(&local);
   reading->hasLunar =
@@ -1853,7 +2146,8 @@ unsigned long AddressHash(const char *text)
   return hash;
 }
 
-void BuildSnapshot(const Reading &reading, const Settings &settings)
+void BuildSnapshot(const Reading &reading, const Settings &settings,
+                   const GpuIdentityMap &gpuIdentities)
 {
   Snapshot next;
   next.revision = ++g_snapshotRevision;
@@ -1962,11 +2256,14 @@ void BuildSnapshot(const Reading &reading, const Settings &settings)
               gpu.shortName[0] ? gpu.shortName : "GPU");
     _snprintf(enName, sizeof(enName), "%s usage",
               gpu.shortName[0] ? gpu.shortName : "GPU");
-    _snprintf(id, sizeof(id), "gpu_%08lx_%08lx_usage", gpu.luidHigh, gpu.luidLow);
+    _snprintf(id, sizeof(id), "%s_usage", gpu.stableId);
     metric = AddMetric(next, id, zhName, enName);
     if (metric >= 0)
     {
       MetricSnapshot &m = next.metrics[metric];
+      if (gpuIdentities.previousPrefix[gpuIndex][0])
+        _snprintf(m.previousId, sizeof(m.previousId), "%s_usage",
+                  gpuIdentities.previousPrefix[gpuIndex]);
       m.hasUnitChoice = true;
       CopyText(m.unit, sizeof(m.unit), MetricUnit(settings, m.id));
       if (!std::strcmp(m.unit, "gb"))
@@ -2000,11 +2297,14 @@ void BuildSnapshot(const Reading &reading, const Settings &settings)
               gpu.shortName[0] ? gpu.shortName : "GPU");
     _snprintf(enName, sizeof(enName), "%s temperature",
               gpu.shortName[0] ? gpu.shortName : "GPU");
-    _snprintf(id, sizeof(id), "gpu_%08lx_%08lx_temp", gpu.luidHigh, gpu.luidLow);
+    _snprintf(id, sizeof(id), "%s_temp", gpu.stableId);
     metric = AddMetric(next, id, zhName, enName);
     if (metric >= 0)
     {
       MetricSnapshot &m = next.metrics[metric];
+      if (gpuIdentities.previousPrefix[gpuIndex][0])
+        _snprintf(m.previousId, sizeof(m.previousId), "%s_temp",
+                  gpuIdentities.previousPrefix[gpuIndex]);
       FormatTemperature(gpu.hasTemperature, gpu.temperature, temp, sizeof(temp));
       _snprintf(m.statusZh, sizeof(m.statusZh), "%s 温度 · %s", gpu.name, temp);
       _snprintf(m.statusEn, sizeof(m.statusEn), "%s temperature · %s", gpu.name, temp);
@@ -2178,10 +2478,17 @@ DWORD WINAPI SampleThread(LPVOID)
       Reading reading;
       CollectReading(&reading);
       Settings settings;
+      GpuIdentityMap gpuIdentities;
+      bool migrated = false;
       EnterCriticalSection(&g_lock);
       settings = g_settings;
+      migrated = MigrateGpuSettings(reading, settings, &gpuIdentities);
+      if (migrated)
+        g_settings = settings;
       LeaveCriticalSection(&g_lock);
-      BuildSnapshot(reading, settings);
+      if (migrated)
+        SaveSettings();
+      BuildSnapshot(reading, settings, gpuIdentities);
     }
     if (!g_sampleWake)
       break;
@@ -2426,6 +2733,9 @@ int TaskbarItems(ApexTaskbarArea *out, int max)
       ApexTaskbarArea &area = out[total];
       ZeroMemory(&area, sizeof(area));
       _snprintf(area.key, sizeof(area.key), "%s:%s", kId, metric.id);
+      if (metric.previousId[0])
+        _snprintf(area.previousKey, sizeof(area.previousKey), "%s:%s", kId,
+                  metric.previousId);
       CopyText(area.nameZh, sizeof(area.nameZh), metric.nameZh);
       CopyText(area.nameEn, sizeof(area.nameEn), metric.nameEn);
       area.lineCount = 1;

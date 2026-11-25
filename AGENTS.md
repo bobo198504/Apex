@@ -311,7 +311,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | VolumeLock | `const char *kVersion = "1.0.0";` | `features/VolumeLock/feature_volumelock.cpp` |
 | ComputeManager | `const char *kVersion = "1.9.6";` | `features/ComputeManager/feature_computemanager.cpp` |
 | Wallpaper | `const char *kVersion = "1.2.0";` | `features/Wallpaper/feature_wallpaper.cpp` |
-| SystemStatus | `const char *kVersion = "1.5.3";` | `features/SystemStatus/feature_systemstatus.cpp` |
+| SystemStatus | `const char *kVersion = "1.5.4";` | `features/SystemStatus/feature_systemstatus.cpp` |
 
 **按幅度定号**（用户指定的口径）：
 
@@ -327,7 +327,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 ⚠️ **确认方式**：`grep -rn 'APEX_HOST_VERSION\|kVersion\s*=\|version: c' apex/ features/` 一次列全，
 不要凭记忆——上面的表就是**这么查出来的**，而它纠正了一个想当然：不同功能的版本声明写法并不一致。
 
-- **ABI 版本 = 34**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
+- **ABI 版本 = 35**：`apex/abi.h` 的 `APEX_ABI_VERSION`，**Rust 侧另有一份副本**在
   `features/AutoIME/src/abi.rs` —— **升版必须同时改两处**（漏了那边不是"退化"，是那个功能**直接加载失败**）。
   宿主要求版本**精确相等**；改契约就要升版，"只是加一个位"也要升。
   （11 → 12 是 `quickItems`：功能可以往**快速面板**里放几个自己的控件；
@@ -362,7 +362,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
   功能只声明单行/双行并提供一段文本，一个显示开关对应通用设置里的一个任务栏显示位；30 → 31 是文本中的
   通用 `[[dot:#RRGGBB]]` 彩色圆点标记由宿主绘制；31 → 32 是状态卡可在任务栏开关左侧带一个通用选择；
   32 → 33 是它既可以是下拉框，也可以是二态开关；33 → 34 是任务栏文本中的制表符开启右列，
-  两行右列共享同一右边缘。）
+  两行右列共享同一右边缘；34 → 35 是任务栏显示位可声明自己替换的旧键，宿主在原位置改名并保留左右侧。）
 - **加一个功能 = 只写一个文件夹**（`features\<id>\`），面板一行都不用改。要画的新形状，**加进 `abi.h` 的契约**，
   绝不在页面里写死某个功能的名字、id 或字段。边界与理由：`docs/rules/features.md`。
 - ⚠️ **每个功能的名单/设置互不相干**（用户定的）：「每个插件的进程名字都是独立的，不要混用」。

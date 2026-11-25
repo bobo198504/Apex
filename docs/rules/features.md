@@ -172,6 +172,10 @@
 **"只是加一个位、结构体没变"也要升**——版本号管的是**契约**，不是字节数：一个按 8 编出来的 DLL
 让宿主按 9 去读，读到的每一位都"合法"，而它理解的语义已经不对了，那种失败**没有声音**。
 
+**33 → 34** 让任务栏文本中的制表符开启右列，两行右列共享同一右边缘；**34 → 35** 让
+`ApexTaskbarArea` 可以多给一个 `previousKey`：功能把临时标识换成稳定标识时，宿主在原来的排序位置
+改名并保留左右侧，不把同一个显示位当成新项追加到末尾。
+
 热路径（`onWheel` / `tick`）**不许分配内存、不许阻塞、不许做 I/O**。
 
 ⚠️ **需要一个注入载荷时，仍然是一个文件夹。** 约定是 `features/<id>/payload/<name>.cpp` →
@@ -1777,6 +1781,9 @@ EarPods (not connected)
 **显示器身份不是槽位**：枚举 `EnumDisplayDevices` 得到 EDID 名称，再查 `WmiMonitorID` 的
 manufacturer/product/serial，得到与 MediaControl 相同形状的硬件 ID。设置文件以这个 ID 为键，显示器在
 `\\.\DISPLAY1` / `DISPLAY2` 之间换槽不会把壁纸配置带到别的屏幕上。
+身份缓存也不能只按 EDID 型号码做键：同型号的两台显示器会得到相同的 7 位 EDID 名称。缓存现在同时保存
+`EnumDisplayDevices` 的完整硬件设备路径，并用该路径与 `WmiMonitorID.InstanceName` 精确匹配后读取序列号；
+只有找不到精确设备时才退回型号码。这样换上一台同型号显示器，不会命中旧显示器的序列号和旧壁纸配置。
 
 选中的图片会立即复制到 `Plugins/Wallpaper/`，原文件之后移动或删除都不影响配置。最终系统壁纸和缩略图
 使用不同文件；每次渲染也使用新的唯一文件名，因此不会覆盖 Windows 当前正在使用的 PNG（这正是“PNG 无法
@@ -1794,6 +1801,9 @@ manufacturer/product/serial，得到与 MediaControl 相同形状的硬件 ID。
 选图后的应用暂时恢复为原来的可靠方案：页面提交后，Worker 唤醒，为所有受管显示器按各自模式生成屏幕大小的图片，
 拼成一张虚拟桌面合成图，先把系统位置设为 `DWPOS_SPAN`，再用
 `SystemParametersInfo(SPI_SETDESKWALLPAPER, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)` 提交。
+提交成功后会恢复用户原来的系统显示位置（`Fit`/`Fill`/`Stretch`/`Tile`/`Center`），不再把系统设置留在“跨区”，
+避免切换显示器时先出现一次跨区割裂。
+原位置保存在 `Wallpaper.ini` 的 `system_position`；旧配置没有这一项时先按“适应”恢复，下一次设置时再记录当前值。
 曾试过在 Worker 前直接设置复制的源图，也曾试过只调用 `IDesktopWallpaper::SetWallpaper`；两者在本机都出现过
 接口返回成功、桌面却没有刷新。这套合成图路径是**暂时保证可用**的选择，逐屏系统接口保留为合成或传统入口失败后的
 回退，后续再单独摸索怎样在不牺牲刷新可靠性的前提下直接使用它。
@@ -1807,6 +1817,8 @@ WMI 硬件 ID 按 EDID 缓存，所以稳态下不会每秒重复查询 WMI。�
 或其它程序改图；锁定显示器也不参与系统全局显示方式回写。
 桌面壁纸和锁屏壁纸是两条独立状态链：锁屏只在 `lock_file` 本身刚被选择或变更时进入待应用状态；
 切换某台显示器的显示方式、选桌面图片或执行桌面轮询不会重新提交锁屏。这样锁屏不会因为桌面显示方式变化而跟着改。
+显示器锁定只拦截 Apex 之外的修改：插件自己刚写入的来源路径、渲染路径和当前 monitorID 都算自有写入，
+不会因为锁定开关而把自己的选图恢复成上一张；只有外部路径变化才触发恢复。
 同一套 0.5 秒检测也用于未锁定显示器：系统设置改壁纸后立即更新该屏的当前路径和缩略图；锁定屏则把同一份变化
 转成恢复任务。两者共享检测，不维护两套“系统壁纸有没有变”的规则。合成图路径本身也是系统当前壁纸，
 因此锁定检测把它记为 Apex 自己的写入，不会把合成图误认成外部改图并反复恢复。
@@ -1819,6 +1831,10 @@ WMI 硬件 ID 按 EDID 缓存，所以稳态下不会每秒重复查询 WMI。�
 两字选项收成紧凑宽度，锁定开关紧跟其后，缩略图不会再挤坏布局。
 显示器发现只更新系统路径和模式；已生成缩略图、已应用来源和模式按显示器硬件 ID 保留，重连枚举不会把缩略图
 清空。应用计划逐屏比较“当前来源 + 模式”，只渲染并下发改动的那一台，未改动显示器的渲染文件也不会被清理。
+如果某一台显示器的保存图片路径已经失效，只把这台当作“未接管”并保留其系统当前图，不让它阻止其它显示器
+继续应用；换屏后旧配置不会因为一台坏路径导致整批壁纸设置失效。
+合成前，新接入且尚未配置的屏如果当前图是不可直接解码的聚焦/厂商文件，会优先用该屏的 `Transcoded_*`
+或 `CachedFiles` 缓存补进合成图；仍找不到可用图片时才回退逐屏系统接口，避免把一块屏涂黑。
 隐藏路径图片字段的路径变化和 preview 数据一样不触发整页重建，只更新对应缩略图。
 新插上的显示器如果还没选壁纸，只读取系统当前状态并生成缩略图，**不进入插件渲染**。系统当前图可能是受保护的
 聚焦/幻灯片文件，GDI+ 解不开；把它当插件图片渲染会让整个应用循环每秒失败，连带拖住新屏状态刷新。
@@ -1839,11 +1855,14 @@ WMI 硬件 ID 按 EDID 缓存，所以稳态下不会每秒重复查询 WMI。�
 ContentDeliveryManager 的 `LockScreen` 元数据确认轮换开始时间、周期和图片文件大小，再匹配 `Assets`
 中的真实图片；不会把“目录里最新的文件”直接当成当前锁屏。
 
-**系统落点**：桌面的可靠路径是先由 `EnumDisplayMonitors` 取布局，插件按每台显示器的模式和真实像素尺寸
-生成屏幕大小的图片，拼成整张多屏合成图，再通过
-`SystemParametersInfo(SPI_SETDESKWALLPAPER, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)` 写入。本机实测
-`IDesktopWallpaper::SetWallpaper` 会返回 `S_OK`，但 ASUS OLED Shifter 仍保留自己的路径、桌面不变，因此它只作为
-合成路径失败后的兼容回退；回退实现仍按 `GetMonitorDevicePathAt` → `SetWallpaper(monitorID, path)`。
+**系统落点**：桌面正常路径是 Windows 原生逐屏接口：
+`CoCreateInstance(CLSID_DesktopWallpaper, IID_IDesktopWallpaper)` →
+`GetMonitorDevicePathAt` 取得真实 monitorID → `SetWallpaper(monitorID, 图片完整路径)`。
+`EnumDisplayDevices`/`EnumDisplayMonitors` 只负责显示布局和硬件身份，不再把 `\\.\DISPLAY1` 这类显示槽位别名
+传给 `SetWallpaper`；找不到真实 monitorID 时宁可报告失败，也不伪造一次 `S_OK`。
+调用后会立即用 `GetWallpaper(monitorID)` 回读；日志同时记录 monitorID、目标路径和回读路径。
+旧的多屏合成 + `SystemParametersInfo(SPI_SETDESKWALLPAPER)` 只在原生接口明确失败时作为兼容回退。
+系统当前显示位置会先保存到 `Wallpaper.ini` 的 `system_position`，原生路径不会主动改成“跨区”。
 锁屏优先走 `Windows.System.UserProfile.LockScreen.SetImageFileAsync(IStorageFile)`，旧
 `UserProfilePersonalizationSettings.TrySetLockScreenImageAsync` 只作为兼容回退。锁屏接口没有显示器参数，
 系统设计上就是所有显示器共用一张，因此不提供“逐屏锁屏”。两条路径都不直接写注册表。
@@ -1876,6 +1895,9 @@ CPU 温度、内存占用、内存温度、时间、日期、农历；动态项�
   名称带网卡名，用户直接在任务栏映射表选择要显示哪一个，不再需要额外的网卡选择控件。
 - **GPU 逐显卡读取并拆成占用/温度两项**：DXGI 识别集显与独显（本机是 Intel Iris Xe + NVIDIA RTX 4060），
   PDH 按适配器 LUID 分别累计占用率，NVML 温度映射到对应 NVIDIA 设备。每块卡都有自己的任务栏显示开关。
+  LUID 继续用于本次运行内的性能计数匹配；保存开关、单位和任务栏顺序时改用显卡的厂商、设备、子系统、
+  修订号和同型号序号组成的稳定键，Windows 重启后不再把旧设置当成一台新显卡。旧版 LUID 键会迁移到
+  稳定键，宿主在原来的任务栏位置改名，关闭后再打开仍回到原位置。
 - **时间、日期、农历**每秒刷新。农历使用 Windows 自带
   `Windows.Globalization.Calendar` 的 `ChineseLunar`，不是写死年份表；中文显示干支年名与月份汉字，
   英文界面显示 `Lunar 月/日`。这台机器的 WinRT 生成头与 `winsock2.h` 有模板重定义冲突，所以插件只按
