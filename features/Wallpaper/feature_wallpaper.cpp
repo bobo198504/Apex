@@ -26,6 +26,7 @@
 #include <oleauto.h>
 #include <gdiplus.h>
 #include <sddl.h>
+#include <wtsapi32.h>
 
 #include <cstdarg>
 #include <algorithm>
@@ -43,7 +44,7 @@ using apex::wallpaper::Variant;
 namespace {
 
 const char *kId = "Wallpaper";
-const char *kVersion = "1.2.9";
+const char *kVersion = "1.3.1";
 
 constexpr int kMaxDisplays = 12;
 constexpr int kMaxMonitorSettings = 24;
@@ -174,6 +175,7 @@ ULONG_PTR g_gdiplusToken = 0;
 bool g_noApply = false; // test-only process switch; no user setting can reach it
 volatile LONG g_renderSerial = 0;
 volatile LONG g_applyDirty = 0;
+volatile LONG g_resumeApplyPending = 0;
 DWORD g_lastWallpaperApplyTick = 0;
 bool g_restoreLockedPending = false;
 DESKTOP_WALLPAPER_POSITION g_lastSystemPosition = DWPOS_FILL;
@@ -230,6 +232,95 @@ void LogEvent(const char *fmt, ...)
   }
   else
     fflush(g_log);
+}
+
+const wchar_t kSessionWindowClass[] = L"ApexWallpaperSession";
+HWND g_sessionWindow = nullptr;
+HANDLE g_sessionThread = nullptr;
+DWORD g_sessionThreadId = 0;
+
+LRESULT CALLBACK SessionWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+  if (message == WM_WTSSESSION_CHANGE)
+  {
+    if (wParam == WTS_SESSION_UNLOCK || wParam == WTS_SESSION_LOGON)
+    {
+      InterlockedExchange(&g_resumeApplyPending, 1);
+      MarkApplyDirty();
+      if (g_wake)
+        SetEvent(g_wake);
+      LogEvent("Windows session unlocked; scheduling wallpaper re-apply");
+    }
+    return 0;
+  }
+  if (message == WM_CLOSE)
+  {
+    DestroyWindow(window);
+    return 0;
+  }
+  if (message == WM_DESTROY)
+  {
+    PostQuitMessage(0);
+    return 0;
+  }
+  return DefWindowProcW(window, message, wParam, lParam);
+}
+
+DWORD WINAPI SessionWatcherThread(LPVOID)
+{
+  g_sessionThreadId = GetCurrentThreadId();
+  WNDCLASSW windowClass = {};
+  windowClass.lpfnWndProc = SessionWindowProc;
+  windowClass.hInstance = GetModuleHandleW(nullptr);
+  windowClass.lpszClassName = kSessionWindowClass;
+  if (!RegisterClassW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+  {
+    LogEvent("session watcher: class registration failed (%lu)", (unsigned long)GetLastError());
+    return 0;
+  }
+  g_sessionWindow = CreateWindowExW(0, kSessionWindowClass, L"Apex wallpaper session",
+                                    WS_OVERLAPPED, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                                    windowClass.hInstance, nullptr);
+  if (!g_sessionWindow)
+  {
+    LogEvent("session watcher: window creation failed (%lu)", (unsigned long)GetLastError());
+    UnregisterClassW(kSessionWindowClass, windowClass.hInstance);
+    return 0;
+  }
+  if (!WTSRegisterSessionNotification(g_sessionWindow, NOTIFY_FOR_THIS_SESSION))
+    LogEvent("session watcher: WTS registration failed (%lu)", (unsigned long)GetLastError());
+  MSG message;
+  while (GetMessageW(&message, nullptr, 0, 0) > 0)
+  {
+    TranslateMessage(&message);
+    DispatchMessageW(&message);
+  }
+  if (g_sessionWindow)
+  {
+    WTSUnRegisterSessionNotification(g_sessionWindow);
+    g_sessionWindow = nullptr;
+  }
+  UnregisterClassW(kSessionWindowClass, windowClass.hInstance);
+  return 0;
+}
+
+void StartSessionWatcher()
+{
+  if (!g_sessionThread)
+    g_sessionThread = CreateThread(nullptr, 0, SessionWatcherThread, nullptr, 0, nullptr);
+}
+
+void StopSessionWatcher()
+{
+  if (g_sessionWindow)
+    PostMessageW(g_sessionWindow, WM_CLOSE, 0, 0);
+  if (g_sessionThread)
+  {
+    WaitForSingleObject(g_sessionThread, 3000);
+    CloseHandle(g_sessionThread);
+    g_sessionThread = nullptr;
+  }
+  g_sessionThreadId = 0;
 }
 
 bool ToWide(const char *text, wchar_t *out, int outCount)
@@ -1924,6 +2015,7 @@ bool BuildPlan(const Snapshot &s, Plan *plan, char *whyZh, int whyZhSize, char *
     CopyText(plan->style[i], (int)sizeof(plan->style[i]), style);
     plan->managed[i] = true;
     plan->applyNeeded[i] =
+        g_resumeApplyPending != 0 ||
         !FileNameExists(s.display[i].currentPath) ||
         strcmp(s.display[i].appliedSource, plan->displayPath[i]) ||
         strcmp(s.display[i].appliedStyle, style) ||
@@ -2155,6 +2247,15 @@ void DeletePreviousCopy(const char *path, const char *keep)
   const bool ours = !_strnicmp(path, g_dir, strlen(g_dir)) &&
                     (strstr(path, "Wallpaper.display-") || strstr(path, "Wallpaper.lock-"));
   if (!ours)
+    return;
+  EnterCriticalSection(&g_lock);
+  bool referenced = !strcmp(g_settings.lockPath, path);
+  for (int i = 0; i < g_displayCount && !referenced; ++i)
+    if (!strcmp(g_displays[i].currentPath, path) ||
+        !strcmp(g_displays[i].appliedSource, path))
+      referenced = true;
+  LeaveCriticalSection(&g_lock);
+  if (referenced)
     return;
   wchar_t wide[kMaxPath] = {0};
   if (ToWide(path, wide, (int)(sizeof(wide) / sizeof(wide[0]))))
@@ -3402,14 +3503,21 @@ DWORD WINAPI Worker(void *)
     Plan plan;
     char whyZh[256] = {0}, whyEn[256] = {0};
     const bool forceApply = InterlockedExchange(&g_applyDirty, 0) != 0;
+    const bool resumeApply = g_resumeApplyPending != 0;
     if (forceApply)
+      lastSignature[0] = 0;
+    if (resumeApply)
       lastSignature[0] = 0;
     if (BuildPlan(snapshot, &plan, whyZh, (int)sizeof(whyZh), whyEn, (int)sizeof(whyEn)))
     {
-      if (forceApply || strcmp(lastSignature, plan.signature))
+      if (forceApply || resumeApply || strcmp(lastSignature, plan.signature))
       {
         if (ApplyPlan(&plan))
+        {
           CopyText(lastSignature, (int)sizeof(lastSignature), plan.signature);
+          if (resumeApply)
+            InterlockedExchange(&g_resumeApplyPending, 0);
+        }
       }
     }
     else
@@ -3877,6 +3985,7 @@ int Init(const ApexHost *host)
     }
     return 1;
   }
+  StartSessionWatcher();
   Log("wallpaper: started (%s)", g_noApply ? "test mode, system unchanged" : "live");
   return 0;
 }
@@ -3884,6 +3993,7 @@ int Init(const ApexHost *host)
 void Shutdown()
 {
   InterlockedExchange(&g_stop, 1);
+  StopSessionWatcher();
   if (g_wake)
     SetEvent(g_wake);
   if (g_thread)

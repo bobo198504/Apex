@@ -1833,6 +1833,8 @@ WMI 硬件 ID 按 EDID 缓存，所以稳态下不会每秒重复查询 WMI。�
 清空。应用计划逐屏比较“当前来源 + 模式”，只渲染并下发改动的那一台，未改动显示器的渲染文件也不会被清理。
 如果某一台显示器的保存图片路径已经失效，只把这台当作“未接管”并保留其系统当前图，不让它阻止其它显示器
 继续应用；换屏后旧配置不会因为一台坏路径导致整批壁纸设置失效。
+插件不再删除仍被任一显示器或锁屏配置引用的旧图片副本；Windows 在锁屏恢复时可能短暂引用上一张文件，
+提前删除会让桌面先变黑。
 合成前，新接入且尚未配置的屏如果当前图是不可直接解码的聚焦/厂商文件，会优先用该屏的 `Transcoded_*`
 或 `CachedFiles` 缓存补进合成图；仍找不到可用图片时才回退逐屏系统接口，避免把一块屏涂黑。
 隐藏路径图片字段的路径变化和 preview 数据一样不触发整页重建，只更新对应缩略图。
@@ -1863,6 +1865,8 @@ ContentDeliveryManager 的 `LockScreen` 元数据确认轮换开始时间、周�
 调用后会立即用 `GetWallpaper(monitorID)` 回读；日志同时记录 monitorID、目标路径和回读路径。
 旧的多屏合成 + `SystemParametersInfo(SPI_SETDESKWALLPAPER)` 只在原生接口明确失败时作为兼容回退。
 系统当前显示位置会先保存到 `Wallpaper.ini` 的 `system_position`，原生路径不会主动改成“跨区”。
+桌面会话解锁时会通过 `WTSRegisterSessionNotification` 收到解锁通知，强制重新应用所有已配置显示器；
+这补上了锁屏/恢复后系统清空或重置桌面壁纸时，仅靠布局轮询无法发现的情况。
 锁屏优先走 `Windows.System.UserProfile.LockScreen.SetImageFileAsync(IStorageFile)`，旧
 `UserProfilePersonalizationSettings.TrySetLockScreenImageAsync` 只作为兼容回退。锁屏接口没有显示器参数，
 系统设计上就是所有显示器共用一张，因此不提供“逐屏锁屏”。两条路径都不直接写注册表。

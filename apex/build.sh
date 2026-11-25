@@ -482,7 +482,7 @@ for FEAT in "$ROOT"/features/*/; do
   fi
   g++ "${FEATURE_FLAGS[@]}" "${MAIN_EXTRA[@]}" -shared -I"$FEAT" "$SRC" -o "$DEST/$ID.dll" \
       -luser32 -lgdi32 -lgdiplus -lole32 -ladvapi32 -ldxva2 -lwbemuuid -loleaut32 -luuid -lshell32 \
-      -lwinhttp -liphlpapi -lpdh -lws2_32 -ldxgi -lpowrprof
+      -lwinhttp -liphlpapi -lpdh -lws2_32 -ldxgi -lpowrprof -lwtsapi32
 done
 
 echo

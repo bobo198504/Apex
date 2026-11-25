@@ -11,18 +11,22 @@
 
 ```
 + 版本号：主程序 1.13.1、系统状态 1.5.4
-+ 版本号：壁纸设置 1.2.9
++ 版本号：壁纸设置 1.3.1
 # 修复系统状态显卡开关、单位和任务栏顺序在重启后丢失
 + 壁纸设置改用原生 IDesktopWallpaper 逐屏接口，修复多屏、换显示器和锁定壁纸互相影响
++ 壁纸设置监听 Windows 会话解锁，锁屏回来后立即恢复已配置壁纸
++ 壁纸设置保留系统可能仍引用的旧图片副本，修复锁屏恢复时短暂黑屏
 ```
 
 ## What's changed
 
 ```
 + Versions: the host is 1.13.1 and System Status is 1.5.4
-+ Version: Wallpaper 1.2.9
++ Version: Wallpaper 1.3.1
 # Fixed System Status GPU switches, units and taskbar positions being lost after a restart
 + Wallpaper now uses the native IDesktopWallpaper per-monitor interface and fixes multi-monitor, monitor replacement, and lock interactions
++ Wallpaper now listens for Windows session unlock and restores configured wallpapers immediately
++ Wallpaper keeps old image copies that Windows may still reference, fixing a brief black desktop after unlock
 ```
 
 ## 1.13.0
