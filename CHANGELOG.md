@@ -5,6 +5,24 @@
 `*` 和 `+` 会变成同一种圆点，符号的区分就没了）。只写"改了什么"。
 -->
 
+## 1.13.2
+
+## 更新内容
+
+```
++ 版本号：主程序 1.13.2、媒体控制 1.1.2
+# 修复窗口最大化时任务栏仍可见，但 Apex 任务栏文字被误判为全屏而隐藏
+# 修复熄屏时任务栏文字被主动隐藏并在熄屏结束后重新加载的问题，改为由熄屏黑窗按 Z 序覆盖
+```
+
+## What's changed
+
+```
++ Versions: the host is 1.13.2 and Media Control is 1.1.2
+# Fixed Apex taskbar text being hidden as if a fullscreen app were running when a normal window was maximized and the taskbar remained visible
+# Fixed taskbar text being hidden and reloaded around screen-off; the opaque screen-off window now covers it by z-order
+```
+
 ## 1.13.1
 
 ## 更新内容

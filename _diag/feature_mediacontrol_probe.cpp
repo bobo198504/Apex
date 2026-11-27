@@ -28,6 +28,7 @@
 
 #include <windows.h>
 #include <mmdeviceapi.h>
+#include "../common/screen_cover.h"
 #include <audioclient.h>
 #include <math.h>
 #include <stdio.h>
@@ -105,6 +106,7 @@ struct FindCtx
   // become opaque have the same class, rectangle, styles and visibility -- so it has to be read back.
   BYTE alpha = 255;
   bool layered = false;
+  bool screenCover = false;
 };
 
 BOOL CALLBACK FindBlackProc(HWND h, LPARAM user)
@@ -121,6 +123,7 @@ BOOL CALLBACK FindBlackProc(HWND h, LPARAM user)
   GetWindowRect(h, &ctx->rect);
   ctx->style = (unsigned long)GetWindowLongPtrA(h, GWL_STYLE);
   ctx->exStyle = (unsigned long)GetWindowLongPtrA(h, GWL_EXSTYLE);
+  ctx->screenCover = GetPropA(h, APEX_SCREEN_COVER_PROPERTY) != nullptr;
   // `GetLayeredWindowAttributes` is the one window property that cannot be had from the style bits: LWA_ALPHA can
   // be set, and 0 and 255 both look like "the bit is set".
   COLORREF key = 0;
@@ -637,6 +640,7 @@ int main(int argc, char **argv)
     Check((on.exStyle & WS_EX_TOPMOST) != 0, "  on top of everything else (WS_EX_TOPMOST)", "");
     Check((on.exStyle & WS_EX_TOOLWINDOW) != 0, "  out of the taskbar and alt-tab (WS_EX_TOOLWINDOW)", "");
     Check((on.style & WS_POPUP) != 0, "  with no frame (WS_POPUP)", "");
+    Check(on.screenCover, "  marked as a screen cover so lower layers stay drawn behind it", "");
     // The rectangle is a REAL monitor's own, which is how "the right screen" is said without trusting a name.
     {
       Screen screens[8];

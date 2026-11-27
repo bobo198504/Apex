@@ -43,6 +43,7 @@
 
 #include "../../apex/abi.h"
 #include "../../common/match.h"
+#include "../../common/screen_cover.h"
 
 #include <windows.h>
 #include <physicalmonitorenumerationapi.h>
@@ -63,7 +64,7 @@
 namespace {
 
 const char *kId = "MediaControl";
-const char *kVersion = "1.1.1";
+const char *kVersion = "1.1.2";
 
 const int kMaxDisplays = 8;
 const int kMaxSessions = 32;
@@ -1315,6 +1316,7 @@ void SyncOffWindows()
           LeaveCriticalSection(&g_lock);
           continue;
         }
+        SetPropA(d.black, APEX_SCREEN_COVER_PROPERTY, (HANDLE)1);
       }
       // ⚠️ SWP_NOACTIVATE IS THE POINT: the window appears WITHOUT taking the focus, so darkening one screen
       // does not stop the keyboard from working on another one. It only takes focus if the user clicks it,

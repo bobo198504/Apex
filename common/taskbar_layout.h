@@ -147,6 +147,14 @@ inline bool UseNearEnd(int storedPosition, bool, bool iconsLeftAligned)
   return EffectiveTaskbarSide(storedPosition, iconsLeftAligned) != 0;
 }
 
+// A window covering the monitor is not enough to call it fullscreen: a maximized window can reach the monitor
+// rectangle while Windows' taskbar is still visible (TranslucentTB makes that case especially common). Geometry
+// only confirms fullscreen when the taskbar is absent at the foreground monitor's taskbar point.
+inline bool GeometryConfirmsFullscreen(bool windowCoversMonitor, bool taskbarVisibleAtPoint)
+{
+  return windowCoversMonitor && !taskbarVisibleAtPoint;
+}
+
 // The two words are one reading unit, not two equal halves of the taskbar. Centring each word in height/2 made
 // the gap grow with the taskbar and pushed the lower line against its edge. Keep each row one font-height plus a
 // little breathing room, then centre that small pair in the available box.

@@ -307,7 +307,7 @@ Git-bash 启动**，很容易把启动开销记到构建或门上（这个项目
 | SmoothWheel | `"1.7.1",`（`ApexFeature` 初始化里的裸字面量） | `features/SmoothWheel/feature_smoothwheel.cpp` |
 | AutoIME | `version: c"1.2.4".as_ptr(),` | `features/AutoIME/src/lib.rs` |
 | KeepAwake | `const char *kVersion = "2.0.0";` | `features/KeepAwake/feature_keepawake.cpp` |
-| MediaControl | `const char *kVersion = "1.1.1";` | `features/MediaControl/feature_mediacontrol.cpp` |
+| MediaControl | `const char *kVersion = "1.1.2";` | `features/MediaControl/feature_mediacontrol.cpp` |
 | VolumeLock | `const char *kVersion = "1.0.0";` | `features/VolumeLock/feature_volumelock.cpp` |
 | ComputeManager | `const char *kVersion = "1.9.6";` | `features/ComputeManager/feature_computemanager.cpp` |
 | Wallpaper | `const char *kVersion = "1.2.0";` | `features/Wallpaper/feature_wallpaper.cpp` |

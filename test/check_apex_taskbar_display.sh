@@ -51,6 +51,11 @@ if grep -q 'ApexTaskbarDisplayWnd' "$HOST" &&
    grep -q 'g_topmostInitialized\[side\] ? SWP_NOZORDER : 0' "$HOST" &&
    grep -q 'TaskbarIconsAreLeftAligned' "$HOST" &&
    grep -q 'EffectiveTaskbarSide' "$HOST" &&
+   grep -q 'GeometryConfirmsFullscreen' "$HOST" &&
+   grep -q 'TaskbarVisibleAtForegroundMonitor' "$HOST" &&
+   grep -q 'ScreenCoverAtForegroundMonitor' "$HOST" &&
+   grep -q 'APEX_SCREEN_COVER_PROPERTY' "$HOST" &&
+   grep -q 'WindowFromPoint(point)' "$HOST" &&
    grep -q 'ForegroundIsFullscreen' "$HOST" &&
    grep -q 'QUNS_RUNNING_D3D_FULL_SCREEN' "$HOST" &&
    grep -q 'kFullscreenTimerId' "$HOST" &&
@@ -93,6 +98,9 @@ int main()
       LastSingleLineSlotIsCentred(0)) return 7;
   if (EffectiveTaskbarSide(0, true) != 1 || EffectiveTaskbarSide(0, false) != 0 ||
       EffectiveTaskbarSide(1, false) != 1) return 9;
+  if (!GeometryConfirmsFullscreen(true, false)) return 11;
+  if (GeometryConfirmsFullscreen(true, true)) return 12;
+  if (GeometryConfirmsFullscreen(false, false)) return 13;
   const int horizontalGap = ItemGap(false, 12);
   const int verticalGap = ItemGap(true, 12);
   if (verticalGap <= horizontalGap) return 8;
@@ -104,6 +112,7 @@ int main()
               verticalGap, horizontalGap);
   std::printf("  both long-axis gaps shrink when the shared font gets smaller\n");
   std::printf("  left-aligned system icons map every left/top slot to the near end\n");
+  std::printf("  a monitor-covering window is not fullscreen while the taskbar is visible\n");
   return 0;
 }
 EOF

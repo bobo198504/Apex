@@ -5,6 +5,7 @@
 
 #include "host.h"
 
+#include "../common/screen_cover.h"
 #include "../common/system_theme.h"
 #include "../common/taskbar_layout.h"
 
@@ -210,6 +211,69 @@ bool TaskbarIconsAreLeftAligned()
   return result == ERROR_SUCCESS && size == sizeof(value) && value == 0;
 }
 
+bool TaskbarVisibleAtForegroundMonitor(HWND foreground, const RECT &monitor)
+{
+  HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+  RECT bar = {};
+  if (!taskbar || !IsWindowVisible(taskbar) || !GetWindowRect(taskbar, &bar))
+    return false;
+  MONITORINFO taskbarMonitor = {};
+  taskbarMonitor.cbSize = sizeof(taskbarMonitor);
+  if (!GetMonitorInfoW(MonitorFromWindow(taskbar, MONITOR_DEFAULTTONEAREST), &taskbarMonitor))
+    return false;
+  if (!EqualRect(&taskbarMonitor.rcMonitor, &monitor))
+    return false;
+  RECT overlap = {};
+  if (!IntersectRect(&overlap, &bar, &monitor) ||
+      overlap.right - overlap.left <= 4 || overlap.bottom - overlap.top <= 4)
+    return false;
+  POINT point = {(overlap.left + overlap.right) / 2, (overlap.top + overlap.bottom) / 2};
+  HWND hit = WindowFromPoint(point);
+  if (!hit)
+    return false;
+  HWND root = GetAncestor(hit, GA_ROOT);
+  wchar_t cls[128] = {};
+  GetClassNameW(hit, cls, (int)(sizeof(cls) / sizeof(cls[0])));
+  if (!std::wcscmp(cls, L"ApexTaskbarDisplayWnd") || root == foreground)
+    return !std::wcscmp(cls, L"ApexTaskbarDisplayWnd");
+  DWORD taskbarPid = 0;
+  DWORD hitPid = 0;
+  GetWindowThreadProcessId(taskbar, &taskbarPid);
+  GetWindowThreadProcessId(hit, &hitPid);
+  return root == taskbar || hit == taskbar || (taskbarPid && hitPid == taskbarPid);
+}
+
+struct ScreenCoverScan
+{
+  RECT monitor = {};
+  bool found = false;
+};
+
+BOOL CALLBACK FindScreenCover(HWND window, LPARAM parameter)
+{
+  auto *scan = reinterpret_cast<ScreenCoverScan *>(parameter);
+  if (!IsWindowVisible(window) || !GetPropA(window, APEX_SCREEN_COVER_PROPERTY))
+    return TRUE;
+  RECT rect = {};
+  if (!GetWindowRect(window, &rect))
+    return TRUE;
+  if (rect.left <= scan->monitor.left + 2 && rect.top <= scan->monitor.top + 2 &&
+      rect.right >= scan->monitor.right - 2 && rect.bottom >= scan->monitor.bottom - 2)
+  {
+    scan->found = true;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+bool ScreenCoverAtForegroundMonitor(const RECT &monitor)
+{
+  ScreenCoverScan scan;
+  scan.monitor = monitor;
+  EnumWindows(FindScreenCover, (LPARAM)&scan);
+  return scan.found;
+}
+
 int EffectiveFontSize(const Geometry &geometry)
 {
   HostConfig *config = SettingsConfig();
@@ -297,8 +361,15 @@ bool ForegroundIsFullscreen()
       GetMonitorInfoW(MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST), &monitor))
   {
     RECT target = monitor.rcMonitor;
-    if (window.left <= target.left + 2 && window.top <= target.top + 2 &&
-        window.right >= target.right - 2 && window.bottom >= target.bottom - 2)
+    // A screen-cover window already owns the taskbar point and therefore hides everything behind it by z-order.
+    // Hiding Apex's strip here would only force a later full redraw when the cover disappears.
+    if (ScreenCoverAtForegroundMonitor(target))
+      return false;
+    const bool coversMonitor =
+        window.left <= target.left + 2 && window.top <= target.top + 2 &&
+        window.right >= target.right - 2 && window.bottom >= target.bottom - 2;
+    const bool taskbarVisible = TaskbarVisibleAtForegroundMonitor(foreground, target);
+    if (taskbar::GeometryConfirmsFullscreen(coversMonitor, taskbarVisible))
       return true;
   }
 

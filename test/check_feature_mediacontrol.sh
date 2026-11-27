@@ -160,7 +160,8 @@ fi
 # and the feature reasserts HWND_TOPMOST while a monitor is dark. Check the feature half here; the host half is
 # in check_apex_taskbar_display.sh.
 if grep -q 'including Apex.s own taskbar text' "$SRC" &&
-   grep -q 'SWP_NOACTIVATE);' "$SRC"; then
+   grep -q 'SWP_NOACTIVATE);' "$SRC" &&
+   grep -q 'SetPropA(d.black, APEX_SCREEN_COVER_PROPERTY' "$SRC"; then
   say "the screen-off window keeps priority over taskbar refreshes" ok
 else
   say "the screen-off window keeps priority over taskbar refreshes" FAIL
